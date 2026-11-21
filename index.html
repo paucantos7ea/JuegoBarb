@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reino Rosa Imperial: El Palacio de Cristal</title>
+  <link rel="stylesheet" href="./css/base.css" />
+  <link rel="stylesheet" href="./css/menu.css" />
+  <link rel="stylesheet" href="./css/hud.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://esm.sh/three@0.160.0",
+        "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app-root">
+    <!-- Lienzo 3D principal -->
+    <div id="canvas-container" aria-label="Escena 3D del Palacio de Cristal"></div>
+
+    <!-- Pantalla de Inicio y Lobby LAN -->
+    <section id="menu-overlay" class="overlay visible" aria-label="Menú Principal">
+      <div class="menu-shell glass-panel">
+        <header class="menu-header">
+          <div class="crown-badge" aria-hidden="true">♛</div>
+          <p class="menu-kicker">Edición Multijugador Red Local</p>
+          <h1 class="menu-title">Reino Rosa Imperial</h1>
+          <p class="menu-subtitle">El Palacio de Cristal</p>
+        </header>
+
+        <div class="menu-grid">
+          <!-- Columna Izquierda: Perfil y Avatares -->
+          <div class="menu-section">
+            <h2 class="section-heading">1. Tu Perfil Real</h2>
+            <label class="field-label" for="player-name-input">Nombre del personaje</label>
+            <input
+              id="player-name-input"
+              class="text-input"
+              type="text"
+              maxlength="18"
+              placeholder="Ej. Princesa Clara"
+              value="Estrella Real"
+              autocomplete="off"
+            />
+
+            <span class="field-label">Avatar base</span>
+            <div id="avatar-selector" class="avatar-grid" role="radiogroup" aria-label="Selector de avatar"></div>
+
+            <h2 class="section-heading spacer-top">2. Elige el Reino</h2>
+            <div id="world-selector" class="world-grid" role="radiogroup" aria-label="Selector de mundo"></div>
+          </div>
+
+          <!-- Columna Derecha: Modo Solo o Cooperativo LAN -->
+          <div class="menu-section">
+            <h2 class="section-heading">3. Modo de Juego</h2>
+            <div class="mode-tabs" role="tablist">
+              <button id="tab-solo" class="mode-tab active" type="button" role="tab" aria-selected="true">
+                ✦ Jugar Solo
+              </button>
+              <button id="tab-coop" class="mode-tab" type="button" role="tab" aria-selected="false">
+                ♛ Cooperativo (Red Local)
+              </button>
+            </div>
+
+            <!-- Panel Solo -->
+            <div id="panel-solo" class="mode-panel active">
+              <p class="panel-desc">
+                Explora libremente el Palacio de Cristal, personaliza tu estilo en el Vestidor Real,
+                completa las 3 misiones y supera todos los minijuegos a tu ritmo.
+              </p>
+              <ul class="feature-list">
+                <li>Castillo interior y exterior sin pantallas de carga</li>
+                <li>Vestidor en tiempo real con 4 conjuntos y accesorios</li>
+                <li>Pasarela de Moda, Baile Real y Carrera por los Jardines</li>
+              </ul>
+              <button id="btn-start-solo" class="btn-primary btn-large" type="button">
+                Entrar al Reino
+              </button>
+            </div>
+
+            <!-- Panel Cooperativo LAN WebRTC -->
+            <div id="panel-coop" class="mode-panel">
+              <div id="coop-role-picker" class="coop-role-picker">
+                <p class="panel-desc">
+                  Conecta directamente con compañeros en la misma red de clase sin servidores externos.
+                </p>
+                <div class="coop-role-buttons">
+                  <button id="btn-coop-host" class="btn-primary" type="button">
+                    ♛ Crear Grupo (Host)
+                  </button>
+                  <button id="btn-coop-guest" class="btn-secondary" type="button">
+                    ✦ Unirse a Grupo (Invitado)
+                  </button>
+                </div>
+              </div>
+
+              <!-- Asistente Host -->
+              <div id="coop-host-view" class="coop-flow hidden">
+                <div class="flow-header">
+                  <span class="badge-gold">Anfitrión del Grupo</span>
+                  <button id="btn-host-back" class="btn-link" type="button">Cambiar rol</button>
+                </div>
+
+                <div class="step-box">
+                  <div class="step-title">Paso 1 · Comparte este código de invitación</div>
+                  <div class="code-row">
+                    <textarea id="host-offer-code" class="code-box" readonly rows="2" placeholder="Generando código de sala..."></textarea>
+                    <button id="btn-copy-offer" class="btn-secondary btn-sm" type="button">Copiar</button>
+                  </div>
+                </div>
+
+                <div class="step-box">
+                  <div class="step-title">Paso 2 · Pega el código de respuesta de tu compañero</div>
+                  <div class="code-row">
+                    <textarea id="host-answer-input" class="code-box" rows="2" placeholder="Pega aquí la respuesta del invitado..."></textarea>
+                    <button id="btn-accept-answer" class="btn-primary btn-sm" type="button">Conectar</button>
+                  </div>
+                </div>
+
+                <div class="peer-lobby-box">
+                  <div class="peer-lobby-head">
+                    <span>Grupo conectado (<span id="host-peer-count">0</span>)</span>
+                    <button id="btn-new-invite" class="btn-link" type="button">+ Nuevo código</button>
+                  </div>
+                  <ul id="host-peer-list" class="peer-list"></ul>
+                </div>
+
+                <p id="host-status" class="status-line">Genera o comparte tu código para invitar compañeros.</p>
+
+                <button id="btn-start-host" class="btn-primary btn-large" type="button">
+                  Iniciar Aventura con el Grupo
+                </button>
+              </div>
+
+              <!-- Asistente Invitado -->
+              <div id="coop-guest-view" class="coop-flow hidden">
+                <div class="flow-header">
+                  <span class="badge-rose">Invitado Real</span>
+                  <button id="btn-guest-back" class="btn-link" type="button">Cambiar rol</button>
+                </div>
+
+                <div class="step-box">
+                  <div class="step-title">Paso 1 · Pega el código de invitación del Host</div>
+                  <div class="code-row">
+                    <textarea id="guest-offer-input" class="code-box" rows="2" placeholder="Pega aquí el código del anfitrión..."></textarea>
+                    <button id="btn-generate-answer" class="btn-primary btn-sm" type="button">Generar</button>
+                  </div>
+                </div>
+
+                <div class="step-box">
+                  <div class="step-title">Paso 2 · Envía este código de respuesta al Host</div>
+                  <div class="code-row">
+                    <textarea id="guest-answer-code" class="code-box" readonly rows="2" placeholder="Aquí aparecerá tu código de respuesta..."></textarea>
+                    <button id="btn-copy-answer" class="btn-secondary btn-sm" type="button">Copiar</button>
+                  </div>
+                </div>
+
+                <p id="guest-status" class="status-line">Pega el código del anfitrión para generar tu respuesta.</p>
+
+                <button id="btn-start-guest" class="btn-primary btn-large" type="button" disabled>
+                  Esperando conexión del Host...
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="menu-footer">
+          <span>Controles: <strong>WASD</strong> Mover · <strong>Shift</strong> Correr · <strong>Espacio</strong> Saltar · <strong>Ratón</strong> Cámara · <strong>E</strong> Interactuar · <strong>C</strong> Vestidor · <strong>T</strong> Chat</span>
+        </footer>
+      </div>
+    </section>
+
+    <!-- HUD en Partida -->
+    <section id="hud-overlay" class="hud-layer hidden" aria-label="Interfaz de juego">
+      <!-- Barra Superior -->
+      <div class="hud-top">
+        <div class="hud-brand glass-chip">
+          <span class="hud-world-name" id="hud-world-name">Palacio de Cristal</span>
+          <span class="hud-zone-name" id="hud-zone-name">Jardines Reales</span>
+        </div>
+
+        <div class="hud-compass glass-chip" aria-label="Brújula">
+          <div class="compass-track" id="compass-track">
+            <span>N</span><span>NE</span><span>E</span><span>SE</span><span>S</span><span>SO</span><span>O</span><span>NO</span>
+          </div>
+          <div class="compass-needle">▼</div>
+        </div>
+
+        <div class="hud-actions">
+          <button id="btn-hud-wardrobe" class="icon-btn glass-chip" type="button" title="Vestidor Real [C]">👗 Vestidor</button>
+          <button id="btn-hud-world" class="icon-btn glass-chip" type="button" title="Cambiar Reino">✨ Reino</button>
+          <button id="btn-hud-mute" class="icon-btn glass-chip" type="button" title="Silenciar música y sonido">🔊</button>
+          <button id="btn-hud-menu" class="icon-btn glass-chip" type="button" title="Volver al Menú">☰ Menú</button>
+        </div>
+      </div>
+
+      <!-- Panel Izquierdo: Grupo y Misiones -->
+      <aside class="hud-left">
+        <div class="glass-card party-card">
+          <div class="card-title-row">
+            <h3>♛ Grupo Real</h3>
+            <span id="hud-net-badge" class="pill-badge">Solo</span>
+          </div>
+          <ul id="hud-party-list" class="party-list"></ul>
+          <button id="btn-hud-invite" class="btn-mini hidden" type="button">+ Invitar compañero LAN</button>
+        </div>
+
+        <div class="glass-card quest-card">
+          <div class="card-title-row">
+            <h3>✦ Misiones del Reino</h3>
+            <span id="hud-quest-summary" class="pill-badge">0/3</span>
+          </div>
+          <ul id="hud-quest-list" class="quest-list"></ul>
+        </div>
+      </aside>
+
+      <!-- Panel Derecho: Minimapa y Accesos a Minijuegos -->
+      <aside class="hud-right">
+        <div class="glass-card minimap-card">
+          <canvas id="minimap-canvas" width="168" height="168" aria-label="Minimapa del reino"></canvas>
+          <div class="minimap-legend">
+            <span>● Tú</span>
+            <span class="legend-ally">● Grupo</span>
+            <span class="legend-gem">◆ Gemas</span>
+          </div>
+        </div>
+
+        <div class="glass-card activities-card">
+          <div class="card-title-row">
+            <h3>★ Minijuegos</h3>
+          </div>
+          <div class="activity-buttons">
+            <button class="activity-btn" data-minigame="fashion" type="button">✦ Pasarela de Moda</button>
+            <button class="activity-btn" data-minigame="ball" type="button">♪ Baile del Salón Real</button>
+            <button class="activity-btn" data-minigame="race" type="button">♛ Carrera Jardines</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Prompt contextual [E] -->
+      <div id="interact-prompt" class="interact-prompt glass-chip hidden">
+        <kbd>E</kbd> <span id="interact-label">Interactuar</span>
+      </div>
+
+      <!-- Notificaciones flotantes -->
+      <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+      <!-- Diálogo NPC -->
+      <div id="dialogue-box" class="dialogue-box glass-panel hidden">
+        <div class="dialogue-header">
+          <span id="dialogue-speaker" class="dialogue-speaker">Príncipe Adrián</span>
+          <span id="dialogue-role" class="dialogue-role">Heredero del Palacio</span>
+        </div>
+        <p id="dialogue-text" class="dialogue-text"></p>
+        <div id="dialogue-actions" class="dialogue-actions"></div>
+      </div>
+
+      <!-- Chat Rápido [T] -->
+      <div id="chat-panel" class="chat-panel glass-card">
+        <div id="chat-messages" class="chat-messages"></div>
+        <div id="chat-quick-bar" class="chat-quick-bar">
+          <button class="quick-chat-btn" data-msg="¡Hola a todos! 👑" type="button">¡Hola! 👑</button>
+          <button class="quick-chat-btn" data-msg="¡Vamos al Palacio! 🏰" type="button">Al Palacio 🏰</button>
+          <button class="quick-chat-btn" data-msg="¡Qué estilo tan genial! ✨" type="button">¡Genial! ✨</button>
+          <button class="quick-chat-btn" data-msg="¡Encontré una gema! 💎" type="button">¡Gema! 💎</button>
+        </div>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-input" type="text" maxlength="90" placeholder="Pulsa [T] para escribir al grupo..." autocomplete="off" />
+          <button type="submit" class="btn-chat-send">Enviar</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Vestidor Real [C] -->
+    <section id="wardrobe-overlay" class="modal-backdrop hidden" aria-label="Vestidor Real">
+      <div class="wardrobe-modal glass-panel">
+        <header class="modal-header">
+          <div>
+            <p class="modal-kicker">Atelier del Palacio</p>
+            <h2>Vestidor Real</h2>
+          </div>
+          <button id="btn-close-wardrobe" class="btn-close" type="button" aria-label="Cerrar vestidor">✕</button>
+        </header>
+
+        <div class="wardrobe-body">
+          <div class="wardrobe-group">
+            <h3>Conjuntos de Moda</h3>
+            <div id="wardrobe-outfits" class="wardrobe-options"></div>
+          </div>
+
+          <div class="wardrobe-group">
+            <h3>Peinados Reales</h3>
+            <div id="wardrobe-hairs" class="wardrobe-options"></div>
+          </div>
+
+          <div class="wardrobe-group">
+            <h3>Accesorios (Combinables)</h3>
+            <div id="wardrobe-accessories" class="wardrobe-options"></div>
+          </div>
+        </div>
+
+        <footer class="modal-footer">
+          <span class="wardrobe-tip">Tus cambios se sincronizan al instante con todo tu grupo.</span>
+          <button id="btn-wardrobe-done" class="btn-primary" type="button">¡Listo para brillar!</button>
+        </footer>
+      </div>
+    </section>
+
+    <!-- Modal Rápido de Invitación LAN en Partida -->
+    <section id="invite-modal" class="modal-backdrop hidden" aria-label="Invitar compañero LAN">
+      <div class="invite-modal-card glass-panel">
+        <header class="modal-header">
+          <div>
+            <p class="modal-kicker">Multijugador Red Local</p>
+            <h2>Invitar Nuevo Compañero</h2>
+          </div>
+          <button id="btn-close-invite-modal" class="btn-close" type="button">✕</button>
+        </header>
+        <div class="step-box">
+          <div class="step-title">1. Código de invitación</div>
+          <div class="code-row">
+            <textarea id="ingame-offer-code" class="code-box" readonly rows="2"></textarea>
+            <button id="btn-ingame-copy" class="btn-secondary btn-sm" type="button">Copiar</button>
+          </div>
+        </div>
+        <div class="step-box">
+          <div class="step-title">2. Pega la respuesta de tu compañero</div>
+          <div class="code-row">
+            <textarea id="ingame-answer-input" class="code-box" rows="2" placeholder="Pega aquí el código de respuesta..."></textarea>
+            <button id="btn-ingame-accept" class="btn-primary btn-sm" type="button">Conectar</button>
+          </div>
+        </div>
+        <p id="ingame-invite-status" class="status-line"></p>
+      </div>
+    </section>
+
+    <!-- Contenedor dinámico para HUD de Minijuegos -->
+    <div id="minigame-overlay" class="minigame-overlay hidden" aria-live="polite"></div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

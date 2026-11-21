@@ -1,0 +1,179 @@
+import * as THREE from 'three';
+import { CharacterRig } from './CharacterRig.js';
+
+export class RemotePlayer {
+  #scene;
+  #peerId;
+  #name;
+  #rig = null;
+  #targetPos = new THREE.Vector3(0, 0, 14);
+  #currentPos = new THREE.Vector3(0, 0, 14);
+  #targetYaw = Math.PI;
+  #currentYaw = Math.PI;
+  #animState = 'idle';
+  #nameSprite = null;
+  #chatSprite = null;
+  #chatTimer = 0;
+  #appearanceKey = '';
+
+  constructor(scene, peerId, profile = {}) {
+    this.#scene = scene;
+    this.#peerId = peerId;
+    this.#name = profile.name || 'Compañero Real';
+    this.#rig = new CharacterRig(profile.appearance);
+    this.#appearanceKey = profile.appearance ? JSON.stringify(profile.appearance) : '';
+  }
+
+  init() {
+    const root = this.#rig.init();
+    root.position.copy(this.#currentPos);
+    this.#scene.add(root);
+
+    this.#nameSprite = this.#createLabelSprite(this.#name, 'rgba(42, 16, 38, 0.78)', '#fff6fa');
+    this.#nameSprite.position.set(0, 2.22, 0);
+    this.#nameSprite.scale.set(1.9, 0.44, 1);
+    root.add(this.#nameSprite);
+  }
+
+  #createLabelSprite(text, bg, fg) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.roundRect(14, 18, 484, 92, 44);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(244, 198, 130, 0.85)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    ctx.fillStyle = fg;
+    ctx.font = 'bold 40px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const trimmed = text.length > 26 ? `${text.slice(0, 25)}…` : text;
+    ctx.fillText(trimmed, 256, 65);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    return new THREE.Sprite(mat);
+  }
+
+  setProfile(name, appearance) {
+    if (name && name !== this.#name) {
+      this.#name = name;
+      this.#replaceSprite('name', name);
+    }
+    if (appearance) {
+      // Los paquetes 'state' llegan ~15 veces/seg con la apariencia incluida:
+      // solo reconstruimos geometría cuando la ropa cambia de verdad.
+      const key = JSON.stringify(appearance);
+      if (key !== this.#appearanceKey) {
+        this.#appearanceKey = key;
+        this.#rig?.applyAppearance(appearance);
+      }
+    }
+  }
+
+  #replaceSprite(kind, text) {
+    const root = this.#rig?.getRoot();
+    if (!root) return;
+    if (kind === 'name' && this.#nameSprite) {
+      this.#nameSprite.material.map?.dispose();
+      this.#nameSprite.material.dispose();
+      root.remove(this.#nameSprite);
+      this.#nameSprite = this.#createLabelSprite(text, 'rgba(42, 16, 38, 0.78)', '#fff6fa');
+      this.#nameSprite.position.set(0, 2.22, 0);
+      this.#nameSprite.scale.set(1.9, 0.44, 1);
+      root.add(this.#nameSprite);
+    }
+  }
+
+  showChatBubble(message) {
+    const root = this.#rig?.getRoot();
+    if (!root) return;
+    if (this.#chatSprite) {
+      this.#chatSprite.material.map?.dispose();
+      this.#chatSprite.material.dispose();
+      root.remove(this.#chatSprite);
+      this.#chatSprite = null;
+    }
+    this.#chatSprite = this.#createLabelSprite(message, 'rgba(255, 248, 252, 0.94)', '#7a1f4d');
+    this.#chatSprite.position.set(0, 2.75, 0);
+    this.#chatSprite.scale.set(2.55, 0.56, 1);
+    root.add(this.#chatSprite);
+    this.#chatTimer = 5.0;
+  }
+
+  applyNetworkState(state) {
+    if (state.pos) {
+      this.#targetPos.set(state.pos[0], state.pos[1], state.pos[2]);
+    }
+    if (typeof state.yaw === 'number') {
+      this.#targetYaw = state.yaw;
+    }
+    if (state.anim) {
+      this.#animState = state.anim;
+    }
+    if (state.name || state.appearance) {
+      this.setProfile(state.name, state.appearance);
+    }
+  }
+
+  getPeerId() {
+    return this.#peerId;
+  }
+
+  getName() {
+    return this.#name;
+  }
+
+  getPosition() {
+    return this.#currentPos;
+  }
+
+  update(dt) {
+    if (!this.#rig) return;
+    const t = Math.min(1, dt * 11);
+    this.#currentPos.lerp(this.#targetPos, t);
+
+    let diff = this.#targetYaw - this.#currentYaw;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    this.#currentYaw += diff * t;
+
+    const root = this.#rig.getRoot();
+    root.position.copy(this.#currentPos);
+    root.rotation.y = this.#currentYaw;
+    this.#rig.update(dt, this.#animState, 0);
+
+    if (this.#chatTimer > 0) {
+      this.#chatTimer -= dt;
+      if (this.#chatTimer <= 0 && this.#chatSprite) {
+        this.#chatSprite.material.map?.dispose();
+        this.#chatSprite.material.dispose();
+        root.remove(this.#chatSprite);
+        this.#chatSprite = null;
+      }
+    }
+  }
+
+  dispose() {
+    if (this.#nameSprite) {
+      this.#nameSprite.material.map?.dispose();
+      this.#nameSprite.material.dispose();
+    }
+    if (this.#chatSprite) {
+      this.#chatSprite.material.map?.dispose();
+      this.#chatSprite.material.dispose();
+    }
+    if (this.#rig) {
+      this.#scene.remove(this.#rig.getRoot());
+      this.#rig.dispose();
+      this.#rig = null;
+    }
+  }
+}
