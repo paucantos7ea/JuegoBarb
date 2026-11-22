@@ -293,16 +293,16 @@ export class CharacterPresets {
         // Mechones frontales ondulados sobre hombros
         ribbon([[s * 0.145, 0.075, 0.055], [s * 0.175, -0.06, 0.048], [s * 0.165, -0.19, 0.062], [s * 0.192, -0.32, 0.025], [s * 0.162, -0.42, 0.048]], 0.046, 0.014, 0.34);
       }
-      add(new THREE.OctahedronGeometry(0.026, 0), materials.crystal, 0, 0.035, -0.192, 0, 0, 0, 0.85, 1.35, 0.6);
-      add(new THREE.TorusGeometry(0.034, 0.007, 8, 16), materials.roseGold, 0, 0.035, -0.188, 0, 0, 0, 1.25, 0.72, 1);
+      add(new THREE.OctahedronGeometry(0.026, 0), 0, 0.035, -0.192, 0, 0, 0, 0.85, 1.35, 0.6, materials.crystal);
+      add(new THREE.TorusGeometry(0.034, 0.007, 8, 16), 0, 0.035, -0.188, 0, 0, 0, 1.25, 0.72, 1, materials.roseGold);
 
       // Manto ondulado en doble capa (volumen rico en cascada sobre espalda y hombros)
       add(CharacterPresets.createWavyHairSheet({ arcStart: Math.PI * 0.42, arcEnd: Math.PI * 1.58, topY: 0.105, bottomY: -0.45, topR: 0.172, midR: 0.215, botR: 0.245, waveAmp: 0.028, waveFreq: 2.8, rippleFreq: 11 }));
       add(CharacterPresets.createWavyHairSheet({ arcStart: Math.PI * 0.50, arcEnd: Math.PI * 1.50, topY: 0.085, bottomY: -0.41, topR: 0.15, midR: 0.185, botR: 0.205, zOff: -0.005, waveAmp: 0.02, waveFreq: 2.4, rippleFreq: 9, segU: 24, segV: 16 }));
     } else if (hairId === 'coleta_perla') {
       for (const s of [-1, 1]) ribbon([[s * 0.142, 0.075, 0.06], [s * 0.158, -0.04, 0.06], [s * 0.138, -0.15, 0.078]], 0.028, 0.006, 0.34);
-      add(new THREE.TorusGeometry(0.045, 0.013, 10, 20), materials.roseGold, 0, 0.125, -0.172, 0.62);
-      add(new THREE.SphereGeometry(0.02, 10, 8), materials.crystal, 0, 0.138, -0.206);
+      add(new THREE.TorusGeometry(0.045, 0.013, 10, 20), 0, 0.125, -0.172, 0.62, 0, 0, 1, 1, 1, materials.roseGold);
+      add(new THREE.SphereGeometry(0.02, 10, 8), 0, 0.138, -0.206, 0, 0, 0, 1, 1, 1, materials.crystal);
       add(CharacterPresets.createWavyHairSheet({ arcStart: Math.PI * 0.76, arcEnd: Math.PI * 1.24, topY: 0.13, bottomY: -0.36, topR: 0.055, midR: 0.125, botR: 0.145, zOff: -0.165, waveAmp: 0.026, waveFreq: 2.6, rippleFreq: 7, segU: 22, segV: 18 }));
       add(CharacterPresets.createWavyHairSheet({ arcStart: Math.PI * 0.80, arcEnd: Math.PI * 1.20, topY: 0.12, bottomY: -0.32, topR: 0.045, midR: 0.095, botR: 0.11, zOff: -0.18, waveAmp: 0.02, waveFreq: 2.2, rippleFreq: 5, segU: 16, segV: 14 }));
     } else {
