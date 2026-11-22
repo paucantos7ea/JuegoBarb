@@ -5,6 +5,16 @@
   pointer-events: none;
 }
 
+body.pointer-locked,
+body.pointer-locked * {
+  cursor: none !important;
+}
+
+body.pointer-locked .hud-layer,
+body.pointer-locked .hud-layer * {
+  pointer-events: none !important;
+}
+
 .hud-layer button,
 .hud-layer input,
 .hud-layer textarea,

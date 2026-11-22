@@ -52,6 +52,7 @@ export class InputManager {
 
   #onPointerLockChange() {
     const locked = this.isPointerLocked();
+    document.body.classList.toggle('pointer-locked', locked);
     if (!locked) {
       this.#isDragging = false;
     }
@@ -62,6 +63,7 @@ export class InputManager {
     this.#pointerLockEnabled = Boolean(enabled);
     if (!this.#pointerLockEnabled) {
       this.exitPointerLock();
+      document.body.classList.remove('pointer-locked');
     }
   }
 
@@ -110,6 +112,7 @@ export class InputManager {
 
     if (e.code === 'Tab' && this.#pointerLockEnabled) {
       e.preventDefault();
+      e.stopPropagation();
       if (!e.repeat && !this.#controlsLocked) {
         this.togglePointerLock();
       }
@@ -149,8 +152,11 @@ export class InputManager {
 
   #onMouseDown(e) {
     if (this.#controlsLocked || this.#isTypingInField()) return;
-    if (e.button === 0 && this.#pointerLockEnabled && !this.isPointerLocked()) {
-      this.requestPointerLock();
+    if (this.#pointerLockEnabled) {
+      if (e.button === 0 && !this.isPointerLocked()) {
+        this.requestPointerLock();
+      }
+      return;
     }
     if (e.button === 0 || e.button === 2) {
       this.#isDragging = true;
@@ -161,7 +167,8 @@ export class InputManager {
 
   #onMouseMove(e) {
     if (this.#controlsLocked || this.#isTypingInField()) return;
-    if (this.isPointerLocked()) {
+    if (this.#pointerLockEnabled) {
+      if (!this.isPointerLocked()) return;
       // Filtrar saltos puntuales del navegador al capturar/liberar
       if (Math.abs(e.movementX) < 320 && Math.abs(e.movementY) < 320) {
         this.#lookDeltaX += e.movementX;
