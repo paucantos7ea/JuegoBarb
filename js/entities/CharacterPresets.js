@@ -206,6 +206,31 @@ export class CharacterPresets {
     }
   }
 
+  static createTaperedHairStrand(points, baseRadius, tipRadius = 0.004, tubularSegs = 16, radialSegs = 8) {
+    const vecs = points.map((p) => (p instanceof THREE.Vector3 ? p : new THREE.Vector3(p[0], p[1], p[2])));
+    const curve = new THREE.CatmullRomCurve3(vecs);
+    const geo = new THREE.TubeGeometry(curve, tubularSegs, 1, radialSegs, false);
+    const pos = geo.attributes.position;
+    const center = new THREE.Vector3();
+    const offset = new THREE.Vector3();
+
+    for (let i = 0; i <= tubularSegs; i++) {
+      const u = i / tubularSegs;
+      curve.getPointAt(u, center);
+      const rootBlend = u < 0.12 ? 0.62 + 0.38 * (u / 0.12) : 1;
+      const bodyTaper = Math.pow(1 - u, 0.75);
+      let r = (tipRadius + (baseRadius - tipRadius) * bodyTaper) * rootBlend;
+      if (i === tubularSegs) r = Math.max(0.0015, tipRadius * 0.45);
+      for (let j = 0; j <= radialSegs; j++) {
+        const idx = i * (radialSegs + 1) + j;
+        offset.fromBufferAttribute(pos, idx).sub(center).multiplyScalar(r);
+        pos.setXYZ(idx, center.x + offset.x, center.y + offset.y, center.z + offset.z);
+      }
+    }
+    geo.computeVertexNormals();
+    return geo;
+  }
+
   static populateHair(group, hairId, materials, isMale) {
     const add = (geo, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, mat = materials.hair) => {
       const mesh = new THREE.Mesh(geo, mat);
@@ -215,45 +240,89 @@ export class CharacterPresets {
       mesh.castShadow = true;
       group.add(mesh);
     };
+    const strand = (pts, r0, r1 = 0.004, tSeg = 16, rSeg = 8) => {
+      add(CharacterPresets.createTaperedHairStrand(pts, r0, r1, tSeg, rSeg), 0, 0, 0);
+    };
 
-    // Casco de pelo en dos piezas para dejar el rostro despejado (ojos en y≈0.01, cejas en y≈0.04):
-    // - Coronilla completa hasta la línea del pelo (por encima de las cejas)
-    // - Media esfera trasera (phi π→2π = mitad -Z) que baja hasta la nuca
-    // Antes era una única esfera de 360° hasta 0.62π que tapaba los ojos.
-    add(new THREE.SphereGeometry(0.178, 18, 8, 0, Math.PI * 2, 0, Math.PI * 0.36), 0, 0.032, -0.012, -0.1, 0, 0, 0.98, 1.12, 1.02);
-    add(new THREE.SphereGeometry(0.178, 12, 12, Math.PI, Math.PI, 0, Math.PI * 0.62), 0, 0.032, -0.012, -0.1, 0, 0, 0.98, 1.12, 1.02);
+    // Casquete craneal suave en dos piezas (deja frente y rostro despejados)
+    const sx = isMale ? 1.0 : 0.96;
+    const sy = isMale ? 1.09 : 1.14;
+    add(new THREE.SphereGeometry(0.174, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.36), 0, 0.028, -0.01, -0.12, 0, 0, sx, sy, 1.0);
+    add(new THREE.SphereGeometry(0.174, 20, 14, Math.PI, Math.PI, 0, Math.PI * 0.65), 0, 0.028, -0.01, -0.12, 0, 0, sx, sy, 1.0);
 
     if (hairId === 'principe_corto' || isMale) {
-      add(new THREE.SphereGeometry(0.175, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.52), 0, 0.045, -0.02, -0.25, 0, 0, 1.0, 0.96, 1.04);
-      add(new THREE.CapsuleGeometry(0.055, 0.14, 6, 12), 0.03, 0.16, 0.095, 0.25, 0.2, 1.15, 1.0, 1.0, 0.85);
-      add(new THREE.BoxGeometry(0.035, 0.11, 0.06), -0.15, 0.02, 0.01);
-      add(new THREE.BoxGeometry(0.035, 0.11, 0.06), 0.15, 0.02, 0.01);
+      // Tupé masculino esculpido en mechones curvos ahusados
+      const quiff = [
+        [[-0.07, 0.135, 0.13], [-0.04, 0.195, 0.125], [0.02, 0.21, 0.05], [0.05, 0.175, -0.07]],
+        [[-0.02, 0.132, 0.14], [0.02, 0.205, 0.132], [0.07, 0.205, 0.04], [0.09, 0.16, -0.08]],
+        [[0.04, 0.128, 0.132], [0.085, 0.185, 0.105], [0.12, 0.165, 0.01], [0.125, 0.115, -0.09]],
+        [[-0.105, 0.12, 0.105], [-0.125, 0.155, 0.04], [-0.135, 0.12, -0.06], [-0.115, 0.045, -0.13]]
+      ];
+      quiff.forEach((pts, i) => strand(pts, i < 2 ? 0.032 : 0.025, 0.006, 14, 8));
+      // Patillas perfiladas y nuca limpia
+      for (const s of [-1, 1]) {
+        strand([[s * 0.145, 0.105, 0.045], [s * 0.16, 0.045, 0.038], [s * 0.154, -0.028, 0.025]], 0.022, 0.005, 10, 7);
+      }
+      for (let i = -2; i <= 2; i++) {
+        const a = i * 0.42;
+        const x = Math.sin(a) * 0.155;
+        const z = -Math.cos(a) * 0.155 - 0.01;
+        strand([[x * 0.9, 0.075, z * 0.95], [x, -0.005, z], [x * 0.88, -0.095, z * 0.9]], 0.028, 0.006, 10, 7);
+      }
       return;
     }
 
-    // Flequillo lateral suave en todos los peinados femeninos
-    add(new THREE.CapsuleGeometry(0.042, 0.13, 6, 10), -0.06, 0.125, 0.115, 0.2, -0.35, -0.78);
-    add(new THREE.CapsuleGeometry(0.038, 0.11, 6, 10), 0.085, 0.105, 0.105, 0.18, 0.35, 0.62);
+    // Flequillo lateral curvo y suave común a todos los peinados femeninos
+    strand([[-0.045, 0.18, 0.082], [0.042, 0.146, 0.138], [0.122, 0.088, 0.118], [0.152, -0.008, 0.072]], 0.03, 0.005, 14, 8);
+    strand([[-0.03, 0.188, 0.062], [0.068, 0.156, 0.116], [0.142, 0.088, 0.085], [0.156, -0.045, 0.048]], 0.027, 0.005, 14, 8);
+    strand([[-0.055, 0.176, 0.078], [-0.122, 0.128, 0.112], [-0.154, 0.042, 0.084], [-0.15, -0.075, 0.056]], 0.028, 0.005, 14, 8);
 
     if (hairId === 'ondas_reales') {
-      for (let i = -3; i <= 3; i++) {
-        const a = i * 0.34;
-        const x = Math.sin(a) * 0.145;
-        const z = -Math.cos(a) * 0.135 - 0.02;
-        add(new THREE.CapsuleGeometry(0.055, 0.44, 8, 12), x, -0.21, z, 0.14, 0, -i * 0.06, 1, 1, 0.82);
-        add(new THREE.SphereGeometry(0.062, 10, 8), x * 1.15, -0.44, z - 0.03, 0, 0, 0, 1.05, 0.85, 0.9);
+      for (const s of [-1, 1]) {
+        strand([
+          [s * 0.135, 0.095, 0.055], [s * 0.158, -0.03, 0.04],
+          [s * 0.148, -0.175, 0.052], [s * 0.168, -0.32, 0.022], [s * 0.148, -0.43, 0.042]
+        ], 0.028, 0.004, 18, 8);
       }
-      add(new THREE.CapsuleGeometry(0.034, 0.26, 6, 10), -0.145, -0.12, 0.055, -0.1, 0, -0.14);
-      add(new THREE.CapsuleGeometry(0.034, 0.26, 6, 10), 0.145, -0.12, 0.055, -0.1, 0, 0.14);
+      for (let i = -4; i <= 4; i++) {
+        const a = i * 0.32, abs = Math.abs(i), len = 0.54 - abs * 0.028, w = (i % 2 === 0 ? 1 : -1) * 0.024;
+        const x0 = Math.sin(a) * 0.148, z0 = -Math.cos(a) * 0.148 - 0.012;
+        strand([
+          [x0 * 0.82, 0.115, z0 * 0.85], [x0 * 1.04, -0.015, z0 * 1.06],
+          [x0 * 1.12 + w, -len * 0.36, z0 - 0.032], [x0 * 1.18 - w, -len * 0.72, z0 - 0.055], [x0 * 1.1 + w * 0.8, -len, z0 - 0.028]
+        ], abs < 3 ? 0.038 : 0.032, 0.004, 18, 8);
+      }
     } else if (hairId === 'coleta_perla') {
-      add(new THREE.TorusGeometry(0.048, 0.016, 8, 16), 0, 0.135, -0.175, 0.65, 0, 0, 1, 1, 1, materials.roseGold);
-      add(new THREE.CapsuleGeometry(0.06, 0.36, 8, 12), 0, -0.05, -0.245, -0.35, 0, 0);
-      add(new THREE.CapsuleGeometry(0.045, 0.32, 8, 10), -0.045, -0.11, -0.23, -0.28, 0, -0.16);
-      add(new THREE.CapsuleGeometry(0.045, 0.32, 8, 10), 0.045, -0.11, -0.23, -0.28, 0, 0.16);
+      for (const s of [-1, 1]) strand([[s * 0.14, 0.075, 0.06], [s * 0.155, -0.03, 0.062], [s * 0.135, -0.145, 0.078]], 0.02, 0.003, 12, 7);
+      add(new THREE.TorusGeometry(0.044, 0.013, 10, 20), 0, 0.128, -0.17, 0.62, 0, 0, 1, 1, 1, materials.roseGold);
+      add(new THREE.SphereGeometry(0.02, 10, 8), 0, 0.14, -0.205, 0, 0, 0, 1, 1, 1, materials.crystal);
+      const tailSpecs = [
+        [0, 0, 0.44, 0.04], [-0.042, 0.015, 0.42, 0.032], [0.042, 0.015, 0.42, 0.032],
+        [-0.072, -0.012, 0.37, 0.026], [0.072, -0.012, 0.37, 0.026], [-0.026, -0.025, 0.39, 0.028], [0.026, -0.025, 0.39, 0.028]
+      ];
+      for (const [ox, oz, len, rad] of tailSpecs) {
+        strand([
+          [ox * 0.25, 0.128, -0.168], [ox * 0.85, 0.158, -0.235 + oz], [ox * 1.35, 0.01, -0.285 + oz],
+          [ox * 1.1, -len * 0.45, -0.245 + oz], [ox * 1.45, -len, -0.28 + oz]
+        ], rad, 0.004, 18, 8);
+      }
     } else {
-      add(new THREE.SphereGeometry(0.115, 16, 12), 0, 0.215, -0.085, 0, 0, 0, 1.08, 0.92, 1.0);
-      add(new THREE.TorusGeometry(0.095, 0.022, 8, 18), 0, 0.165, -0.085, Math.PI / 2, 0, 0);
-      add(new THREE.BoxGeometry(0.18, 0.018, 0.022), 0, 0.19, -0.14, 0, 0, 0.22, 1, 1, 1, materials.roseGold);
+      for (const s of [-1, 1]) {
+        strand([[s * 0.142, 0.07, 0.06], [s * 0.155, -0.035, 0.058], [s * 0.132, -0.13, 0.07]], 0.02, 0.003, 12, 7);
+        strand([[s * 0.12, -0.055, -0.11], [s * 0.105, 0.06, -0.155], [s * 0.04, 0.165, -0.13]], 0.026, 0.008, 12, 7);
+      }
+      add(new THREE.SphereGeometry(0.088, 18, 14), 0, 0.195, -0.095, 0, 0, 0, 1.08, 0.88, 0.98);
+      for (let b = 0; b < 3; b++) {
+        const pts = [];
+        for (let k = 0; k <= 8; k++) {
+          const ang = b * (Math.PI * 2 / 3) + (k / 8) * Math.PI * 1.65;
+          const r = 0.088 + Math.sin(k * 1.4) * 0.01;
+          pts.push([Math.cos(ang) * r, 0.155 + (k / 8) * 0.075, -0.095 + Math.sin(ang) * r * 0.9]);
+        }
+        strand(pts, 0.024, 0.01, 16, 7);
+      }
+      add(new THREE.CylinderGeometry(0.007, 0.005, 0.21, 8), 0, 0.195, -0.135, 0, 0, Math.PI * 0.42, 1, 1, 1, materials.roseGold);
+      add(new THREE.OctahedronGeometry(0.022, 0), 0.095, 0.222, -0.135, 0, 0, 0, 1, 1, 1, materials.crystal);
     }
   }
 

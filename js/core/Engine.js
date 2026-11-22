@@ -23,8 +23,8 @@ export class Engine {
   #moteVelocities = null;
   #elapsed = 0;
   #onResizeBound = null;
-  #envIntensity = 0.72;
-  #envSyncTimer = 0;
+  #envIntensity = 0.6;
+  #envSyncTimer = 1;
 
   constructor(container) {
     this.#container = container;
@@ -43,7 +43,7 @@ export class Engine {
     this.#renderer.shadowMap.enabled = true;
     this.#renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.#renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.#renderer.toneMappingExposure = 1.08;
+    this.#renderer.toneMappingExposure = 0.92;
     this.#renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.#container.appendChild(this.#renderer.domElement);
 
@@ -67,10 +67,10 @@ export class Engine {
   }
 
   #setupLights() {
-    this.#hemiLight = new THREE.HemisphereLight(0xfff5fa, 0xc79ab0, 0.85);
+    this.#hemiLight = new THREE.HemisphereLight(0xfff5fa, 0xc79ab0, 0.68);
     this.#scene.add(this.#hemiLight);
 
-    this.#sunLight = new THREE.DirectionalLight(0xfff1dc, 2.0);
+    this.#sunLight = new THREE.DirectionalLight(0xfff1dc, 1.4);
     this.#sunLight.position.set(34, 48, 28);
     this.#sunLight.castShadow = true;
     this.#sunLight.shadow.mapSize.set(2048, 2048);
@@ -85,7 +85,7 @@ export class Engine {
     this.#sunLight.shadow.normalBias = 0.03;
     this.#scene.add(this.#sunLight);
 
-    this.#fillLight = new THREE.DirectionalLight(0xffb6d5, 0.55);
+    this.#fillLight = new THREE.DirectionalLight(0xffb6d5, 0.36);
     this.#fillLight.position.set(-30, 22, -25);
     this.#scene.add(this.#fillLight);
   }
@@ -178,9 +178,9 @@ export class Engine {
     this.#composer.addPass(new RenderPass(this.#scene, this.#camera));
     this.#bloomPass = new UnrealBloomPass(
       new THREE.Vector2(width, height),
-      0.32,
-      0.42,
-      0.84
+      0.22,
+      0.35,
+      0.95
     );
     this.#composer.addPass(this.#bloomPass);
     this.#composer.addPass(new OutputPass());
@@ -207,14 +207,17 @@ export class Engine {
     this.#fillLight.color.setHex(theme.fillColor);
     this.#fillLight.intensity = theme.fillIntensity;
 
-    this.#renderer.toneMappingExposure = theme.exposure;
+    this.#renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.#renderer.toneMappingExposure = Math.min(0.92, theme.exposure ?? 0.92);
     // three r160 no soporta scene.environmentIntensity (llegó en r163):
     // lo aplicamos material a material con envMapIntensity.
-    this.#envIntensity = theme.envIntensity;
+    this.#envIntensity = Math.min(theme.envIntensity ?? 0.6, 0.65);
     this.#syncEnvIntensity();
+    this.#calibrateSceneMaterials();
 
-    this.#bloomPass.strength = theme.bloomStrength;
-    this.#bloomPass.threshold = theme.bloomThreshold;
+    this.#bloomPass.strength = theme.bloomStrength ?? 0.22;
+    this.#bloomPass.radius = theme.bloomRadius ?? 0.35;
+    this.#bloomPass.threshold = Math.min(1.0, Math.max(0.95, theme.bloomThreshold ?? 0.95));
 
     this.#starField.material.opacity = theme.starsOpacity;
     this.#motes.material.color.setHex(theme.moteColor);
@@ -231,6 +234,24 @@ export class Engine {
     });
   }
 
+  #calibrateSceneMaterials() {
+    if (!this.#scene) return;
+    this.#scene.traverse((obj) => {
+      const mats = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : [];
+      for (const mat of mats) {
+        if (
+          mat.isMeshStandardMaterial &&
+          !mat.isMeshPhysicalMaterial &&
+          mat.metalness < 0.35 &&
+          (!mat.emissiveIntensity || mat.emissiveIntensity < 0.2)
+        ) {
+          mat.roughness = Math.max(mat.roughness, 0.48);
+          mat.envMapIntensity = Math.min(mat.envMapIntensity ?? 1, 0.65);
+        }
+      }
+    });
+  }
+
   update(dt) {
     this.#elapsed += dt;
     // Los personajes/objetos creados después del tema (jugadores remotos, minijuegos) también lo reciben
@@ -238,6 +259,7 @@ export class Engine {
     if (this.#envSyncTimer >= 1) {
       this.#envSyncTimer = 0;
       this.#syncEnvIntensity();
+      this.#calibrateSceneMaterials();
     }
     if (this.#motes) {
       const pos = this.#motes.geometry.attributes.position;

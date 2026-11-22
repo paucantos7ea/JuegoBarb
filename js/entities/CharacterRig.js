@@ -30,6 +30,7 @@ export class CharacterRig {
   #textureFactory = null;
   #ownsTextures = false;
   #isMale = false;
+  #outfitStyle = 'ballgown';
   #animTime = 0;
 
   #appearance = {
@@ -41,11 +42,7 @@ export class CharacterRig {
 
   constructor(initialAppearance = null, textureFactory = null) {
     if (initialAppearance) {
-      this.#appearance = {
-        ...this.#appearance,
-        ...initialAppearance,
-        accessories: [...(initialAppearance.accessories || ['tiara'])]
-      };
+      this.#appearance = { ...this.#appearance, ...initialAppearance, accessories: [...(initialAppearance.accessories || ['tiara'])] };
     }
     this.#textureFactory = textureFactory;
   }
@@ -56,14 +53,11 @@ export class CharacterRig {
       this.#textureFactory.init();
       this.#ownsTextures = true;
     }
-
     const avatar = CharacterPresets.getAvatar(this.#appearance.avatarId);
     this.#isMale = avatar.gender === 'male';
-
     this.#root = new THREE.Group();
     this.#bodyGroup = new THREE.Group();
     this.#root.add(this.#bodyGroup);
-
     this.#createMaterials(avatar);
     this.#buildBody();
     this.#buildHead(avatar);
@@ -71,34 +65,27 @@ export class CharacterRig {
       this.#headGroup, this.#leftForearm, this.#rightForearm, this.#materials, (g) => this.#track(g)
     );
     this.applyAppearance(this.#appearance);
+    const baseZ = this.#getBaseArmZ();
+    this.#leftArm.rotation.set(0, 0, -baseZ);
+    this.#rightArm.rotation.set(0, 0, baseZ);
     return this.#root;
   }
 
   #createMaterials(avatar) {
-    this.#materials.skin = new THREE.MeshStandardMaterial({ color: avatar.skin, roughness: 0.48, metalness: 0.02 });
-    this.#materials.face = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.44, metalness: 0.02 });
-    this.#materials.lips = new THREE.MeshStandardMaterial({ color: avatar.lipHex, roughness: 0.18, metalness: 0.08 });
-    this.#materials.hair = new THREE.MeshStandardMaterial({ color: avatar.hair, roughness: 0.35, metalness: 0.14 });
-    this.#materials.primary = new THREE.MeshPhysicalMaterial({
-      color: 0xec66aa, roughness: 0.3, metalness: 0.12, sheen: 0.75, sheenColor: new THREE.Color(0xffd7ec), clearcoat: 0.2
-    });
-    this.#materials.secondary = new THREE.MeshPhysicalMaterial({
-      color: 0xf8c9b8, roughness: 0.34, metalness: 0.1, sheen: 0.5
-    });
-    this.#materials.roseGold = new THREE.MeshStandardMaterial({ color: 0xf4b99d, metalness: 0.9, roughness: 0.16 });
-    this.#materials.crystal = new THREE.MeshPhysicalMaterial({
-      color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 0.48, roughness: 0.1, metalness: 0.15, clearcoat: 0.8
-    });
-    this.#materials.shawl = new THREE.MeshPhysicalMaterial({
-      color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.2, roughness: 0.12, transparent: true, opacity: 0.58, side: THREE.DoubleSide
-    });
-    this.#materials.dark = new THREE.MeshStandardMaterial({ color: 0x221520, roughness: 0.25, metalness: 0.35 });
+    const m = this.#materials;
+    m.skin = new THREE.MeshStandardMaterial({ color: avatar.skin, roughness: 0.48, metalness: 0.02 });
+    m.face = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.44, metalness: 0.02 });
+    m.lips = new THREE.MeshPhysicalMaterial({ color: avatar.lipHex, roughness: 0.2, metalness: 0.05, clearcoat: 0.55 });
+    m.hair = new THREE.MeshPhysicalMaterial({ color: avatar.hair, roughness: 0.35, metalness: 0.12, sheen: 0.45 });
+    m.primary = new THREE.MeshPhysicalMaterial({ color: 0xec66aa, roughness: 0.3, metalness: 0.12, sheen: 0.75, sheenColor: new THREE.Color(0xffd7ec), clearcoat: 0.2 });
+    m.secondary = new THREE.MeshPhysicalMaterial({ color: 0xf8c9b8, roughness: 0.34, metalness: 0.1, sheen: 0.5 });
+    m.roseGold = new THREE.MeshStandardMaterial({ color: 0xf4b99d, metalness: 0.9, roughness: 0.16 });
+    m.crystal = new THREE.MeshPhysicalMaterial({ color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 0.48, roughness: 0.1, metalness: 0.15, clearcoat: 0.8 });
+    m.shawl = new THREE.MeshPhysicalMaterial({ color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.2, roughness: 0.12, transparent: true, opacity: 0.58, side: THREE.DoubleSide });
+    m.dark = new THREE.MeshStandardMaterial({ color: 0x221520, roughness: 0.25, metalness: 0.35 });
   }
 
-  #track(geo) {
-    this.#geometries.push(geo);
-    return geo;
-  }
+  #track(geo) { this.#geometries.push(geo); return geo; }
 
   #buildBody() {
     const m = this.#isMale;
@@ -192,7 +179,7 @@ export class CharacterRig {
 
       const forearm = new THREE.Group();
       forearm.position.y = -0.27;
-      forearm.rotation.x = -0.18;
+      forearm.rotation.set(-0.15, 0, i === 0 ? -0.06 : 0.06);
       const lower = new THREE.Mesh(loGeo, sleeveMat);
       lower.position.y = -0.125;
       lower.castShadow = true;
@@ -235,13 +222,13 @@ export class CharacterRig {
     headMesh.castShadow = true;
     this.#headGroup.add(headMesh);
 
-    const nose = new THREE.Mesh(this.#track(new THREE.ConeGeometry(0.015, 0.036, 10)), this.#materials.skin);
-    nose.position.set(0, -0.015, 0.162);
-    nose.rotation.x = Math.PI * 0.38;
+    const nose = new THREE.Mesh(this.#track(new THREE.SphereGeometry(0.012, 10, 8)), this.#materials.skin);
+    nose.scale.set(m ? 0.94 : 0.82, m ? 1.2 : 1.12, m ? 1.22 : 1.15);
+    nose.position.set(0, -0.040, 0.155);
 
-    const lip = new THREE.Mesh(this.#track(new THREE.SphereGeometry(0.018, 10, 8)), this.#materials.lips);
-    lip.scale.set(1.55, 0.45, 0.55);
-    lip.position.set(0, -0.068, 0.149);
+    const lip = new THREE.Mesh(this.#track(new THREE.SphereGeometry(0.016, 12, 8)), this.#materials.lips);
+    lip.scale.set(m ? 1.28 : 1.42, m ? 0.34 : 0.38, 0.5);
+    lip.position.set(0, -0.072, 0.143);
     this.#headGroup.add(nose, lip);
 
     const earGeo = this.#track(new THREE.SphereGeometry(0.024, 8, 8));
@@ -279,13 +266,12 @@ export class CharacterRig {
 
   applyAppearance(partial) {
     this.#appearance = {
-      ...this.#appearance,
-      ...partial,
+      ...this.#appearance, ...partial,
       accessories: partial.accessories ? [...partial.accessories] : this.#appearance.accessories
     };
-
     const avatar = CharacterPresets.getAvatar(this.#appearance.avatarId);
     const outfit = CharacterPresets.getOutfit(this.#appearance.outfitId);
+    this.#outfitStyle = outfit.style;
 
     this.#materials.skin.color.setHex(avatar.skin);
     this.#materials.hair.color.setHex(avatar.hair);
@@ -301,87 +287,100 @@ export class CharacterRig {
 
     this.#clearGroup(this.#outfitGroup);
     CharacterPresets.populateOutfit(this.#outfitGroup, outfit, this.#materials, this.#isMale);
-
     this.#clearGroup(this.#hairGroup);
     CharacterPresets.populateHair(this.#hairGroup, this.#appearance.hairId, this.#materials, this.#isMale);
 
     const active = new Set(this.#appearance.accessories);
-    for (const [id, node] of Object.entries(this.#accessoryNodes)) {
-      node.visible = active.has(id);
-    }
+    for (const [id, node] of Object.entries(this.#accessoryNodes)) node.visible = active.has(id);
   }
 
-  getAppearance() {
-    return { ...this.#appearance, accessories: [...this.#appearance.accessories] };
-  }
+  getAppearance() { return { ...this.#appearance, accessories: [...this.#appearance.accessories] }; }
+  getRoot() { return this.#root; }
 
-  getRoot() {
-    return this.#root;
+  #getBaseArmZ() {
+    return this.#outfitStyle === 'ballgown' ? 0.34 : (this.#isMale ? 0.28 : 0.30);
   }
 
   update(dt, animState = 'idle', speed = 0) {
-    this.#animTime += dt;
+    const safeDt = Math.max(0, Math.min(dt, 0.1));
+    this.#animTime += safeDt;
     const t = this.#animTime;
+    const baseZ = this.#getBaseArmZ();
+
+    // Pose objetivo absoluta para todos los ejes (cero residuos al cambiar de estado)
+    const p = {
+      bodyY: 0, bodyRotX: 0, bodyRotY: 0, headX: 0, headY: 0, headZ: 0,
+      lArmX: 0, lArmZ: -baseZ, rArmX: 0, rArmZ: baseZ,
+      lForeX: -0.15, lForeZ: -0.06, rForeX: -0.15, rForeZ: 0.06,
+      lLegX: 0, rLegX: 0, lShinX: 0, rShinX: 0
+    };
 
     if (animState === 'walk' || animState === 'run') {
-      const freq = animState === 'run' ? 11.2 : 7.4;
-      const swing = Math.sin(t * freq) * (animState === 'run' ? 0.68 : 0.42);
-      this.#leftLeg.rotation.x = swing;
-      this.#rightLeg.rotation.x = -swing;
-      this.#leftShin.rotation.x = Math.max(0, -swing * 0.7);
-      this.#rightShin.rotation.x = Math.max(0, swing * 0.7);
-      this.#leftArm.rotation.x = -swing * 0.65;
-      this.#rightArm.rotation.x = swing * 0.65;
-      this.#leftForearm.rotation.x = -0.22 - Math.max(0, swing * 0.35);
-      this.#rightForearm.rotation.x = -0.22 - Math.max(0, -swing * 0.35);
-      this.#leftArm.rotation.z = 0.08;
-      this.#rightArm.rotation.z = -0.08;
-      this.#bodyGroup.position.y = Math.abs(Math.cos(t * freq)) * (animState === 'run' ? 0.06 : 0.028);
+      const run = animState === 'run';
+      const freq = run ? 11.2 : 7.4;
+      const swing = Math.sin(t * freq) * (run ? 0.66 : 0.42);
+      const openZ = baseZ + (run ? 0.06 : 0.02);
+      Object.assign(p, {
+        bodyY: Math.abs(Math.cos(t * freq)) * (run ? 0.055 : 0.026), bodyRotX: run ? 0.08 : 0.03,
+        lLegX: swing, rLegX: -swing,
+        lShinX: Math.max(0, -swing * (run ? 0.82 : 0.68)), rShinX: Math.max(0, swing * (run ? 0.82 : 0.68)),
+        lArmX: -swing * (run ? 0.68 : 0.56), rArmX: swing * (run ? 0.68 : 0.56),
+        lArmZ: -openZ, rArmZ: openZ,
+        lForeX: (run ? -0.34 : -0.18) - Math.max(0, swing * 0.3),
+        rForeX: (run ? -0.34 : -0.18) - Math.max(0, -swing * 0.3),
+        headY: -swing * 0.05, headX: run ? -0.04 : -0.015
+      });
     } else if (animState === 'jump') {
-      this.#leftLeg.rotation.x = -0.35;
-      this.#rightLeg.rotation.x = 0.25;
-      this.#leftShin.rotation.x = 0.45;
-      this.#rightShin.rotation.x = 0.2;
-      this.#leftArm.rotation.z = 0.85;
-      this.#rightArm.rotation.z = -0.85;
-      this.#bodyGroup.position.y = 0.04;
+      Object.assign(p, {
+        bodyY: 0.04, bodyRotX: 0.04, headX: -0.06,
+        lArmX: -0.25, rArmX: -0.25, lArmZ: -0.78, rArmZ: 0.78,
+        lForeX: -0.30, rForeX: -0.30, lForeZ: -0.08, rForeZ: 0.08,
+        lLegX: -0.34, lShinX: 0.52, rLegX: 0.22, rShinX: 0.36
+      });
     } else if (animState === 'dance') {
-      this.#bodyGroup.position.y = Math.abs(Math.sin(t * 6.2)) * 0.08;
-      this.#leftArm.rotation.z = 0.95 + Math.sin(t * 5) * 0.32;
-      this.#rightArm.rotation.z = -0.95 - Math.cos(t * 5) * 0.32;
-      this.#leftForearm.rotation.x = -0.45;
-      this.#rightForearm.rotation.x = -0.45;
-      this.#leftLeg.rotation.x = Math.sin(t * 5) * 0.28;
-      this.#rightLeg.rotation.x = -Math.sin(t * 5) * 0.28;
-      this.#headGroup.rotation.y = Math.sin(t * 3.2) * 0.2;
+      const step = Math.sin(t * 4.8);
+      Object.assign(p, {
+        bodyY: Math.abs(Math.sin(t * 6.0)) * 0.068, bodyRotY: Math.sin(t * 3.0) * 0.14,
+        lArmZ: -(0.86 + step * 0.26), rArmZ: 0.86 + Math.cos(t * 4.8) * 0.26,
+        lArmX: -0.22 + Math.cos(t * 4.8) * 0.16, rArmX: -0.22 + step * 0.16,
+        lForeX: -0.42, rForeX: -0.42, lForeZ: -0.10, rForeZ: 0.10,
+        lLegX: step * 0.24, rLegX: -step * 0.24,
+        lShinX: Math.max(0, -step * 0.28), rShinX: Math.max(0, step * 0.28),
+        headY: Math.sin(t * 3.0) * 0.18, headZ: Math.sin(t * 2.4) * 0.06
+      });
     } else if (animState === 'pose') {
-      this.#bodyGroup.position.y = 0.02;
-      this.#leftArm.rotation.z = 0.35;
-      this.#leftForearm.rotation.x = -0.55;
-      this.#rightArm.rotation.z = this.#isMale ? -0.35 : -1.25;
-      this.#rightArm.rotation.x = -0.35;
-      this.#rightForearm.rotation.x = -0.35;
-      this.#leftLeg.rotation.x = 0.1;
-      this.#rightLeg.rotation.x = -0.14;
-      this.#leftShin.rotation.x = 0.08;
-      this.#rightShin.rotation.x = 0.16;
-      this.#headGroup.rotation.y = Math.sin(t * 2.2) * 0.14;
+      Object.assign(p, {
+        bodyY: 0.015, bodyRotY: 0.08,
+        lArmZ: -(baseZ + 0.14), lArmX: -0.1, lForeX: -0.42, lForeZ: -0.06,
+        rArmZ: this.#isMale ? baseZ + 0.14 : 1.05, rArmX: this.#isMale ? -0.18 : -0.35,
+        rForeX: -0.35, rForeZ: this.#isMale ? 0.06 : 0.12,
+        lLegX: 0.1, rLegX: -0.15, lShinX: 0.08, rShinX: 0.18,
+        headY: Math.sin(t * 2.0) * 0.12 - 0.05, headZ: 0.04
+      });
     } else {
       const breath = Math.sin(t * 2.1);
-      this.#bodyGroup.position.y = breath * 0.014;
-      this.#leftLeg.rotation.x *= 0.85;
-      this.#rightLeg.rotation.x *= 0.85;
-      this.#leftShin.rotation.x *= 0.85;
-      this.#rightShin.rotation.x *= 0.85;
-      this.#leftArm.rotation.x *= 0.85;
-      this.#rightArm.rotation.x *= 0.85;
-      this.#leftForearm.rotation.x = -0.18;
-      this.#rightForearm.rotation.x = -0.18;
-      this.#leftArm.rotation.z = 0.08 + breath * 0.025;
-      this.#rightArm.rotation.z = -0.08 - breath * 0.025;
-      this.#headGroup.rotation.y = Math.sin(t * 0.85) * 0.07;
+      p.bodyY = speed > 0.1 ? 0 : breath * 0.012;
+      p.lArmZ = -(baseZ + breath * 0.02);
+      p.rArmZ = baseZ + breath * 0.02;
+      p.headY = Math.sin(t * 0.85) * 0.07;
+      p.headX = breath * 0.018;
     }
-    if (speed > 0.1 && animState === 'idle') this.#bodyGroup.position.y = 0;
+
+    const a = Math.min(1, safeDt * 12);
+    const L = THREE.MathUtils.lerp;
+    const b = this.#bodyGroup;
+    const h = this.#headGroup;
+    b.position.y = L(b.position.y, p.bodyY, a);
+    b.rotation.set(L(b.rotation.x, p.bodyRotX, a), L(b.rotation.y, p.bodyRotY, a), 0);
+    h.rotation.set(L(h.rotation.x, p.headX, a), L(h.rotation.y, p.headY, a), L(h.rotation.z, p.headZ, a));
+    this.#leftArm.rotation.set(L(this.#leftArm.rotation.x, p.lArmX, a), 0, L(this.#leftArm.rotation.z, p.lArmZ, a));
+    this.#rightArm.rotation.set(L(this.#rightArm.rotation.x, p.rArmX, a), 0, L(this.#rightArm.rotation.z, p.rArmZ, a));
+    this.#leftForearm.rotation.set(L(this.#leftForearm.rotation.x, p.lForeX, a), 0, L(this.#leftForearm.rotation.z, p.lForeZ, a));
+    this.#rightForearm.rotation.set(L(this.#rightForearm.rotation.x, p.rForeX, a), 0, L(this.#rightForearm.rotation.z, p.rForeZ, a));
+    this.#leftLeg.rotation.x = L(this.#leftLeg.rotation.x, p.lLegX, a);
+    this.#rightLeg.rotation.x = L(this.#rightLeg.rotation.x, p.rLegX, a);
+    this.#leftShin.rotation.x = L(this.#leftShin.rotation.x, p.lShinX, a);
+    this.#rightShin.rotation.x = L(this.#rightShin.rotation.x, p.rShinX, a);
   }
 
   dispose() {
