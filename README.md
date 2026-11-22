@@ -30,7 +30,9 @@ Videojuego 3D multijugador web construido con **Three.js (ES Modules)**, ilumina
 | `W`, `A`, `S`, `D` | Mover al personaje |
 | `Shift` | Correr |
 | `Espacio` | Saltar |
-| **Arrastrar ratón** / `←` `→` | Girar la cámara orbital |
+| **Clic en la escena** | Capturar el ratón (cámara libre con Pointer Lock) |
+| `Tab` | Capturar / liberar el ratón (se libera solo al abrir Vestidor, Chat, diálogos o minijuegos) |
+| **Arrastrar ratón** / `←` `→` | Girar la cámara orbital (sin captura) |
 | **Rueda del ratón** | Acercar o alejar la cámara |
 | `E` | Interactuar con NPCs, Vestidor o iniciar minijuegos |
 | `C` | Abrir / cerrar el **Vestidor Real** |

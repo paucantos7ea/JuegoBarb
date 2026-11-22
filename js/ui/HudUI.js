@@ -42,18 +42,24 @@ export class HudUI {
 
     // Chat rápido
     const form = this.#el('chat-form');
+    const chatInput = this.#el('chat-input');
     const chatSubmit = (e) => {
       e.preventDefault();
-      const input = this.#el('chat-input');
-      const text = input.value.trim();
+      const text = chatInput.value.trim();
       if (text) {
         this.#callbacks.onSendChat?.(text);
-        input.value = '';
+        chatInput.value = '';
       }
-      input.blur();
+      chatInput.blur();
+      this.#callbacks.onChatClose?.();
     };
+    const chatFocus = () => this.#callbacks.onChatOpen?.();
     form.addEventListener('submit', chatSubmit);
-    this.#boundCleanups.push(() => form.removeEventListener('submit', chatSubmit));
+    chatInput.addEventListener('focus', chatFocus);
+    this.#boundCleanups.push(
+      () => form.removeEventListener('submit', chatSubmit),
+      () => chatInput.removeEventListener('focus', chatFocus)
+    );
 
     this.#hudEl.querySelectorAll('.quick-chat-btn').forEach((btn) => {
       const fn = () => this.#callbacks.onSendChat?.(btn.dataset.msg);
@@ -175,6 +181,15 @@ export class HudUI {
     el.classList.remove('hidden');
   }
 
+  setPointerLockState(locked) {
+    const hint = this.#el('pointer-lock-hint');
+    if (!hint) return;
+    hint.classList.toggle('locked', Boolean(locked));
+    hint.innerHTML = locked
+      ? '🎯 Cámara capturada | <kbd>Tab</kbd> o <kbd>Esc</kbd>: Liberar ratón'
+      : '🖱️ Clic: Capturar cámara | <kbd>Tab</kbd>: Capturar / Liberar';
+  }
+
   appendChat(sender, text) {
     const box = this.#el('chat-messages');
     const line = document.createElement('div');
@@ -237,7 +252,10 @@ export class HudUI {
     closeBtn.type = 'button';
     closeBtn.className = 'btn-secondary btn-sm';
     closeBtn.textContent = 'Cerrar';
-    closeBtn.addEventListener('click', () => this.hideDialogue());
+    closeBtn.addEventListener('click', () => {
+      this.hideDialogue();
+      this.#callbacks.onDialogueClose?.();
+    });
     actions.appendChild(closeBtn);
 
     this.#el('dialogue-box').classList.remove('hidden');

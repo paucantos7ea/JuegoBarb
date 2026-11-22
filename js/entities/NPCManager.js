@@ -3,6 +3,7 @@ import { CharacterRig } from './CharacterRig.js';
 
 export class NPCManager {
   #scene;
+  #textures;
   #npcs = [];
 
   #definitions = [
@@ -13,9 +14,9 @@ export class NPCManager {
       position: [6.5, 0, -6.5],
       yaw: -0.55,
       appearance: {
-        avatarId: 'valentina',
-        outfitId: 'equitacion_real',
-        hairId: 'recogido_imperial',
+        avatarId: 'npc_adrian',
+        outfitId: 'principe_gala',
+        hairId: 'principe_corto',
         accessories: ['cetro']
       },
       greeting: '¡Bienvenidos al Palacio de Cristal! Cinco Gemas del Reino brillan ocultas por los jardines, la escalinata y el Balcón Real. ¡Ayúdanos a reunirlas antes de la gran gala!'
@@ -27,7 +28,7 @@ export class NPCManager {
       position: [-16, 1.0, -31],
       yaw: 0.75,
       appearance: {
-        avatarId: 'aurora',
+        avatarId: 'npc_sofia',
         outfitId: 'gala_rosa',
         hairId: 'ondas_reales',
         accessories: ['tiara', 'bolso']
@@ -45,7 +46,7 @@ export class NPCManager {
       position: [16, 0, 10],
       yaw: -0.9,
       appearance: {
-        avatarId: 'celeste',
+        avatarId: 'npc_camila',
         outfitId: 'casual_chic',
         hairId: 'coleta_perla',
         accessories: ['gafas', 'tiara']
@@ -61,7 +62,7 @@ export class NPCManager {
       position: [16, 1.0, -31],
       yaw: -0.75,
       appearance: {
-        avatarId: 'amara',
+        avatarId: 'npc_maestra',
         outfitId: 'cristal_nocturno',
         hairId: 'recogido_imperial',
         accessories: ['tiara', 'cetro']
@@ -72,29 +73,30 @@ export class NPCManager {
     }
   ];
 
-  constructor(scene) {
+  constructor(scene, textureFactory = null) {
     this.#scene = scene;
+    this.#textures = textureFactory;
   }
 
   init() {
     for (const def of this.#definitions) {
-      const rig = new CharacterRig(def.appearance);
+      const rig = new CharacterRig(def.appearance, this.#textures);
       const root = rig.init();
       root.position.set(...def.position);
       root.rotation.y = def.yaw;
 
       const label = this.#createTag(def.name);
-      label.position.set(0, 2.26, 0);
-      label.scale.set(2.15, 0.45, 1);
+      label.position.set(0, 2.24, 0);
+      label.scale.set(2.05, 0.42, 1);
       root.add(label);
 
       // Halo sutil dorado en los pies para indicar NPC interactivo
       const ringGeo = new THREE.RingGeometry(0.55, 0.72, 24);
       const ringMat = new THREE.MeshBasicMaterial({
-        color: 0xffd584,
+        color: 0xcfa45a,
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.6
+        opacity: 0.55
       });
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.rotation.x = -Math.PI / 2;
@@ -116,25 +118,33 @@ export class NPCManager {
   #createTag(name) {
     const canvas = document.createElement('canvas');
     canvas.width = 512;
-    canvas.height = 112;
+    canvas.height = 108;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = 'rgba(255, 246, 251, 0.88)';
+
+    // Fondo ciruela oscuro y texto champán suave: evita quemado por UnrealBloomPass
+    ctx.fillStyle = 'rgba(34, 14, 34, 0.88)';
     ctx.beginPath();
-    ctx.roundRect(12, 14, 488, 84, 40);
+    ctx.roundRect(14, 14, 484, 80, 38);
     ctx.fill();
-    ctx.strokeStyle = '#d99e5b';
+    ctx.strokeStyle = '#b98c58';
     ctx.lineWidth = 4;
     ctx.stroke();
 
-    ctx.fillStyle = '#8b1f55';
-    ctx.font = 'bold 36px "Palatino Linotype", Georgia, serif';
+    ctx.fillStyle = '#dfd0db';
+    ctx.font = 'bold 34px "Palatino Linotype", Georgia, serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`♛ ${name}`, 256, 56);
+    ctx.fillText(`♛ ${name}`, 256, 55);
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
-    return new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      color: 0xc8c8c8,
+      transparent: true,
+      toneMapped: false
+    });
+    return new THREE.Sprite(mat);
   }
 
   getNearestNPC(playerPos, maxDist = 4.2) {

@@ -16,11 +16,11 @@ export class RemotePlayer {
   #chatTimer = 0;
   #appearanceKey = '';
 
-  constructor(scene, peerId, profile = {}) {
+  constructor(scene, peerId, profile = {}, textureFactory = null) {
     this.#scene = scene;
     this.#peerId = peerId;
     this.#name = profile.name || 'Compañero Real';
-    this.#rig = new CharacterRig(profile.appearance);
+    this.#rig = new CharacterRig(profile.appearance, textureFactory);
     this.#appearanceKey = profile.appearance ? JSON.stringify(profile.appearance) : '';
   }
 
@@ -58,7 +58,13 @@ export class RemotePlayer {
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      color: 0xc8c8c8,
+      transparent: true,
+      depthTest: false,
+      toneMapped: false
+    });
     return new THREE.Sprite(mat);
   }
 

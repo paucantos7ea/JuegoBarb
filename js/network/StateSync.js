@@ -3,16 +3,18 @@ import { RemotePlayer } from '../entities/RemotePlayer.js';
 export class StateSync {
   #scene;
   #peerManager;
+  #textures;
   #remotePlayers = new Map();
   #sendTimer = 0;
   #unsubs = [];
   #callbacks = {};
   #getLocalState = null;
 
-  constructor(scene, peerManager, callbacks = {}) {
+  constructor(scene, peerManager, callbacks = {}, textureFactory = null) {
     this.#scene = scene;
     this.#peerManager = peerManager;
     this.#callbacks = callbacks;
+    this.#textures = textureFactory;
   }
 
   init(getLocalStateFn) {
@@ -69,7 +71,7 @@ export class StateSync {
     if (peerId === this.#peerManager.getLocalId()) return null;
     let rp = this.#remotePlayers.get(peerId);
     if (!rp) {
-      rp = new RemotePlayer(this.#scene, peerId, profile);
+      rp = new RemotePlayer(this.#scene, peerId, profile, this.#textures);
       rp.init();
       this.#remotePlayers.set(peerId, rp);
       this.#callbacks.onPartyChange?.();

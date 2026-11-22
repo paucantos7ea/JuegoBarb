@@ -7,6 +7,7 @@ export class PlayerController {
   #input;
   #collision;
   #audio;
+  #textures;
   #rig = null;
   #position = new THREE.Vector3(0, 0, 15);
   #velocityY = 0;
@@ -19,16 +20,17 @@ export class PlayerController {
   #externalControl = false;
   #unsubJump = null;
 
-  constructor(scene, camera, inputManager, collisionSystem, audioSynth) {
+  constructor(scene, camera, inputManager, collisionSystem, audioSynth, textureFactory = null) {
     this.#scene = scene;
     this.#camera = camera;
     this.#input = inputManager;
     this.#collision = collisionSystem;
     this.#audio = audioSynth;
+    this.#textures = textureFactory;
   }
 
   init(initialAppearance) {
-    this.#rig = new CharacterRig(initialAppearance);
+    this.#rig = new CharacterRig(initialAppearance, this.#textures);
     const root = this.#rig.init();
     root.position.copy(this.#position);
     root.rotation.y = this.#facingYaw;
@@ -103,11 +105,13 @@ export class PlayerController {
       return;
     }
 
-    // Cámara orbital con ratón + teclado
+    // Cámara orbital fluida con Pointer Lock o arrastre + teclado
     const look = this.#input.consumeLookDelta();
-    this.#cameraYaw -= look.x * 0.0052;
+    const yawSens = look.pointerLocked ? 0.0032 : 0.0052;
+    const pitchSens = look.pointerLocked ? 0.0026 : 0.0042;
+    this.#cameraYaw -= look.x * yawSens;
     this.#cameraYaw += this.#input.getCameraKeyTurn() * dt * 2.1;
-    this.#cameraPitch = Math.max(0.08, Math.min(1.15, this.#cameraPitch + look.y * 0.0042));
+    this.#cameraPitch = Math.max(0.08, Math.min(1.15, this.#cameraPitch + look.y * pitchSens));
     this.#cameraDistance = Math.max(4.4, Math.min(13.5, this.#cameraDistance + look.zoom));
 
     // Movimiento relativo a la cámara

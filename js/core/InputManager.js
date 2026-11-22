@@ -2,6 +2,7 @@ export class InputManager {
   #domElement;
   #keys = new Set();
   #controlsLocked = false;
+  #pointerLockEnabled = false;
   #isDragging = false;
   #lastMouseX = 0;
   #lastMouseY = 0;
@@ -22,6 +23,7 @@ export class InputManager {
     this.#boundHandlers.mouseMove = (e) => this.#onMouseMove(e);
     this.#boundHandlers.mouseUp = () => { this.#isDragging = false; };
     this.#boundHandlers.wheel = (e) => this.#onWheel(e);
+    this.#boundHandlers.pointerLockChange = () => this.#onPointerLockChange();
     this.#boundHandlers.contextMenu = (e) => {
       if (e.target === this.#domElement) e.preventDefault();
     };
@@ -35,6 +37,7 @@ export class InputManager {
     window.addEventListener('mousemove', this.#boundHandlers.mouseMove);
     window.addEventListener('mouseup', this.#boundHandlers.mouseUp);
     window.addEventListener('blur', this.#boundHandlers.blur);
+    document.addEventListener('pointerlockchange', this.#boundHandlers.pointerLockChange);
     this.#domElement.addEventListener('mousedown', this.#boundHandlers.mouseDown);
     this.#domElement.addEventListener('wheel', this.#boundHandlers.wheel, { passive: true });
     this.#domElement.addEventListener('contextmenu', this.#boundHandlers.contextMenu);
@@ -47,10 +50,68 @@ export class InputManager {
     return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
   }
 
+  #onPointerLockChange() {
+    const locked = this.isPointerLocked();
+    if (!locked) {
+      this.#isDragging = false;
+    }
+    this.#emit('pointerLockChange', locked);
+  }
+
+  setPointerLockEnabled(enabled) {
+    this.#pointerLockEnabled = Boolean(enabled);
+    if (!this.#pointerLockEnabled) {
+      this.exitPointerLock();
+    }
+  }
+
+  isPointerLocked() {
+    return document.pointerLockElement === this.#domElement;
+  }
+
+  requestPointerLock() {
+    if (!this.#pointerLockEnabled || this.#controlsLocked || this.#isTypingInField()) return;
+    if (this.isPointerLocked()) return;
+    try {
+      const res = this.#domElement.requestPointerLock?.();
+      if (res && typeof res.catch === 'function') {
+        res.catch(() => {});
+      }
+    } catch {
+      // Algunos navegadores bloquean re-captura inmediata tras Esc
+    }
+  }
+
+  exitPointerLock() {
+    if (document.pointerLockElement) {
+      try {
+        document.exitPointerLock();
+      } catch {
+        // Ignorar si ya fue liberado
+      }
+    }
+  }
+
+  togglePointerLock() {
+    if (this.isPointerLocked()) {
+      this.exitPointerLock();
+    } else {
+      this.requestPointerLock();
+    }
+  }
+
   #onKeyDown(e) {
     if (this.#isTypingInField()) {
       if (e.code === 'Escape') {
         document.activeElement.blur();
+      }
+      return;
+    }
+
+    if (e.code === 'Tab' && this.#pointerLockEnabled) {
+      e.preventDefault();
+      if (!e.repeat && !this.#controlsLocked) {
+        this.togglePointerLock();
       }
       return;
     }
@@ -88,6 +149,9 @@ export class InputManager {
 
   #onMouseDown(e) {
     if (this.#controlsLocked || this.#isTypingInField()) return;
+    if (e.button === 0 && this.#pointerLockEnabled && !this.isPointerLocked()) {
+      this.requestPointerLock();
+    }
     if (e.button === 0 || e.button === 2) {
       this.#isDragging = true;
       this.#lastMouseX = e.clientX;
@@ -97,9 +161,12 @@ export class InputManager {
 
   #onMouseMove(e) {
     if (this.#controlsLocked || this.#isTypingInField()) return;
-    if (document.pointerLockElement === this.#domElement) {
-      this.#lookDeltaX += e.movementX;
-      this.#lookDeltaY += e.movementY;
+    if (this.isPointerLocked()) {
+      // Filtrar saltos puntuales del navegador al capturar/liberar
+      if (Math.abs(e.movementX) < 320 && Math.abs(e.movementY) < 320) {
+        this.#lookDeltaX += e.movementX;
+        this.#lookDeltaY += e.movementY;
+      }
       return;
     }
     if (!this.#isDragging) return;
@@ -137,6 +204,7 @@ export class InputManager {
     if (this.#controlsLocked) {
       this.#keys.clear();
       this.#isDragging = false;
+      this.exitPointerLock();
     }
   }
 
@@ -173,23 +241,28 @@ export class InputManager {
   }
 
   consumeLookDelta() {
-    const delta = { x: this.#lookDeltaX, y: this.#lookDeltaY, zoom: this.#zoomDelta };
+    const delta = {
+      x: this.#lookDeltaX,
+      y: this.#lookDeltaY,
+      zoom: this.#zoomDelta,
+      pointerLocked: this.isPointerLocked()
+    };
     this.#lookDeltaX = 0;
     this.#lookDeltaY = 0;
     this.#zoomDelta = 0;
     return delta;
   }
 
-  update() {
-    // Mantenido para cumplir interfaz uniforme del ciclo de vida
-  }
+  update() {}
 
   dispose() {
+    this.exitPointerLock();
     window.removeEventListener('keydown', this.#boundHandlers.keyDown);
     window.removeEventListener('keyup', this.#boundHandlers.keyUp);
     window.removeEventListener('mousemove', this.#boundHandlers.mouseMove);
     window.removeEventListener('mouseup', this.#boundHandlers.mouseUp);
     window.removeEventListener('blur', this.#boundHandlers.blur);
+    document.removeEventListener('pointerlockchange', this.#boundHandlers.pointerLockChange);
     this.#domElement.removeEventListener('mousedown', this.#boundHandlers.mouseDown);
     this.#domElement.removeEventListener('wheel', this.#boundHandlers.wheel);
     this.#domElement.removeEventListener('contextmenu', this.#boundHandlers.contextMenu);

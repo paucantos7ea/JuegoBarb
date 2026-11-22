@@ -169,7 +169,7 @@
         </div>
 
         <footer class="menu-footer">
-          <span>Controles: <strong>WASD</strong> Mover · <strong>Shift</strong> Correr · <strong>Espacio</strong> Saltar · <strong>Ratón</strong> Cámara · <strong>E</strong> Interactuar · <strong>C</strong> Vestidor · <strong>T</strong> Chat</span>
+          <span>Controles: <strong>WASD</strong> Mover · <strong>Shift</strong> Correr · <strong>Espacio</strong> Saltar · <strong>Clic / Ratón</strong> Cámara · <strong>Tab</strong> Liberar ratón · <strong>E</strong> Interactuar · <strong>C</strong> Vestidor · <strong>T</strong> Chat</span>
         </footer>
       </div>
     </section>
@@ -257,6 +257,11 @@
         </div>
         <p id="dialogue-text" class="dialogue-text"></p>
         <div id="dialogue-actions" class="dialogue-actions"></div>
+      </div>
+
+      <!-- Indicador discreto de captura de ratón (Pointer Lock) -->
+      <div id="pointer-lock-hint" class="pointer-lock-hint glass-chip" aria-live="polite">
+        🖱️ Clic: Capturar cámara | <kbd>Tab</kbd>: Liberar ratón
       </div>
 
       <!-- Chat Rápido [T] -->

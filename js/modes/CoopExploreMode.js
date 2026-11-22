@@ -59,7 +59,7 @@ export class CoopExploreMode extends BaseGameMode {
     this.#gardens = new GardensBuilder(scene, context.textures, this.#collision);
     this.#gardens.init();
 
-    this.#player = new PlayerController(scene, camera, context.input, this.#collision, context.audio);
+    this.#player = new PlayerController(scene, camera, context.input, this.#collision, context.audio, context.textures);
     this.#player.init({
       avatarId: context.profile.avatarId,
       outfitId: 'gala_rosa',
@@ -67,7 +67,7 @@ export class CoopExploreMode extends BaseGameMode {
       accessories: ['tiara']
     });
 
-    this.#npcs = new NPCManager(scene);
+    this.#npcs = new NPCManager(scene, context.textures);
     this.#npcs.init();
 
     this.#quests = new QuestSystem(scene, context.audio, (snapshot, msg) => {
@@ -86,11 +86,14 @@ export class CoopExploreMode extends BaseGameMode {
         onReturnToMenu: () => context.onReturnToMenu?.(),
         onStartMinigame: (id) => this.#launchMinigame(id),
         onSendChat: (text) => this.#sendChat(text),
+        onChatOpen: () => this.#ctx.input.exitPointerLock(),
+        onChatClose: () => this.#resumePointerLockIfFree(),
+        onDialogueClose: () => this.#resumePointerLockIfFree(),
         onOpenInvite: () => {
           this.#hud.openInviteModal(this.#worldId);
           this.#syncControlLock();
         },
-        onCloseInvite: () => this.#syncControlLock()
+        onCloseInvite: () => this.#syncControlLock(true)
       }
     });
     this.#hud.init();
@@ -98,7 +101,7 @@ export class CoopExploreMode extends BaseGameMode {
     this.#wardrobe = new WardrobeUI({
       audio: context.audio,
       onChange: (partial) => this.#applyWardrobeChange(partial),
-      onClose: () => this.#syncControlLock()
+      onClose: () => this.#syncControlLock(true)
     });
     this.#wardrobe.init();
 
@@ -112,7 +115,7 @@ export class CoopExploreMode extends BaseGameMode {
         if (notice) this.#hud.showToast(notice);
       },
       onRemoteWorldChange: (worldId) => this.#applyWorldTheme(worldId, false)
-    });
+    }, context.textures);
     this.#stateSync.init(() => ({
       name: this.#playerName,
       pos: this.#player.getPosition(),
@@ -137,22 +140,26 @@ export class CoopExploreMode extends BaseGameMode {
     this.#minigames.init();
 
     this.#bindInputActions();
+    context.input.setPointerLockEnabled(true);
     this.#applyWorldTheme(this.#worldId, false);
     this.#hud.show();
+    this.#hud.setPointerLockState(context.input.isPointerLocked());
     this.#hud.updateQuests(this.#quests.getQuestSummary());
     this.#refreshPartyHud();
-    this.#hud.appendChat('Palacio', `¡Bienvenida/o ${this.#playerName}! Pulsa [C] para el vestidor o [E] cerca de un personaje.`);
+    this.#hud.appendChat('Palacio', `¡Bienvenida/o ${this.#playerName}! Haz clic en la pantalla para capturar la cámara y pulsa [Tab] para liberar el ratón.`);
     context.audio.startAmbient();
   }
 
   #bindInputActions() {
     const input = this.#ctx.input;
     this.#unsubs.push(
+      input.onAction('pointerLockChange', (locked) => this.#hud.setPointerLockState(locked)),
       input.onAction('wardrobe', () => {
         if (!this.#minigames.isActive()) this.#toggleWardrobe();
       }),
       input.onAction('chat', () => {
         if (!this.#minigames.isActive() && !this.#wardrobe.isOpen()) {
+          input.exitPointerLock();
           this.#hud.focusChat();
         }
       }),
@@ -188,9 +195,10 @@ export class CoopExploreMode extends BaseGameMode {
   }
 
   #toggleWardrobe() {
+    const wasOpen = this.#wardrobe.isOpen();
     this.#hud.hideDialogue();
     this.#wardrobe.toggle(this.#player.getAppearance());
-    this.#syncControlLock();
+    this.#syncControlLock(wasOpen);
   }
 
   #applyWardrobeChange(partial) {
@@ -210,15 +218,30 @@ export class CoopExploreMode extends BaseGameMode {
     this.#hud.updateParty(this.#playerName, this.#stateSync.getRemoteList());
   }
 
-  #syncControlLock() {
+  #resumePointerLockIfFree() {
+    if (
+      !this.#wardrobe?.isOpen()
+      && !this.#hud?.isDialogueOpen()
+      && !this.#hud?.isInviteModalOpen()
+      && !this.#minigames?.isActive()
+    ) {
+      this.#ctx.input.requestPointerLock();
+    }
+  }
+
+  #syncControlLock(requestLockOnFree = false) {
     const locked = this.#wardrobe.isOpen() || this.#hud.isInviteModalOpen();
     this.#ctx.input.setControlsLocked(locked);
+    if (!locked && requestLockOnFree) {
+      this.#resumePointerLockIfFree();
+    }
   }
 
   #handleInteract() {
     if (this.#minigames.isActive() || this.#wardrobe.isOpen()) return;
     if (this.#hud.isDialogueOpen()) {
       this.#hud.hideDialogue();
+      this.#resumePointerLockIfFree();
       return;
     }
 
@@ -226,6 +249,7 @@ export class CoopExploreMode extends BaseGameMode {
     const npc = this.#npcs.getNearestNPC(pos, 4.2);
     if (npc) {
       this.#ctx.audio?.playClick();
+      this.#ctx.input.exitPointerLock();
       this.#quests.recordNpcTalk(npc.id);
       this.#hud.showDialogue(npc, (actionType) => this.#handleDialogueAction(actionType));
       return;
@@ -253,9 +277,10 @@ export class CoopExploreMode extends BaseGameMode {
     this.#wardrobe.close();
     this.#hud.hideDialogue();
     this.#hud.setInteractPrompt(null);
+    this.#ctx.input.exitPointerLock();
     this.#ctx.audio?.playSparkle();
     await this.#minigames.start(id, (summary) => {
-      this.#syncControlLock();
+      this.#syncControlLock(true);
       if (summary?.completed) {
         this.#hud.showToast('♛ ¡Actividad real completada con éxito!');
       }
@@ -319,6 +344,7 @@ export class CoopExploreMode extends BaseGameMode {
     this.#castle?.dispose();
     this.#gardens?.dispose();
     this.#collision?.dispose();
+    this.#ctx?.input?.setPointerLockEnabled(false);
     this.#ctx?.input?.setControlsLocked(false);
   }
 }
