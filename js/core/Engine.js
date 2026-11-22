@@ -43,7 +43,7 @@ export class Engine {
     this.#renderer.shadowMap.enabled = true;
     this.#renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.#renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.#renderer.toneMappingExposure = 0.92;
+    this.#renderer.toneMappingExposure = 0.9;
     this.#renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.#container.appendChild(this.#renderer.domElement);
 
@@ -70,7 +70,7 @@ export class Engine {
     this.#hemiLight = new THREE.HemisphereLight(0xfff5fa, 0xc79ab0, 0.68);
     this.#scene.add(this.#hemiLight);
 
-    this.#sunLight = new THREE.DirectionalLight(0xfff1dc, 1.4);
+    this.#sunLight = new THREE.DirectionalLight(0xfff3e0, 1.3);
     this.#sunLight.position.set(34, 48, 28);
     this.#sunLight.castShadow = true;
     this.#sunLight.shadow.mapSize.set(2048, 2048);
@@ -178,9 +178,9 @@ export class Engine {
     this.#composer.addPass(new RenderPass(this.#scene, this.#camera));
     this.#bloomPass = new UnrealBloomPass(
       new THREE.Vector2(width, height),
-      0.22,
-      0.35,
-      0.95
+      0.2,
+      0.3,
+      0.96
     );
     this.#composer.addPass(this.#bloomPass);
     this.#composer.addPass(new OutputPass());
@@ -208,16 +208,16 @@ export class Engine {
     this.#fillLight.intensity = theme.fillIntensity;
 
     this.#renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.#renderer.toneMappingExposure = Math.min(0.92, theme.exposure ?? 0.92);
+    this.#renderer.toneMappingExposure = Math.min(0.9, theme.exposure ?? 0.9);
     // three r160 no soporta scene.environmentIntensity (llegó en r163):
     // lo aplicamos material a material con envMapIntensity.
-    this.#envIntensity = Math.min(theme.envIntensity ?? 0.6, 0.65);
+    this.#envIntensity = Math.min(theme.envIntensity ?? 0.58, 0.6);
     this.#syncEnvIntensity();
     this.#calibrateSceneMaterials();
 
-    this.#bloomPass.strength = theme.bloomStrength ?? 0.22;
-    this.#bloomPass.radius = theme.bloomRadius ?? 0.35;
-    this.#bloomPass.threshold = Math.min(1.0, Math.max(0.95, theme.bloomThreshold ?? 0.95));
+    this.#bloomPass.strength = Math.min(0.22, theme.bloomStrength ?? 0.2);
+    this.#bloomPass.radius = theme.bloomRadius ?? 0.3;
+    this.#bloomPass.threshold = Math.min(1.0, Math.max(0.96, theme.bloomThreshold ?? 0.96));
 
     this.#starField.material.opacity = theme.starsOpacity;
     this.#motes.material.color.setHex(theme.moteColor);
@@ -242,11 +242,12 @@ export class Engine {
         if (
           mat.isMeshStandardMaterial &&
           !mat.isMeshPhysicalMaterial &&
+          !mat.userData?.preserveRoughness &&
           mat.metalness < 0.35 &&
           (!mat.emissiveIntensity || mat.emissiveIntensity < 0.2)
         ) {
           mat.roughness = Math.max(mat.roughness, 0.48);
-          mat.envMapIntensity = Math.min(mat.envMapIntensity ?? 1, 0.65);
+          mat.envMapIntensity = Math.min(mat.envMapIntensity ?? 1, 0.6);
         }
       }
     });
