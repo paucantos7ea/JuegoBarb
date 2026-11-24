@@ -186,6 +186,111 @@ export class AudioManager {
     );
   }
 
+  /** Tintineo metálico dorado alegre y breve al recoger una moneda real. */
+  playCoin() {
+    this.#playTone(1174.66, 1190, 0.12, 'sine', 0.14, 0);
+    this.#playTone(1567.98, 1590, 0.16, 'sine', 0.15, 0.055);
+  }
+
+  /** Clic mecánico suave y descenso breve al accionar la palanca de tragaperras. */
+  playLeverPull() {
+    this.#playTone(460, 320, 0.035, 'triangle', 0.10, 0);
+    this.#playTone(260, 140, 0.14, 'triangle', 0.14, 0.02);
+  }
+
+  /** Golpe suave acolchado al encajar cada rodillo de la máquina tragaperras. */
+  playReelStop(idx = 0) {
+    const startFreq = [340, 390, 440][Math.abs(idx | 0) % 3];
+    this.#playTone(startFreq, 220, 0.09, 'triangle', 0.14, 0);
+    this.#playTone(155, 95, 0.06, 'sine', 0.08, 0);
+  }
+
+  /** Suave roce aéreo de naipe al repartir cartas con un toque ligero. */
+  playCardDeal() {
+    if (!this.#ensureContext() || !this.#ctx || !this.#sfxGain || this.#muted) return;
+    const now = this.#ctx.currentTime;
+
+    if (this.#noiseBuffer) {
+      const src = this.#ctx.createBufferSource();
+      src.buffer = this.#noiseBuffer;
+
+      const filter = this.#ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(2200, now);
+      filter.frequency.exponentialRampToValueAtTime(1100, now + 0.08);
+      filter.Q.value = 1.6;
+
+      const gain = this.#ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.16, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
+
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.#sfxGain);
+      src.start(now);
+      src.stop(now + 0.095);
+    }
+
+    this.#playTone(540, 420, 0.045, 'sine', 0.07, 0.015);
+  }
+
+  /** Arpegio brillante corto para premios normales (3 notas) o grandes (5 notas). */
+  playWin(isBig = false) {
+    const notes = isBig
+      ? [523.25, 659.25, 783.99, 1046.5, 1318.51]
+      : [523.25, 659.25, 783.99];
+    const dur = isBig ? 0.25 : 0.20;
+    notes.forEach((freq, idx) => {
+      this.#playTone(freq, freq * 1.01, dur, 'triangle', 0.14, idx * 0.065);
+    });
+  }
+
+  /** Chispazo ascendente y varios estallidos chispeantes cálidos (~1.4 s) para celebraciones. */
+  playFireworks() {
+    if (!this.#ensureContext() || !this.#ctx || !this.#sfxGain || this.#muted) return;
+    const baseTime = this.#ctx.currentTime;
+
+    // Ascenso suave del chispazo inicial
+    this.#playTone(420, 1180, 0.24, 'sine', 0.09, 0);
+
+    const bursts = [
+      { delay: 0.25, noteA: 1046.5, noteB: 1318.51, freq: 1850 },
+      { delay: 0.52, noteA: 1174.66, noteB: 1567.98, freq: 2100 },
+      { delay: 0.80, noteA: 1318.51, noteB: 1760.0, freq: 1950 },
+      { delay: 1.08, noteA: 1046.5, noteB: 1567.98, freq: 2250 },
+      { delay: 1.28, noteA: 1318.51, noteB: 1975.53, freq: 1750 }
+    ];
+
+    bursts.forEach((b) => {
+      const t = baseTime + b.delay;
+      if (this.#noiseBuffer) {
+        const src = this.#ctx.createBufferSource();
+        src.buffer = this.#noiseBuffer;
+
+        const filter = this.#ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(b.freq, t);
+        filter.frequency.exponentialRampToValueAtTime(620, t + 0.14);
+        filter.Q.value = 1.3;
+
+        const gain = this.#ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.linearRampToValueAtTime(0.11, t + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+
+        src.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.#sfxGain);
+        src.start(t);
+        src.stop(t + 0.16);
+      }
+
+      this.#playTone(b.noteA, b.noteA * 1.02, 0.18, 'sine', 0.08, b.delay + 0.01);
+      this.#playTone(b.noteB, b.noteB * 1.015, 0.20, 'sine', 0.075, b.delay + 0.045);
+    });
+  }
+
   update() {}
 
   dispose() {

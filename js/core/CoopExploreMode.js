@@ -27,6 +27,9 @@ export class CoopExploreMode {
   #decor = null;
   #arena = null;
   #fauna = null;
+  #casinoDome = null;
+  #coins = null;
+  #casinoGames = null;
   #player = null;
   #npcs = null;
   #quests = null;
@@ -62,11 +65,22 @@ export class CoopExploreMode {
     this.#collision = new CollisionSystem();
     this.#collision.init();
 
-    const [{ CastleBuilder }, { WorldDecor }, { ArenaBuilder }, { FaunaSystem }] = await Promise.all([
+    const [
+      { CastleBuilder },
+      { WorldDecor },
+      { ArenaBuilder },
+      { FaunaSystem },
+      { CasinoDomeBuilder },
+      { CoinSystem },
+      { CasinoGames }
+    ] = await Promise.all([
       import('../world/CastleBuilder.js'),
       import('../world/WorldDecor.js'),
       import('../world/ArenaBuilder.js'),
-      import('../world/FaunaSystem.js')
+      import('../world/FaunaSystem.js'),
+      import('../world/CasinoDomeBuilder.js'),
+      import('../world/CoinSystem.js'),
+      import('../world/CasinoGames.js')
     ]);
 
     this.#castle = new CastleBuilder(scene, context.textures, this.#collision);
@@ -77,6 +91,8 @@ export class CoopExploreMode {
     this.#arena.init();
     this.#fauna = new FaunaSystem(scene);
     this.#fauna.init();
+    this.#casinoDome = new CasinoDomeBuilder(scene, context.textures, this.#collision);
+    this.#casinoDome.init();
 
     this.#player = new PlayerController(scene, camera, context.input, this.#collision, context.audio, context.textures);
     this.#player.init(CatalogData.getDefaultAppearance(context.profile.avatarId));
@@ -90,6 +106,11 @@ export class CoopExploreMode {
       this.#stateSync.broadcastQuests(snapshot, msg);
     });
     this.#quests.init();
+
+    this.#coins = new CoinSystem(scene, context.audio, (balance, delta) => {
+      this.#hud?.updateCoins?.(balance, delta);
+    });
+    this.#coins.init();
 
     this.#dialogue = new DialogueUI({
       onClose: () => this.#resumePointerLockIfFree()
@@ -115,6 +136,7 @@ export class CoopExploreMode {
       }
     });
     this.#hud.init();
+    this.#hud?.updateCoins?.(this.#coins.getBalance(), 0);
 
     // Sistema completo del Vestidor Real en tiempo real
     this.#wardrobeFX = new WardrobeFX(scene);
@@ -131,6 +153,20 @@ export class CoopExploreMode {
     });
     this.#wardrobe.init();
 
+    this.#casinoGames = new CasinoGames({
+      scene,
+      camera,
+      player: this.#player,
+      input: context.input,
+      audio: context.audio,
+      coinSystem: this.#coins,
+      casinoDome: this.#casinoDome,
+      onExit: () => this.#resumePointerLockIfFree(),
+      onBlackjackCelebration: ({ game, payout }) => this.#handleBlackjackCelebration(game, payout),
+      onActivityChange: () => {}
+    });
+    this.#casinoGames.init();
+
     this.#stateSync = new StateSync(
       scene,
       context.peerManager,
@@ -143,7 +179,8 @@ export class CoopExploreMode {
           this.#hud.updateQuests(this.#quests.getQuestSummary());
           if (notice) this.#hud.showToast(notice);
         },
-        onRemoteWorldChange: (worldId) => this.#applyWorldTheme(worldId, false)
+        onRemoteWorldChange: (worldId) => this.#applyWorldTheme(worldId, false),
+        onRemoteCasinoFireworks: (senderName) => this.#triggerRemoteCasinoFireworks(senderName)
       },
       context.textures,
       this.#wardrobeFX
@@ -155,6 +192,7 @@ export class CoopExploreMode {
       anim: this.#player.getAnimState(),
       emote: this.#player.getEmote(),
       appearance: this.#player.getAppearance(),
+      casinoStation: this.#casinoGames?.getActiveActivity() || null,
       worldId: this.#worldId,
       quests: this.#quests.getSnapshot()
     }));
@@ -193,10 +231,12 @@ export class CoopExploreMode {
     this.#unsubs.push(
       input.onAction('pointerLockChange', (locked) => this.#hud.setPointerLockState(locked)),
       input.onAction('wardrobe', () => {
-        if (!this.#minigames.isActive() && !this.#hud.isInviteModalOpen()) this.#toggleWardrobe();
+        if (!this.#minigames.isActive() && !this.#hud.isInviteModalOpen() && !this.#casinoGames?.isActive()) {
+          this.#toggleWardrobe();
+        }
       }),
       input.onAction('chat', () => {
-        if (!this.#minigames.isActive() && !this.#wardrobe.isOpen()) {
+        if (!this.#minigames.isActive() && !this.#wardrobe.isOpen() && !this.#casinoGames?.isActive()) {
           input.exitPointerLock();
           this.#hud.focusChat();
         }
@@ -206,6 +246,10 @@ export class CoopExploreMode {
         if (!this.#isUiBusy()) this.#player.playEmote(id);
       }),
       input.onAction('escape', () => {
+        if (this.#casinoGames?.isInSession()) {
+          this.#casinoGames.exitStation();
+          return;
+        }
         if (this.#minigames.isActive()) this.#minigames.stop({ completed: false });
         else if (this.#wardrobe.isOpen()) this.#wardrobe.close();
         else if (this.#dialogue.isOpen()) this.#dialogue.hide();
@@ -222,6 +266,7 @@ export class CoopExploreMode {
     this.#castle?.applyTheme(theme);
     this.#decor?.applyTheme(theme);
     this.#arena?.applyTheme(theme);
+    this.#casinoDome?.applyTheme(theme);
     this.#hud?.setWorldInfo(theme.name, this.#collision.getZoneName(this.#player.getPosition()));
     if (broadcast) {
       this.#stateSync?.broadcastWorld(worldId);
@@ -236,6 +281,9 @@ export class CoopExploreMode {
   }
 
   #toggleWardrobe() {
+    if (this.#casinoGames?.isActive()) {
+      this.#casinoGames.exitStation();
+    }
     if (this.#wardrobe.isOpen()) {
       this.#wardrobe.close();
       return;
@@ -302,6 +350,7 @@ export class CoopExploreMode {
       this.#wardrobe?.isOpen() ||
       this.#dialogue?.isOpen() ||
       this.#hud?.isInviteModalOpen() ||
+      this.#casinoGames?.isActive() ||
       (includeMinigame && this.#minigames?.isActive())
     );
   }
@@ -319,7 +368,7 @@ export class CoopExploreMode {
   }
 
   #handleInteract() {
-    if (this.#minigames.isActive() || this.#wardrobe.isOpen()) return;
+    if (this.#minigames.isActive() || this.#wardrobe.isOpen() || this.#casinoGames?.isActive()) return;
     if (this.#dialogue.isOpen()) {
       this.#dialogue.hide();
       this.#resumePointerLockIfFree();
@@ -333,6 +382,14 @@ export class CoopExploreMode {
       this.#ctx.input.exitPointerLock();
       this.#quests.recordNpcTalk(npc.id);
       this.#dialogue.show(npc, (actionType) => this.#handleDialogueAction(actionType));
+      return;
+    }
+
+    const station = this.#casinoDome?.getNearestStation(pos, 2.35);
+    if (station) {
+      this.#ctx.audio?.playClick();
+      this.#hud.setInteractPrompt(null);
+      this.#casinoGames.enterStation(station);
       return;
     }
 
@@ -350,8 +407,26 @@ export class CoopExploreMode {
     else if (actionType?.startsWith('minigame:')) this.#launchMinigame(actionType.split(':')[1]);
   }
 
+  #handleBlackjackCelebration(game, payout) {
+    this.#stateSync?.broadcastCasinoFireworks(this.#playerName);
+    this.#hud?.showToast(
+      game === 'blackjack'
+        ? `✨ ¡${this.#playerName} ha sacado BLACKJACK en la Cúpula Real! (+${payout} 🪙) 🎆`
+        : `✨ ¡JACKPOT IMPERIAL en la Cúpula Real! (+${payout} 🪙) 🎆`
+    );
+  }
+
+  #triggerRemoteCasinoFireworks(senderName) {
+    this.#casinoDome?.triggerDomeFireworks();
+    this.#ctx.audio?.playFireworks?.();
+    this.#hud?.showToast(`✨ ¡${senderName} ha sacado BLACKJACK en la Cúpula Real! 🎆`);
+  }
+
   async #launchMinigame(id) {
     if (this.#minigames.isActive()) return;
+    if (this.#casinoGames?.isActive()) {
+      this.#casinoGames.exitStation();
+    }
     this.#wardrobe.close();
     this.#wardrobeCamera.dispose();
     this.#player.setCameraOverride(false);
@@ -373,13 +448,18 @@ export class CoopExploreMode {
     this.#castle?.update(dt);
     this.#decor?.update(dt);
     this.#arena?.update(dt);
+    this.#casinoDome?.update(dt);
     this.#wardrobe?.update(dt);
 
     const camControlledByWardrobe = Boolean(this.#wardrobeCamera?.isControllingCamera());
-    this.#player?.setCameraOverride(camControlledByWardrobe);
+    const inCasinoSession = Boolean(this.#casinoGames?.isActive());
+    this.#player?.setCameraOverride(camControlledByWardrobe || inCasinoSession);
     this.#player?.update(dt);
     if (camControlledByWardrobe) {
       this.#wardrobeCamera.update(dt);
+    }
+    if (inCasinoSession) {
+      this.#casinoGames.update(dt);
     }
     this.#wardrobeFX?.update(dt);
 
@@ -387,10 +467,18 @@ export class CoopExploreMode {
     this.#fauna?.update(dt, this.#ctx.engine.getElapsed(), pos, this.#ctx.input.isSprinting());
     this.#npcs?.update(dt, pos, Boolean(this.#dialogue?.isOpen()));
     this.#quests?.update(dt, pos);
+    if (!this.#minigames.isActive() && !inCasinoSession) {
+      this.#coins?.update(dt, pos);
+    }
     this.#stateSync?.update(dt);
 
     if (this.#minigames.isActive()) {
       this.#minigames.update(dt);
+      return;
+    }
+
+    if (inCasinoSession) {
+      this.#hud.setInteractPrompt(null);
       return;
     }
 
@@ -415,6 +503,13 @@ export class CoopExploreMode {
       return;
     }
 
+    const nearStation = this.#casinoDome?.getNearestStation(pos, 2.35);
+    if (nearStation) {
+      this.#currentHotspot = null;
+      this.#hud.setInteractPrompt(nearStation.label);
+      return;
+    }
+
     let found = null;
     for (const hs of this.#hotspots) {
       if (pos.distanceTo(hs.pos) <= hs.radius) {
@@ -435,6 +530,8 @@ export class CoopExploreMode {
     this.#unsubs.length = 0;
 
     this.#minigames?.dispose();
+    this.#casinoGames?.dispose();
+    this.#coins?.dispose();
     this.#wardrobe?.dispose();
     this.#wardrobeCamera?.dispose();
     this.#wardrobeFX?.dispose();
@@ -444,6 +541,7 @@ export class CoopExploreMode {
     this.#quests?.dispose();
     this.#npcs?.dispose();
     this.#player?.dispose();
+    this.#casinoDome?.dispose();
     this.#arena?.dispose();
     this.#fauna?.dispose();
     this.#castle?.dispose();

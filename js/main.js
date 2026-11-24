@@ -66,21 +66,24 @@ class ReinoRosaApp {
     const scene = this.#engine.getScene();
     const dummyCol = new CollisionSystem();
     dummyCol.init();
-    const [{ CastleBuilder }, { WorldDecor }, { ArenaBuilder }, { FaunaSystem }] = await Promise.all([
+    const [{ CastleBuilder }, { WorldDecor }, { ArenaBuilder }, { FaunaSystem }, { CasinoDomeBuilder }] = await Promise.all([
       import('./world/CastleBuilder.js'),
       import('./world/WorldDecor.js'),
       import('./world/ArenaBuilder.js'),
-      import('./world/FaunaSystem.js')
+      import('./world/FaunaSystem.js'),
+      import('./world/CasinoDomeBuilder.js')
     ]);
     const castle = new CastleBuilder(scene, this.#textures, dummyCol);
     const decor = new WorldDecor(scene, this.#textures, dummyCol);
     const arena = new ArenaBuilder(scene, this.#textures, dummyCol);
     const fauna = new FaunaSystem(scene);
+    const casinoDome = new CasinoDomeBuilder(scene, this.#textures, dummyCol);
     castle.init();
     decor.init();
     arena.init();
     fauna.init();
-    this.#preview = { castle, decor, arena, fauna, dummyCol };
+    casinoDome.init();
+    this.#preview = { castle, decor, arena, fauna, casinoDome, dummyCol };
     this.#applyPreviewTheme(worldId);
   }
 
@@ -90,6 +93,7 @@ class ReinoRosaApp {
     this.#preview?.castle?.applyTheme(theme);
     this.#preview?.decor?.applyTheme(theme);
     this.#preview?.arena?.applyTheme(theme);
+    this.#preview?.casinoDome?.applyTheme(theme);
   }
 
   #disposeMenuPreview() {
@@ -98,6 +102,7 @@ class ReinoRosaApp {
     this.#preview.decor.dispose();
     this.#preview.arena.dispose();
     this.#preview.fauna.dispose();
+    this.#preview.casinoDome?.dispose();
     this.#preview.dummyCol.dispose();
     this.#preview = null;
   }
@@ -153,6 +158,7 @@ class ReinoRosaApp {
       this.#preview?.castle?.update(dt);
       this.#preview?.decor?.update(dt);
       this.#preview?.arena?.update(dt);
+      this.#preview?.casinoDome?.update(dt);
       this.#preview?.fauna?.update(dt, this.#engine.getElapsed());
     }
     this.#engine.render();

@@ -7,6 +7,8 @@ export class HudUI {
   #boundCleanups = [];
   #inviteModalOpen = false;
   #inviteWorldId = 'palacio_cristal';
+  #coinDeltaTimer = null;
+  #coinAnimTimer = null;
 
   constructor({ peerManager, audio, callbacks }) {
     this.#peerManager = peerManager;
@@ -19,6 +21,7 @@ export class HudUI {
     const canvas = this.#el('minimap-canvas');
     this.#minimapCtx = canvas.getContext('2d');
 
+    this.#ensureCoinCounterUI();
     this.#syncMuteButton();
 
     this.#on('btn-hud-wardrobe', 'click', () => this.#callbacks.onToggleWardrobe?.());
@@ -302,6 +305,25 @@ export class HudUI {
     ctx.fillStyle = 'rgba(255, 214, 153, 0.45)';
     ctx.fill();
 
+    // Cúpula Real del Casino (-18.6, 17.0)
+    const casinoX = toX(-18.6);
+    const casinoY = toY(17.0);
+    ctx.beginPath();
+    ctx.arc(casinoX, casinoY, 8.8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(72, 229, 194, 0.22)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(casinoX, casinoY, 5.8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(45, 212, 191, 0.56)';
+    ctx.strokeStyle = '#f5c451';
+    ctx.lineWidth = 1.6;
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(casinoX, casinoY, 1.8, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffe58f';
+    ctx.fill();
+
     ctx.fillStyle = '#ff6ec7';
     for (const gp of gemPositions) {
       const gx = toX(gp.x);
@@ -336,6 +358,180 @@ export class HudUI {
     ctx.stroke();
   }
 
+  updateCoins(balance, delta = 0) {
+    const valueEl = this.#el('hud-coin-value');
+    const badgeEl = this.#el('hud-coin-badge');
+    const deltaEl = this.#el('hud-coin-delta');
+    if (valueEl) {
+      const safeBalance = Number.isFinite(Number(balance)) ? Math.max(0, Math.round(Number(balance))) : 0;
+      valueEl.textContent = String(safeBalance);
+    }
+    if (!badgeEl) return;
+
+    const numDelta = Number(delta) || 0;
+    if (numDelta === 0) return;
+
+    clearTimeout(this.#coinAnimTimer);
+    badgeEl.classList.remove('coin-gain', 'coin-spend');
+    void badgeEl.offsetWidth;
+
+    if (numDelta > 0) {
+      badgeEl.classList.add('coin-gain');
+      this.#coinAnimTimer = setTimeout(() => badgeEl.classList.remove('coin-gain'), 620);
+
+      if (deltaEl) {
+        clearTimeout(this.#coinDeltaTimer);
+        deltaEl.textContent = `+${Math.round(numDelta)} 🪙`;
+        deltaEl.classList.remove('show-gain');
+        void deltaEl.offsetWidth;
+        deltaEl.classList.add('show-gain');
+        this.#coinDeltaTimer = setTimeout(() => {
+          deltaEl.classList.remove('show-gain');
+        }, 1150);
+      }
+    } else {
+      badgeEl.classList.add('coin-spend');
+      this.#coinAnimTimer = setTimeout(() => badgeEl.classList.remove('coin-spend'), 420);
+    }
+  }
+
+  #ensureCoinCounterUI() {
+    if (!document.getElementById('hud-coins-style')) {
+      const style = document.createElement('style');
+      style.id = 'hud-coins-style';
+      style.textContent = `
+        #hud-coin-badge {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          border-radius: 999px;
+          border: 1px solid rgba(255, 214, 130, 0.65);
+          background: linear-gradient(135deg, rgba(64, 24, 52, 0.82), rgba(112, 46, 86, 0.72));
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 240, 200, 0.38);
+          backdrop-filter: blur(10px);
+          color: #fff2c6;
+          font-weight: 700;
+          font-size: 0.94rem;
+          letter-spacing: 0.02em;
+          user-select: none;
+          pointer-events: auto;
+          transition: transform 0.2s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+        }
+        #hud-coin-badge .hud-coin-icon {
+          font-size: 1.02rem;
+          line-height: 1;
+          filter: drop-shadow(0 0 4px rgba(255, 205, 85, 0.55));
+        }
+        #hud-coin-value {
+          font-variant-numeric: tabular-nums;
+          text-shadow: 0 1px 3px rgba(32, 10, 24, 0.75);
+        }
+        #hud-coin-badge.coin-gain {
+          animation: hudCoinGoldFlash 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        #hud-coin-badge.coin-spend {
+          animation: hudCoinSpendPulse 0.38s ease;
+        }
+        .hud-coin-delta {
+          position: absolute;
+          top: calc(100% + 6px);
+          right: 6px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          background: linear-gradient(135deg, rgba(255, 215, 105, 0.95), rgba(242, 165, 65, 0.95));
+          color: #3b1726;
+          font-size: 0.78rem;
+          font-weight: 800;
+          white-space: nowrap;
+          box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+          opacity: 0;
+          transform: translateY(-4px) scale(0.92);
+          pointer-events: none;
+        }
+        .hud-coin-delta.show-gain {
+          animation: hudCoinDeltaFloat 1.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes hudCoinGoldFlash {
+          0% {
+            transform: scale(1);
+            border-color: rgba(255, 232, 150, 0.95);
+            box-shadow: 0 0 0 rgba(255, 215, 100, 0), inset 0 1px 0 rgba(255, 245, 215, 0.6);
+          }
+          38% {
+            transform: scale(1.1);
+            border-color: #ffe896;
+            box-shadow: 0 0 18px rgba(255, 210, 88, 0.78), inset 0 0 12px rgba(255, 232, 145, 0.45);
+          }
+          100% {
+            transform: scale(1);
+            border-color: rgba(255, 214, 130, 0.65);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 240, 200, 0.38);
+          }
+        }
+        @keyframes hudCoinSpendPulse {
+          0% { transform: scale(1); }
+          45% {
+            transform: scale(0.95);
+            border-color: rgba(255, 148, 194, 0.85);
+            box-shadow: 0 0 10px rgba(255, 120, 180, 0.4);
+          }
+          100% { transform: scale(1); }
+        }
+        @keyframes hudCoinDeltaFloat {
+          0% { opacity: 0; transform: translateY(-2px) scale(0.88); }
+          18% { opacity: 1; transform: translateY(2px) scale(1.04); }
+          75% { opacity: 1; transform: translateY(8px) scale(1); }
+          100% { opacity: 0; transform: translateY(14px) scale(0.94); }
+        }
+        body.casino-open #hud-overlay {
+          z-index: 10050 !important;
+          pointer-events: none !important;
+        }
+        body.casino-open #hud-overlay.hidden {
+          display: block !important;
+        }
+        body.casino-open #hud-overlay > *:not(.hud-top):not(#toast-container) {
+          opacity: 0 !important;
+          pointer-events: none !important;
+        }
+        body.casino-open .hud-top > *:not(.hud-actions) {
+          opacity: 0 !important;
+          pointer-events: none !important;
+        }
+        body.casino-open .hud-actions > *:not(#hud-coin-badge):not(#btn-hud-mute) {
+          display: none !important;
+        }
+        body.casino-open #hud-coin-badge,
+        body.casino-open #btn-hud-mute {
+          position: relative;
+          z-index: 10051 !important;
+          pointer-events: auto !important;
+          opacity: 1 !important;
+          visibility: visible !important;
+        }
+        body.casino-open #toast-container {
+          z-index: 10052 !important;
+          opacity: 1 !important;
+          visibility: visible !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    if (this.#el('hud-coin-badge')) return;
+    const badge = document.createElement('div');
+    badge.id = 'hud-coin-badge';
+    badge.title = 'Monedas Imperiales';
+    badge.innerHTML = '<span class="hud-coin-icon" aria-hidden="true">🪙</span><span id="hud-coin-value">150</span><span id="hud-coin-delta" class="hud-coin-delta" aria-hidden="true"></span>';
+
+    const host = this.#hudEl?.querySelector('.hud-actions') || this.#hudEl?.querySelector('.hud-top') || this.#hudEl;
+    if (host) {
+      host.prepend(badge);
+    }
+  }
+
   #escape(str) {
     return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -343,6 +539,10 @@ export class HudUI {
   update() {}
 
   dispose() {
+    clearTimeout(this.#coinDeltaTimer);
+    clearTimeout(this.#coinAnimTimer);
+    this.#coinDeltaTimer = null;
+    this.#coinAnimTimer = null;
     for (const fn of this.#boundCleanups) fn();
     this.#boundCleanups.length = 0;
     this.hide();

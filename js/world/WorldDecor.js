@@ -699,6 +699,9 @@ export class WorldDecor {
     if (x >= 14 - margin && x <= 42 + margin && z >= -3.2 - margin && z <= 3.2 + margin) return true;
     // Plaza de la Fuente (0, 0), r = 14.5
     if (Math.hypot(x, z) < 14.5 + margin) return true;
+    // Cúpula Real del Casino: centro (-18.6, 17.0), radio 9.0 + entrada Este X ∈ [-11.0, -5.0], Z ∈ [14.2, 19.8]
+    if (Math.hypot(x + 18.6, z - 17.0) < 9.6 + margin) return true;
+    if (x >= -11.0 - margin && x <= -5.0 + margin && z >= 14.2 - margin && z <= 19.8 + margin) return true;
     // Mirador Real Sur (0, 46), r = 7.5 + escalinata Z ∈ [35.5, 46]
     if (Math.hypot(x, z - 46) < 7.8 + margin) return true;
     if (x >= -4.2 - margin && x <= 4.2 + margin && z >= 35.5 - margin && z <= 46) return true;

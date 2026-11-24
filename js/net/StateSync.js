@@ -138,6 +138,10 @@ export class StateSync {
         this.#callbacks.onRemoteStartGame?.(packet.worldId);
         break;
       }
+      case 'casino_fireworks': {
+        this.#callbacks.onRemoteCasinoFireworks?.(packet.name || 'Compañero Real');
+        break;
+      }
       case 'peer_left': {
         if (packet.peerId) {
           this.#removeRemotePlayer(packet.peerId);
@@ -168,6 +172,10 @@ export class StateSync {
 
   broadcastStartGame(worldId) {
     this.#peerManager.broadcast({ type: 'start_game', worldId });
+  }
+
+  broadcastCasinoFireworks(name) {
+    this.#peerManager.broadcast({ type: 'casino_fireworks', name });
   }
 
   getRemoteList() {
@@ -201,7 +209,8 @@ export class StateSync {
         anim: local.anim,
         // Emote activo {id, seq}: los compañeros lo reproducen al ver un seq nuevo
         emote: local.emote ? { id: local.emote.id, seq: local.emote.seq } : null,
-        appearance: local.appearance
+        appearance: local.appearance,
+        casinoStation: local.casinoStation || null
       });
     }
   }
