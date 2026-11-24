@@ -19,6 +19,7 @@ export class PlayerController {
   #animState = 'idle';
   #externalControl = false;
   #unsubJump = null;
+  #desiredCamPos = new THREE.Vector3();
 
   constructor(scene, camera, inputManager, collisionSystem, audioSynth, textureFactory = null) {
     this.#scene = scene;
@@ -71,6 +72,11 @@ export class PlayerController {
     this.#rig?.applyAppearance(appearance);
   }
 
+  /** @returns {Promise<boolean>} true si el modelo .glb solicitado está montado. */
+  whenModelReady() {
+    return this.#rig?.whenModelReady() ?? Promise.resolve(false);
+  }
+
   getAppearance() {
     return this.#rig?.getAppearance();
   }
@@ -99,6 +105,7 @@ export class PlayerController {
     if (!this.#rig) return;
 
     if (this.#externalControl) {
+      this.#input.consumeLookDelta();
       this.#rig.getRoot().position.copy(this.#position);
       this.#rig.getRoot().rotation.y = this.#facingYaw;
       this.#rig.update(dt, this.#animState, 0);
@@ -107,11 +114,11 @@ export class PlayerController {
 
     // Cámara orbital fluida con Pointer Lock o arrastre + teclado
     const look = this.#input.consumeLookDelta();
-    const yawSens = look.pointerLocked ? 0.0032 : 0.0052;
-    const pitchSens = look.pointerLocked ? 0.0026 : 0.0042;
+    const yawSens = look.pointerLocked ? 0.0028 : 0.005;
+    const pitchSens = look.pointerLocked ? 0.0022 : 0.004;
     this.#cameraYaw -= look.x * yawSens;
     this.#cameraYaw += this.#input.getCameraKeyTurn() * dt * 2.1;
-    this.#cameraPitch = Math.max(0.08, Math.min(1.15, this.#cameraPitch + look.y * pitchSens));
+    this.#cameraPitch = Math.max(0.08, Math.min(1.12, this.#cameraPitch + look.y * pitchSens));
     this.#cameraDistance = Math.max(4.4, Math.min(13.5, this.#cameraDistance + look.zoom));
 
     // Movimiento relativo a la cámara
@@ -189,7 +196,8 @@ export class PlayerController {
     const camY = Math.max(groundY + 0.65, targetY + Math.sin(this.#cameraPitch) * this.#cameraDistance);
     const camZ = targetZ + Math.cos(this.#cameraYaw) * horizDist;
 
-    this.#camera.position.lerp(new THREE.Vector3(camX, camY, camZ), Math.min(1, dt * 10));
+    this.#desiredCamPos.set(camX, camY, camZ);
+    this.#camera.position.lerp(this.#desiredCamPos, Math.min(1, dt * 10));
     this.#camera.lookAt(targetX, targetY, targetZ);
   }
 

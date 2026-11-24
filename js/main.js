@@ -2,6 +2,7 @@ import { Engine } from './core/Engine.js';
 import { InputManager } from './core/InputManager.js';
 import { AudioSynthesizer } from './core/AudioSynthesizer.js';
 import { TextureFactory } from './core/TextureFactory.js';
+import { PwaManager } from './core/PwaManager.js';
 import { PeerManager } from './network/PeerManager.js';
 import { WorldThemes } from './world/WorldThemes.js';
 import { CollisionSystem } from './world/CollisionSystem.js';
@@ -14,6 +15,7 @@ class ReinoRosaApp {
   #input = null;
   #audio = null;
   #textures = null;
+  #pwa = null;
   #peerManager = null;
   #worldThemes = null;
   #modeManager = null;
@@ -28,12 +30,13 @@ class ReinoRosaApp {
     this.#engine = new Engine(document.getElementById('canvas-container'));
     this.#textures = new TextureFactory();
     this.#audio = new AudioSynthesizer();
+    this.#pwa = new PwaManager();
     this.#worldThemes = new WorldThemes();
     this.#peerManager = new PeerManager();
     this.#modeManager = new GameModeManager();
     this.#engine.init();
     this.#input = new InputManager(this.#engine.getDomElement());
-    [this.#textures, this.#input, this.#audio, this.#worldThemes, this.#peerManager, this.#modeManager].forEach((m) => m.init());
+    [this.#textures, this.#input, this.#audio, this.#pwa, this.#worldThemes, this.#peerManager, this.#modeManager].forEach((m) => m.init());
     this.#modeManager.register('coop_explore', () => new CoopExploreMode());
 
     this.#menuUI = new MenuUI({
@@ -141,7 +144,7 @@ class ReinoRosaApp {
   dispose() {
     if (this.#rafId) cancelAnimationFrame(this.#rafId);
     this.#disposeMenuPreview();
-    [this.#modeManager, this.#menuUI, this.#peerManager, this.#audio, this.#input, this.#textures, this.#engine].forEach((m) => m?.dispose());
+    [this.#modeManager, this.#menuUI, this.#peerManager, this.#pwa, this.#audio, this.#input, this.#textures, this.#engine].forEach((m) => m?.dispose());
   }
 }
 

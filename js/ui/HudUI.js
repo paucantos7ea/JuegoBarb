@@ -33,14 +33,18 @@ export class HudUI {
       this.#callbacks.onCloseInvite?.();
     });
 
-    // Botones rápidos de minijuegos
-    this.#hudEl.querySelectorAll('.activity-btn').forEach((btn) => {
-      const fn = () => this.#callbacks.onStartMinigame?.(btn.dataset.minigame);
-      btn.addEventListener('click', fn);
-      this.#boundCleanups.push(() => btn.removeEventListener('click', fn));
-    });
+    const bindGroup = (selector, onClick) => {
+      this.#hudEl.querySelectorAll(selector).forEach((btn) => {
+        const fn = () => { btn.blur?.(); onClick(btn); };
+        btn.addEventListener('click', fn);
+        this.#boundCleanups.push(() => btn.removeEventListener('click', fn));
+      });
+    };
 
-    // Chat rápido
+    // Botones rápidos de minijuegos y chat rápido
+    bindGroup('.activity-btn', (btn) => this.#callbacks.onStartMinigame?.(btn.dataset.minigame));
+    bindGroup('.quick-chat-btn', (btn) => this.#callbacks.onSendChat?.(btn.dataset.msg));
+
     const form = this.#el('chat-form');
     const chatInput = this.#el('chat-input');
     const chatSubmit = (e) => {
@@ -54,18 +58,22 @@ export class HudUI {
       this.#callbacks.onChatClose?.();
     };
     const chatFocus = () => this.#callbacks.onChatOpen?.();
+    const chatKeyDown = (e) => {
+      if (e.key === 'Escape' || e.code === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        chatInput.blur();
+        this.#callbacks.onChatClose?.();
+      }
+    };
     form.addEventListener('submit', chatSubmit);
     chatInput.addEventListener('focus', chatFocus);
+    chatInput.addEventListener('keydown', chatKeyDown);
     this.#boundCleanups.push(
       () => form.removeEventListener('submit', chatSubmit),
-      () => chatInput.removeEventListener('focus', chatFocus)
+      () => chatInput.removeEventListener('focus', chatFocus),
+      () => chatInput.removeEventListener('keydown', chatKeyDown)
     );
-
-    this.#hudEl.querySelectorAll('.quick-chat-btn').forEach((btn) => {
-      const fn = () => this.#callbacks.onSendChat?.(btn.dataset.msg);
-      btn.addEventListener('click', fn);
-      this.#boundCleanups.push(() => btn.removeEventListener('click', fn));
-    });
 
     // Modal invitación en partida
     this.#boundCleanups.push(
@@ -108,8 +116,9 @@ export class HudUI {
   #on(id, ev, fn) {
     const node = this.#el(id);
     if (!node) return;
-    node.addEventListener(ev, fn);
-    this.#boundCleanups.push(() => node.removeEventListener(ev, fn));
+    const handler = ev === 'click' ? (e) => { fn(e); node.blur?.(); } : fn;
+    node.addEventListener(ev, handler);
+    this.#boundCleanups.push(() => node.removeEventListener(ev, handler));
   }
 
   show() {
@@ -184,10 +193,11 @@ export class HudUI {
   setPointerLockState(locked) {
     const hint = this.#el('pointer-lock-hint');
     if (!hint) return;
-    hint.classList.toggle('locked', Boolean(locked));
-    hint.innerHTML = locked
-      ? '🎯 Cámara capturada | <kbd>Tab</kbd> o <kbd>Esc</kbd>: Liberar ratón'
-      : '🖱️ Clic: Capturar cámara | <kbd>Tab</kbd>: Capturar / Liberar';
+    const isLocked = Boolean(locked);
+    hint.classList.toggle('locked', isLocked);
+    hint.innerHTML = isLocked
+      ? '🎯 Cámara activa | <kbd>Tab</kbd>: Liberar ratón'
+      : '🖱️ Clic o <kbd>Tab</kbd>: Capturar cámara';
   }
 
   appendChat(sender, text) {
@@ -223,47 +233,33 @@ export class HudUI {
 
     const actions = this.#el('dialogue-actions');
     actions.innerHTML = '';
-
-    if (npc.actionLabel) {
+    const addBtn = (label, cls, handler) => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'btn-primary btn-sm';
-      btn.textContent = npc.actionLabel;
+      btn.className = cls;
+      btn.textContent = label;
       btn.addEventListener('click', () => {
+        btn.blur?.();
         this.hideDialogue();
-        onAction?.(npc.actionType);
+        handler();
       });
       actions.appendChild(btn);
-    }
+    };
 
-    if (npc.secondaryLabel) {
-      const btn2 = document.createElement('button');
-      btn2.type = 'button';
-      btn2.className = 'btn-secondary btn-sm';
-      btn2.textContent = npc.secondaryLabel;
-      btn2.addEventListener('click', () => {
-        this.hideDialogue();
-        onAction?.(npc.secondaryType);
-      });
-      actions.appendChild(btn2);
-    }
-
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.className = 'btn-secondary btn-sm';
-    closeBtn.textContent = 'Cerrar';
-    closeBtn.addEventListener('click', () => {
-      this.hideDialogue();
-      this.#callbacks.onDialogueClose?.();
-    });
-    actions.appendChild(closeBtn);
+    if (npc.actionLabel) addBtn(npc.actionLabel, 'btn-primary btn-sm', () => onAction?.(npc.actionType));
+    if (npc.secondaryLabel) addBtn(npc.secondaryLabel, 'btn-secondary btn-sm', () => onAction?.(npc.secondaryType));
+    addBtn('Cerrar', 'btn-secondary btn-sm', () => this.#callbacks.onDialogueClose?.());
 
     this.#el('dialogue-box').classList.remove('hidden');
   }
 
   hideDialogue() {
     this.#dialogueOpen = false;
-    this.#el('dialogue-box').classList.add('hidden');
+    const box = this.#el('dialogue-box');
+    box.classList.add('hidden');
+    if (box.contains(document.activeElement)) {
+      document.activeElement?.blur?.();
+    }
   }
 
   isDialogueOpen() {

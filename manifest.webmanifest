@@ -1,0 +1,33 @@
+{
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "name": "Reino Rosa Imperial: El Palacio de Cristal",
+  "short_name": "Reino Rosa 3D",
+  "description": "Aventura 3D multijugador en red local en el Palacio de Cristal con vestidor real, misiones y minijuegos.",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "minimal-ui"],
+  "orientation": "landscape",
+  "theme_color": "#ff69b4",
+  "background_color": "#1a0b16",
+  "icons": [
+    {
+      "src": "./assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

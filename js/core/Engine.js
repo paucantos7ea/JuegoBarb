@@ -4,7 +4,11 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { WorldThemes } from '../world/WorldThemes.js';
 
+/**
+ * Motor 3D principal: WebGLRenderer, iluminación, cielo, post-procesado y calibración PBR.
+ */
 export class Engine {
   #container;
   #renderer = null;
@@ -23,7 +27,8 @@ export class Engine {
   #moteVelocities = null;
   #elapsed = 0;
   #onResizeBound = null;
-  #envIntensity = 0.6;
+  #envIntensity = 0.56;
+  #marbleRoughness = 0.48;
   #envSyncTimer = 1;
 
   constructor(container) {
@@ -43,7 +48,7 @@ export class Engine {
     this.#renderer.shadowMap.enabled = true;
     this.#renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.#renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.#renderer.toneMappingExposure = 0.9;
+    this.#renderer.toneMappingExposure = 0.90;
     this.#renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.#container.appendChild(this.#renderer.domElement);
 
@@ -178,14 +183,20 @@ export class Engine {
     this.#composer.addPass(new RenderPass(this.#scene, this.#camera));
     this.#bloomPass = new UnrealBloomPass(
       new THREE.Vector2(width, height),
-      0.2,
-      0.3,
+      0.20,
+      0.30,
       0.96
     );
+    this.#bloomPass.threshold = 0.96;
+    this.#bloomPass.strength = 0.20;
+    this.#bloomPass.radius = 0.30;
     this.#composer.addPass(this.#bloomPass);
     this.#composer.addPass(new OutputPass());
   }
 
+  /**
+   * Aplica un tema visual calibrando luces, exposición, bloom, entorno PBR y etiquetas.
+   */
   applyTheme(theme) {
     if (!theme) return;
     const u = this.#skyDome.material.uniforms;
@@ -200,24 +211,25 @@ export class Engine {
     this.#hemiLight.groundColor.setHex(theme.hemiGround);
     this.#hemiLight.intensity = theme.hemiIntensity;
 
-    this.#sunLight.color.setHex(theme.sunColor);
-    this.#sunLight.intensity = theme.sunIntensity;
+    this.#sunLight.color.setHex(theme.sunColor ?? 0xfff3e0);
+    this.#sunLight.intensity = Math.min(1.3, theme.sunIntensity ?? 1.3);
     this.#sunLight.position.set(...theme.sunPosition);
 
     this.#fillLight.color.setHex(theme.fillColor);
     this.#fillLight.intensity = theme.fillIntensity;
 
     this.#renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.#renderer.toneMappingExposure = Math.min(0.9, theme.exposure ?? 0.9);
+    this.#renderer.toneMappingExposure = Math.min(0.90, theme.exposure ?? 0.90);
     // three r160 no soporta scene.environmentIntensity (llegó en r163):
     // lo aplicamos material a material con envMapIntensity.
-    this.#envIntensity = Math.min(theme.envIntensity ?? 0.58, 0.6);
+    this.#envIntensity = Math.min(theme.envIntensity ?? 0.56, 0.60);
+    this.#marbleRoughness = Math.max(0.48, theme.marbleRoughness ?? 0.48);
     this.#syncEnvIntensity();
     this.#calibrateSceneMaterials();
 
-    this.#bloomPass.strength = Math.min(0.22, theme.bloomStrength ?? 0.2);
-    this.#bloomPass.radius = theme.bloomRadius ?? 0.3;
-    this.#bloomPass.threshold = Math.min(1.0, Math.max(0.96, theme.bloomThreshold ?? 0.96));
+    this.#bloomPass.threshold = Math.max(0.96, theme.bloomThreshold ?? 0.96);
+    this.#bloomPass.strength = Math.min(0.20, theme.bloomStrength ?? 0.20);
+    this.#bloomPass.radius = theme.bloomRadius ?? 0.30;
 
     this.#starField.material.opacity = theme.starsOpacity;
     this.#motes.material.color.setHex(theme.moteColor);
@@ -225,29 +237,50 @@ export class Engine {
   }
 
   #syncEnvIntensity() {
-    const value = this.#envIntensity;
+    if (!this.#scene) return;
+    const value = Math.min(this.#envIntensity, 0.60);
     this.#scene.traverse((obj) => {
       const mats = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : [];
       for (const m of mats) {
-        if ('envMapIntensity' in m && m.envMapIntensity !== value) m.envMapIntensity = value;
+        if ('envMapIntensity' in m) {
+          const target = m.isMeshPhysicalMaterial ? Math.min(value, 0.60) : value;
+          if (m.envMapIntensity !== target) m.envMapIntensity = target;
+        }
       }
     });
   }
 
   #calibrateSceneMaterials() {
     if (!this.#scene) return;
+    const labelDefaults = WorldThemes.getLabelDefaults();
+    const minRoughness = Math.max(0.48, this.#marbleRoughness);
     this.#scene.traverse((obj) => {
       const mats = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : [];
       for (const mat of mats) {
-        if (
+        if (obj.isSprite || mat.isSpriteMaterial) {
+          if (mat.toneMapped !== labelDefaults.toneMapped) {
+            // toneMapped forma parte de la clave del shader: requiere recompilar
+            mat.toneMapped = labelDefaults.toneMapped;
+            mat.needsUpdate = true;
+          }
+          if (mat.color) {
+            const maxCh = labelDefaults.maxChannel;
+            mat.color.r = Math.min(mat.color.r, maxCh);
+            mat.color.g = Math.min(mat.color.g, maxCh);
+            mat.color.b = Math.min(mat.color.b, maxCh);
+          }
+          continue;
+        }
+        if (mat.isMeshPhysicalMaterial) {
+          mat.envMapIntensity = Math.min(mat.envMapIntensity ?? 1, 0.60);
+        } else if (
           mat.isMeshStandardMaterial &&
-          !mat.isMeshPhysicalMaterial &&
           !mat.userData?.preserveRoughness &&
           mat.metalness < 0.35 &&
           (!mat.emissiveIntensity || mat.emissiveIntensity < 0.2)
         ) {
-          mat.roughness = Math.max(mat.roughness, 0.48);
-          mat.envMapIntensity = Math.min(mat.envMapIntensity ?? 1, 0.6);
+          mat.roughness = Math.max(mat.roughness, minRoughness);
+          mat.envMapIntensity = Math.min(mat.envMapIntensity ?? 1, 0.60);
         }
       }
     });

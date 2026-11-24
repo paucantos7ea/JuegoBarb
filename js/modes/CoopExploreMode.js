@@ -140,6 +140,12 @@ export class CoopExploreMode extends BaseGameMode {
     this.#minigames.init();
 
     this.#bindInputActions();
+    // Con un diálogo/modal abierto, ni Tab ni un clic en el lienzo deben volver a capturar el ratón
+    context.input.setPointerLockGuard(() => Boolean(
+      this.#wardrobe?.isOpen()
+      || this.#hud?.isDialogueOpen()
+      || this.#hud?.isInviteModalOpen()
+    ));
     context.input.setPointerLockEnabled(true);
     this.#applyWorldTheme(this.#worldId, false);
     this.#hud.show();
@@ -155,7 +161,7 @@ export class CoopExploreMode extends BaseGameMode {
     this.#unsubs.push(
       input.onAction('pointerLockChange', (locked) => this.#hud.setPointerLockState(locked)),
       input.onAction('wardrobe', () => {
-        if (!this.#minigames.isActive()) this.#toggleWardrobe();
+        if (!this.#minigames.isActive() && !this.#hud.isInviteModalOpen()) this.#toggleWardrobe();
       }),
       input.onAction('chat', () => {
         if (!this.#minigames.isActive() && !this.#wardrobe.isOpen()) {
@@ -203,9 +209,11 @@ export class CoopExploreMode extends BaseGameMode {
 
   #applyWardrobeChange(partial) {
     this.#player.applyAppearance(partial);
+    // getAppearance() no incluye customModelUrl: la URL blob: local nunca se envía por red
     const full = this.#player.getAppearance();
     this.#quests.recordWardrobeUpdate(full);
     this.#stateSync.broadcastAppearance(this.#playerName, full);
+    return this.#player.whenModelReady();
   }
 
   #sendChat(text) {
@@ -344,6 +352,7 @@ export class CoopExploreMode extends BaseGameMode {
     this.#castle?.dispose();
     this.#gardens?.dispose();
     this.#collision?.dispose();
+    this.#ctx?.input?.setPointerLockGuard(null);
     this.#ctx?.input?.setPointerLockEnabled(false);
     this.#ctx?.input?.setControlsLocked(false);
   }

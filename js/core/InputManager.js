@@ -9,6 +9,8 @@ export class InputManager {
   #lookDeltaX = 0;
   #lookDeltaY = 0;
   #zoomDelta = 0;
+  #skipLockFrames = 0;
+  #pointerLockGuard = null;
   #actionListeners = new Map();
   #boundHandlers = {};
 
@@ -24,12 +26,15 @@ export class InputManager {
     this.#boundHandlers.mouseUp = () => { this.#isDragging = false; };
     this.#boundHandlers.wheel = (e) => this.#onWheel(e);
     this.#boundHandlers.pointerLockChange = () => this.#onPointerLockChange();
+    this.#boundHandlers.pointerLockError = () => this.#onPointerLockError();
+    this.#boundHandlers.visibilityChange = () => this.#onVisibilityChange();
     this.#boundHandlers.contextMenu = (e) => {
       if (e.target === this.#domElement) e.preventDefault();
     };
     this.#boundHandlers.blur = () => {
       this.#keys.clear();
       this.#isDragging = false;
+      this.#resetLookDeltas();
     };
 
     window.addEventListener('keydown', this.#boundHandlers.keyDown);
@@ -38,9 +43,17 @@ export class InputManager {
     window.addEventListener('mouseup', this.#boundHandlers.mouseUp);
     window.addEventListener('blur', this.#boundHandlers.blur);
     document.addEventListener('pointerlockchange', this.#boundHandlers.pointerLockChange);
+    document.addEventListener('pointerlockerror', this.#boundHandlers.pointerLockError);
+    document.addEventListener('visibilitychange', this.#boundHandlers.visibilityChange);
     this.#domElement.addEventListener('mousedown', this.#boundHandlers.mouseDown);
     this.#domElement.addEventListener('wheel', this.#boundHandlers.wheel, { passive: true });
     this.#domElement.addEventListener('contextmenu', this.#boundHandlers.contextMenu);
+  }
+
+  #resetLookDeltas() {
+    this.#lookDeltaX = 0;
+    this.#lookDeltaY = 0;
+    this.#zoomDelta = 0;
   }
 
   #isTypingInField() {
@@ -53,10 +66,27 @@ export class InputManager {
   #onPointerLockChange() {
     const locked = this.isPointerLocked();
     document.body.classList.toggle('pointer-locked', locked);
+    this.#skipLockFrames = locked ? 2 : 0;
+    this.#resetLookDeltas();
     if (!locked) {
       this.#isDragging = false;
     }
     this.#emit('pointerLockChange', locked);
+  }
+
+  #onPointerLockError() {
+    this.#isDragging = false;
+    this.#skipLockFrames = 0;
+    // Habitual tras pulsar Esc (el navegador bloquea la re-captura ~1 s): no es un error del juego
+    console.debug('[InputManager] Captura de ratón rechazada por el navegador; vuelve a hacer clic.');
+  }
+
+  #onVisibilityChange() {
+    if (!document.hidden) return;
+    this.#keys.clear();
+    this.#isDragging = false;
+    this.#resetLookDeltas();
+    this.exitPointerLock();
   }
 
   setPointerLockEnabled(enabled) {
@@ -67,13 +97,33 @@ export class InputManager {
     }
   }
 
+  /**
+   * Función que devuelve true mientras haya UI que necesite el cursor libre
+   * (diálogos, modales...). Bloquea la captura por clic, Tab o reanudación automática.
+   * @param {(() => boolean)|null} fn
+   */
+  setPointerLockGuard(fn) {
+    this.#pointerLockGuard = typeof fn === 'function' ? fn : null;
+  }
+
+  #isPointerLockBlocked() {
+    try {
+      return Boolean(this.#pointerLockGuard?.());
+    } catch {
+      return false;
+    }
+  }
+
   isPointerLocked() {
     return document.pointerLockElement === this.#domElement;
   }
 
   requestPointerLock() {
     if (!this.#pointerLockEnabled || this.#controlsLocked || this.#isTypingInField()) return;
-    if (this.isPointerLocked()) return;
+    if (this.isPointerLocked() || this.#isPointerLockBlocked()) return;
+    // Sin gesto de usuario activo (p. ej. al acabar un minijuego por temporizador) el navegador
+    // rechazaría la petición con 'pointerlockerror': esperamos al siguiente clic.
+    if (navigator.userActivation && !navigator.userActivation.isActive) return;
     try {
       const res = this.#domElement.requestPointerLock?.();
       if (res && typeof res.catch === 'function') {
@@ -85,6 +135,8 @@ export class InputManager {
   }
 
   exitPointerLock() {
+    this.#resetLookDeltas();
+    this.#skipLockFrames = 0;
     if (document.pointerLockElement) {
       try {
         document.exitPointerLock();
@@ -103,18 +155,21 @@ export class InputManager {
   }
 
   #onKeyDown(e) {
-    if (this.#isTypingInField()) {
-      if (e.code === 'Escape') {
-        document.activeElement.blur();
+    if (e.code === 'Tab' && this.#pointerLockEnabled) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat && !this.#controlsLocked && !this.#isTypingInField()) {
+        if (document.activeElement?.tagName === 'BUTTON') {
+          document.activeElement.blur();
+        }
+        this.togglePointerLock();
       }
       return;
     }
 
-    if (e.code === 'Tab' && this.#pointerLockEnabled) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!e.repeat && !this.#controlsLocked) {
-        this.togglePointerLock();
+    if (this.#isTypingInField()) {
+      if (e.code === 'Escape') {
+        document.activeElement.blur();
       }
       return;
     }
@@ -125,6 +180,8 @@ export class InputManager {
     }
 
     if (this.#controlsLocked) {
+      // [C] también cierra el Vestidor abierto (el modo decide si procede)
+      if (e.code === 'KeyC' && !e.repeat) this.#emit('wardrobe');
       this.#emit('lockedKey', e.code);
       return;
     }
@@ -153,8 +210,13 @@ export class InputManager {
   #onMouseDown(e) {
     if (this.#controlsLocked || this.#isTypingInField()) return;
     if (this.#pointerLockEnabled) {
-      if (e.button === 0 && !this.isPointerLocked()) {
-        this.requestPointerLock();
+      if (e.button === 0) {
+        if (document.activeElement?.tagName === 'BUTTON') {
+          document.activeElement.blur();
+        }
+        if (!this.isPointerLocked()) {
+          this.requestPointerLock();
+        }
       }
       return;
     }
@@ -169,11 +231,16 @@ export class InputManager {
     if (this.#controlsLocked || this.#isTypingInField()) return;
     if (this.#pointerLockEnabled) {
       if (!this.isPointerLocked()) return;
-      // Filtrar saltos puntuales del navegador al capturar/liberar
-      if (Math.abs(e.movementX) < 320 && Math.abs(e.movementY) < 320) {
-        this.#lookDeltaX += e.movementX;
-        this.#lookDeltaY += e.movementY;
+      if (this.#skipLockFrames > 0) {
+        this.#skipLockFrames -= 1;
+        return;
       }
+      // Filtrar saltos puntuales del navegador al capturar/liberar
+      if (Math.abs(e.movementX) >= 240 || Math.abs(e.movementY) >= 240) {
+        return;
+      }
+      this.#lookDeltaX += e.movementX;
+      this.#lookDeltaY += e.movementY;
       return;
     }
     if (!this.#isDragging) return;
@@ -211,6 +278,7 @@ export class InputManager {
     if (this.#controlsLocked) {
       this.#keys.clear();
       this.#isDragging = false;
+      this.#resetLookDeltas();
       this.exitPointerLock();
     }
   }
@@ -254,9 +322,7 @@ export class InputManager {
       zoom: this.#zoomDelta,
       pointerLocked: this.isPointerLocked()
     };
-    this.#lookDeltaX = 0;
-    this.#lookDeltaY = 0;
-    this.#zoomDelta = 0;
+    this.#resetLookDeltas();
     return delta;
   }
 
@@ -270,10 +336,13 @@ export class InputManager {
     window.removeEventListener('mouseup', this.#boundHandlers.mouseUp);
     window.removeEventListener('blur', this.#boundHandlers.blur);
     document.removeEventListener('pointerlockchange', this.#boundHandlers.pointerLockChange);
+    document.removeEventListener('pointerlockerror', this.#boundHandlers.pointerLockError);
+    document.removeEventListener('visibilitychange', this.#boundHandlers.visibilityChange);
     this.#domElement.removeEventListener('mousedown', this.#boundHandlers.mouseDown);
     this.#domElement.removeEventListener('wheel', this.#boundHandlers.wheel);
     this.#domElement.removeEventListener('contextmenu', this.#boundHandlers.contextMenu);
     this.#actionListeners.clear();
     this.#keys.clear();
+    this.#pointerLockGuard = null;
   }
 }

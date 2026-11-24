@@ -1,6 +1,18 @@
 import * as THREE from 'three';
 import { CharacterPresets } from './CharacterPresets.js';
 import { TextureFactory } from '../core/TextureFactory.js';
+import { ModelLoader } from './ModelLoader.js';
+
+const EXCLUDE_TINT_RE = /(skin|piel|face|cara|rostro|eye|ojo|iris|sclera|cornea|lip|labio|boca|mouth|hair|pelo|cabello|ceja|brow|lash|pestana|pestaña|tooth|teeth|diente|gum|encia|tongue|lengua|metal|gold|oro|silver|plata|bronze|bronce|iron|steel|chrome|gem|gema|crystal|cristal|diamond|diamante|jewel|joya|crown|corona|tiara|glass|lente|nail|una|uña)/i;
+const SECONDARY_TINT_RE = /(secondary|trim|skirt|falda|blouse|blusa|shirt|camisa|cape|capa|ribbon|lazo|bow|belt|cint|shoe|zapato|boot|bota|collar|sleeve|manga|lining|forro|detail|detalle|accent|acento)/i;
+const CLIP_MATCHERS = {
+  idle: /idle|stand|breath|wait|rest|reposo|espera/i,
+  walk: /walk|stroll|march|andar|caminar/i,
+  run: /run|sprint|jog|correr/i,
+  jump: /jump|leap|hop|air|saltar|salto/i,
+  dance: /dance|groove|party|baile|bailar/i,
+  pose: /pose|wave|greet|salut|bow|model|runway|posar|saludo/i
+};
 
 export class CharacterRig {
   static AVATARS = CharacterPresets.AVATARS;
@@ -8,39 +20,45 @@ export class CharacterRig {
   static HAIRSTYLES = CharacterPresets.HAIRSTYLES;
   static ACCESSORIES = CharacterPresets.ACCESSORIES;
 
-  #root = null; #bodyGroup = null; #headGroup = null; #hairGroup = null; #outfitGroup = null;
+  #root = null; #proceduralGroup = null; #glbGroup = null; #bodyGroup = null;
+  #headGroup = null; #hairGroup = null; #outfitGroup = null;
   #leftArm = null; #rightArm = null; #leftForearm = null; #rightForearm = null;
   #leftLeg = null; #rightLeg = null; #leftShin = null; #rightShin = null;
   #puffSleeves = []; #thighMeshes = []; #shinMeshes = []; #shoeMeshes = [];
   #accessoryNodes = {}; #materials = {}; #geometries = [];
   #textureFactory = null; #ownsTextures = false; #isMale = false; #outfitStyle = 'ballgown'; #animTime = 0;
   #appearance = { avatarId: 'aurora', outfitId: 'gala_rosa', hairId: 'ondas_reales', accessories: ['tiara'] };
+  #modelUrl = null; #customModelUrl = null; #requestedUrl = null; #loadToken = 0; #disposed = false;
+  #glbEntry = null; #mixer = null; #actions = {}; #currentAction = null; #modelReady = Promise.resolve(false);
+  #currentActionState = 'idle'; #lastAnimState = 'idle';
+  #glbTintTargets = []; #glbTintActive = false; #tintPrimary = new THREE.Color(); #tintSecondary = new THREE.Color();
 
   constructor(initialAppearance = null, textureFactory = null) {
     if (initialAppearance) {
-      this.#appearance = { ...this.#appearance, ...initialAppearance, accessories: [...(initialAppearance.accessories || ['tiara'])] };
+      const a = initialAppearance;
+      this.#appearance = { avatarId: a.avatarId || 'aurora', outfitId: a.outfitId || 'gala_rosa', hairId: a.hairId || 'ondas_reales', accessories: [...(a.accessories || ['tiara'])] };
+      this.#modelUrl = a.modelUrl || null;
     }
     this.#textureFactory = textureFactory;
   }
 
   init() {
-    if (!this.#textureFactory) {
-      this.#textureFactory = new TextureFactory();
-      this.#textureFactory.init();
-      this.#ownsTextures = true;
-    }
+    if (!this.#textureFactory) { this.#textureFactory = new TextureFactory(); this.#textureFactory.init(); this.#ownsTextures = true; }
     const avatar = CharacterPresets.getAvatar(this.#appearance.avatarId);
     this.#isMale = avatar.gender === 'male';
     this.#root = new THREE.Group();
+    this.#proceduralGroup = new THREE.Group();
+    this.#glbGroup = new THREE.Group();
+    this.#glbGroup.visible = false;
     this.#bodyGroup = new THREE.Group();
-    this.#root.add(this.#bodyGroup);
+    this.#proceduralGroup.add(this.#bodyGroup);
+    this.#root.add(this.#proceduralGroup, this.#glbGroup);
+
     this.#createMaterials(avatar);
     this.#buildBody();
     this.#buildHead(avatar);
-    this.#accessoryNodes = CharacterPresets.buildAccessories(
-      this.#headGroup, this.#leftForearm, this.#rightForearm, this.#materials, (g) => this.#track(g)
-    );
-    this.applyAppearance(this.#appearance);
+    this.#accessoryNodes = CharacterPresets.buildAccessories(this.#headGroup, this.#leftForearm, this.#rightForearm, this.#materials, (g) => this.#track(g));
+    this.#applyState(this.#appearance, false);
     const baseZ = this.#getBaseArmZ();
     this.#leftArm.rotation.set(0, 0, -baseZ);
     this.#rightArm.rotation.set(0, 0, baseZ);
@@ -160,7 +178,6 @@ export class CharacterRig {
     const lip = new THREE.Mesh(this.#track(new THREE.SphereGeometry(0.015, 12, 8)), this.#materials.lips);
     lip.scale.set(m ? 1.25 : 1.38, m ? 0.32 : 0.38, 0.45); lip.position.set(0, -0.072, 0.145);
     this.#headGroup.add(headMesh, noseBridge, noseTip, lip);
-
     const earGeo = this.#track(new THREE.SphereGeometry(0.023, 8, 8));
     for (const s of [-1, 1]) {
       const ear = new THREE.Mesh(earGeo, this.#materials.skin);
@@ -186,10 +203,23 @@ export class CharacterRig {
     while (group.children.length > 0) { const c = group.children[0]; c.geometry?.dispose(); group.remove(c); }
   }
 
-  applyAppearance(partial) {
-    this.#appearance = { ...this.#appearance, ...partial, accessories: partial.accessories ? [...partial.accessories] : this.#appearance.accessories };
-    const avatar = CharacterPresets.getAvatar(this.#appearance.avatarId);
-    const outfit = CharacterPresets.getOutfit(this.#appearance.outfitId);
+  applyAppearance(partial) { if (partial) this.#applyState(partial, true); }
+
+  #applyState(partial, allowTint) {
+    const ap = this.#appearance;
+    if (partial.avatarId) ap.avatarId = partial.avatarId;
+    if (partial.outfitId) ap.outfitId = partial.outfitId;
+    if (partial.hairId) ap.hairId = partial.hairId;
+    if (partial.accessories) ap.accessories = [...partial.accessories];
+    if ('modelUrl' in partial) this.#modelUrl = partial.modelUrl || null;
+    if ('customModelUrl' in partial) {
+      this.#customModelUrl = typeof partial.customModelUrl === 'string' && partial.customModelUrl ? partial.customModelUrl : null;
+      this.#glbTintActive = false;
+    } else if (allowTint && 'outfitId' in partial) {
+      this.#glbTintActive = true;
+    }
+
+    const avatar = CharacterPresets.getAvatar(ap.avatarId), outfit = CharacterPresets.getOutfit(ap.outfitId);
     this.#outfitStyle = outfit.style;
     this.#materials.skin.color.setHex(avatar.skin);
     this.#materials.primary.color.setHex(outfit.primary);
@@ -203,20 +233,101 @@ export class CharacterRig {
     for (const m of this.#shoeMeshes) m.material = tallBoots ? this.#materials.dark : this.#materials.roseGold;
     for (const ps of this.#puffSleeves) ps.visible = outfit.style === 'ballgown';
 
-    this.#clearGroup(this.#outfitGroup);
-    CharacterPresets.populateOutfit(this.#outfitGroup, outfit, this.#materials, this.#isMale);
-    this.#clearGroup(this.#hairGroup);
-    CharacterPresets.populateHair(this.#hairGroup, this.#appearance.hairId, this.#materials, this.#isMale);
-    const active = new Set(this.#appearance.accessories);
+    this.#clearGroup(this.#outfitGroup); CharacterPresets.populateOutfit(this.#outfitGroup, outfit, this.#materials, this.#isMale);
+    this.#clearGroup(this.#hairGroup); CharacterPresets.populateHair(this.#hairGroup, ap.hairId, this.#materials, this.#isMale);
+    const active = new Set(ap.accessories);
     for (const [id, node] of Object.entries(this.#accessoryNodes)) node.visible = active.has(id);
+
+    const desiredUrl = this.#customModelUrl || this.#modelUrl || ModelLoader.resolveModelUrl(ap.avatarId);
+    if (desiredUrl !== this.#requestedUrl) this.#modelReady = this.#tryLoadModel(desiredUrl);
+    else if (this.#glbEntry && this.#glbTintActive) this.#applyGlbTint(outfit);
   }
 
-  getAppearance() { return { ...this.#appearance, accessories: [...this.#appearance.accessories] }; }
+  /** Promesa que resuelve true si el último modelo .glb solicitado quedó montado (false = rig procedural). */
+  whenModelReady() { return this.#modelReady; }
+
+  async #tryLoadModel(url) {
+    const token = ++this.#loadToken;
+    this.#requestedUrl = url || null;
+    if (!url) { this.#clearGlbModel(); return false; }
+    let loaded = null;
+    try { loaded = await ModelLoader.loadNormalizedModel(url); } catch { loaded = null; }
+    if (token !== this.#loadToken || this.#disposed) { loaded?.dispose(); return false; }
+    if (!loaded) { this.#clearGlbModel(); return false; }
+    try {
+      this.#mountGlbModel(loaded);
+      return true;
+    } catch (err) {
+      // Un .glb con esqueleto/animaciones corruptos no debe romper el bucle de juego
+      console.warn('[CharacterRig] Modelo .glb no compatible, se usa el rig procedural.', err);
+      this.#clearGlbModel();
+      return false;
+    }
+  }
+
+  #mountGlbModel(loaded) {
+    this.#clearGlbModel();
+    this.#glbEntry = loaded;
+    this.#glbGroup.add(loaded.root);
+    this.#glbGroup.visible = true; this.#proceduralGroup.visible = false;
+    const seen = new Set();
+    loaded.root.traverse((obj) => {
+      if (!obj.isMesh) return;
+      for (const mat of (Array.isArray(obj.material) ? obj.material : [obj.material])) {
+        if (!mat?.color || seen.has(mat)) continue;
+        seen.add(mat);
+        const label = `${mat.name || ''} ${obj.name || ''}`;
+        if (!EXCLUDE_TINT_RE.test(label)) this.#glbTintTargets.push({ mat, baseColor: mat.color.clone(), isSecondary: SECONDARY_TINT_RE.test(label) });
+      }
+    });
+    if (this.#glbTintActive) this.#applyGlbTint(CharacterPresets.getOutfit(this.#appearance.outfitId));
+    this.#mixer = new THREE.AnimationMixer(loaded.root);
+    this.#actions = this.#buildClipMap(loaded.animations);
+    this.#currentActionState = this.#lastAnimState;
+    const start = this.#actions[this.#lastAnimState] || this.#actions.idle || null;
+    if (start) { start.reset().play(); this.#currentAction = start; }
+  }
+
+  #buildClipMap(clips) {
+    if (!clips?.length) return {};
+    const mk = (c, once) => { const a = this.#mixer.clipAction(c); a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity); a.clampWhenFinished = once; return a; };
+    const m = {};
+    for (const [state, re] of Object.entries(CLIP_MATCHERS)) { const c = clips.find((cl) => re.test(cl.name || '')); if (c) m[state] = mk(c, state === 'jump'); }
+    const idle = m.idle || mk(clips[0], false), walk = m.walk || m.run || idle, run = m.run || walk, dance = m.dance || m.pose || idle;
+    return { idle, walk, run, jump: m.jump || run || idle, dance, pose: m.pose || dance };
+  }
+
+  #applyGlbTint(outfit) {
+    if (!outfit || !this.#glbTintTargets.length) return;
+    this.#tintPrimary.setHex(outfit.primary); this.#tintSecondary.setHex(outfit.secondary);
+    for (const t of this.#glbTintTargets) t.mat.color.copy(t.baseColor).lerp(t.isSecondary ? this.#tintSecondary : this.#tintPrimary, 0.82);
+  }
+
+  #clearGlbModel() {
+    if (this.#mixer && this.#glbEntry) { this.#mixer.stopAllAction(); this.#mixer.uncacheRoot(this.#glbEntry.root); }
+    this.#mixer = null; this.#actions = {}; this.#currentAction = null; this.#glbTintTargets = [];
+    if (this.#glbEntry) { this.#glbGroup?.remove(this.#glbEntry.root); this.#glbEntry.dispose(); this.#glbEntry = null; }
+    if (this.#glbGroup) this.#glbGroup.visible = false;
+    if (this.#proceduralGroup) this.#proceduralGroup.visible = true;
+  }
+
+  getAppearance() { return { avatarId: this.#appearance.avatarId, outfitId: this.#appearance.outfitId, hairId: this.#appearance.hairId, accessories: [...this.#appearance.accessories] }; }
   getRoot() { return this.#root; }
-  #getBaseArmZ() { return this.#outfitStyle === 'ballgown' ? 0.36 : (this.#isMale ? 0.30 : 0.33); }
+  #getBaseArmZ() { return this.#outfitStyle === 'ballgown' ? 0.36 : (this.#isMale ? 0.32 : 0.33); }
 
   update(dt, animState = 'idle', speed = 0) {
     const safeDt = Math.max(0, Math.min(dt, 0.1));
+    this.#lastAnimState = animState;
+    if (this.#mixer && this.#glbGroup?.visible) {
+      this.#mixer.update(safeDt);
+      if (animState !== this.#currentActionState) {
+        const next = this.#actions[animState] || this.#actions.idle || null;
+        if (next && next !== this.#currentAction) { next.reset().play(); this.#currentAction?.crossFadeTo(next, 0.25, true); this.#currentAction = next; }
+        this.#currentActionState = animState;
+      }
+      return;
+    }
+
     this.#animTime += safeDt;
     const t = this.#animTime, baseZ = this.#getBaseArmZ();
     const p = {
@@ -280,6 +391,8 @@ export class CharacterRig {
   }
 
   dispose() {
+    this.#disposed = true; this.#loadToken++;
+    this.#clearGlbModel();
     for (const g of this.#geometries) g.dispose();
     this.#geometries.length = 0;
     this.#clearGroup(this.#outfitGroup); this.#clearGroup(this.#hairGroup);

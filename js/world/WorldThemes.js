@@ -1,3 +1,6 @@
+/**
+ * Catálogo de temas atmosféricos y parámetros calibrados de iluminación/PBR.
+ */
 export class WorldThemes {
   #themes = [
     {
@@ -18,11 +21,12 @@ export class WorldThemes {
       sunPosition: [36, 48, 30],
       fillColor: 0xffbad7,
       fillIntensity: 0.34,
-      exposure: 0.9,
-      envIntensity: 0.58,
-      bloomStrength: 0.2,
-      bloomRadius: 0.3,
+      exposure: 0.90,
+      envIntensity: 0.56,
+      bloomStrength: 0.20,
+      bloomRadius: 0.30,
       bloomThreshold: 0.96,
+      marbleRoughness: 0.52,
       starsOpacity: 0,
       moteColor: 0xffe7a8,
       moteSize: 0.28,
@@ -44,15 +48,16 @@ export class WorldThemes {
       hemiGround: 0x9b6682,
       hemiIntensity: 0.62,
       sunColor: 0xffb388,
-      sunIntensity: 1.26,
+      sunIntensity: 1.25,
       sunPosition: [-46, 20, 24],
       fillColor: 0xff8bc4,
       fillIntensity: 0.42,
-      exposure: 0.9,
-      envIntensity: 0.56,
-      bloomStrength: 0.2,
-      bloomRadius: 0.3,
+      exposure: 0.90,
+      envIntensity: 0.54,
+      bloomStrength: 0.20,
+      bloomRadius: 0.30,
       bloomThreshold: 0.96,
+      marbleRoughness: 0.50,
       starsOpacity: 0.28,
       moteColor: 0xffb8df,
       moteSize: 0.32,
@@ -78,11 +83,12 @@ export class WorldThemes {
       sunPosition: [28, 44, -22],
       fillColor: 0xff7ec8,
       fillIntensity: 0.46,
-      exposure: 0.9,
-      envIntensity: 0.54,
-      bloomStrength: 0.22,
-      bloomRadius: 0.3,
+      exposure: 0.90,
+      envIntensity: 0.52,
+      bloomStrength: 0.20,
+      bloomRadius: 0.30,
       bloomThreshold: 0.96,
+      marbleRoughness: 0.48,
       starsOpacity: 0.95,
       moteColor: 0xffe8a3,
       moteSize: 0.36,
@@ -92,16 +98,26 @@ export class WorldThemes {
     }
   ];
 
+  /**
+   * Valores seguros para etiquetas Sprite flotantes sin quemado ni halo por bloom.
+   */
+  static getLabelDefaults() {
+    return { toneMapped: false, tintHex: 0xc8c8c8, maxChannel: 0.78 };
+  }
+
   init() {}
 
+  /** Devuelve una copia superficial de todos los temas disponibles. */
   getAll() {
     return this.#themes.map((t) => ({ ...t }));
   }
 
+  /** Busca un tema por identificador o devuelve el tema principal por defecto. */
   getById(id) {
     return this.#themes.find((t) => t.id === id) || this.#themes[0];
   }
 
+  /** Calcula el identificador del siguiente tema en rotación cíclica. */
   getNextThemeId(currentId) {
     const idx = this.#themes.findIndex((t) => t.id === currentId);
     const next = (idx + 1) % this.#themes.length;

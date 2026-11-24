@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Reino Rosa Imperial">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a0b16" />
+      <stop offset="48%" stop-color="#4e183d" />
+      <stop offset="100%" stop-color="#ff69b4" />
+    </linearGradient>
+    <radialGradient id="halo-grad" cx="50%" cy="48%" r="48%">
+      <stop offset="0%" stop-color="#ff9fd2" stop-opacity="0.45" />
+      <stop offset="55%" stop-color="#e5b869" stop-opacity="0.16" />
+      <stop offset="100%" stop-color="#1a0b16" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="rosegold-main" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop offset="0%" stop-color="#fff4d6" />
+      <stop offset="32%" stop-color="#f5ca86" />
+      <stop offset="68%" stop-color="#e691b0" />
+      <stop offset="100%" stop-color="#b97838" />
+    </linearGradient>
+    <linearGradient id="rosegold-rim" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#c88349" />
+      <stop offset="50%" stop-color="#fff0c7" />
+      <stop offset="100%" stop-color="#d47ea3" />
+    </linearGradient>
+    <linearGradient id="crystal-gem" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="38%" stop-color="#ffd9ee" />
+      <stop offset="72%" stop-color="#a6ecff" />
+      <stop offset="100%" stop-color="#ff69b4" />
+    </linearGradient>
+    <linearGradient id="ruby-rose" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffd1e8" />
+      <stop offset="50%" stop-color="#ff5ca8" />
+      <stop offset="100%" stop-color="#8b174d" />
+    </linearGradient>
+  </defs>
+
+  <!-- Fondo imperial -->
+  <rect width="512" height="512" fill="url(#bg-grad)" />
+  <circle cx="256" cy="256" r="228" fill="url(#halo-grad)" />
+
+  <!-- Marco cristalino sutil -->
+  <circle cx="256" cy="256" r="196" fill="none" stroke="url(#rosegold-rim)" stroke-width="3" stroke-opacity="0.48" />
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.22" />
+
+  <!-- Facetas de cristal traseras -->
+  <polygon points="256,82 326,184 256,228 186,184" fill="#ffffff" fill-opacity="0.10" stroke="#ffd8ed" stroke-opacity="0.35" stroke-width="1.5" />
+  <polygon points="256,82 326,184 256,172" fill="#b8f0ff" fill-opacity="0.16" />
+
+  <!-- Cuerpo principal de la corona oro-rosa -->
+  <path
+    d="M124 334 L106 196 L178 256 L216 168 L256 238 L296 168 L334 256 L406 196 L388 334 Z"
+    fill="url(#rosegold-main)"
+    stroke="#fff4d6"
+    stroke-width="4"
+    stroke-linejoin="round"
+  />
+
+  <!-- Facetas interiores para volumen imperial -->
+  <polygon points="256,238 296,168 334,256 256,334" fill="#b96d88" fill-opacity="0.24" />
+  <polygon points="124,334 106,196 178,256 174,334" fill="#fff6e0" fill-opacity="0.22" />
+
+  <!-- Aguja central imperial -->
+  <path
+    d="M222 252 L256 122 L290 252 Z"
+    fill="url(#rosegold-main)"
+    stroke="#fff7e2"
+    stroke-width="3.5"
+    stroke-linejoin="round"
+  />
+
+  <!-- Base / diadema inferior -->
+  <rect x="120" y="330" width="272" height="42" rx="14" fill="url(#rosegold-rim)" stroke="#fff4d6" stroke-width="3.5" />
+  <rect x="132" y="338" width="248" height="10" rx="5" fill="#ffffff" fill-opacity="0.26" />
+
+  <!-- Perlas oro-rosa en las puntas -->
+  <circle cx="106" cy="190" r="13" fill="url(#crystal-gem)" stroke="#fff5dc" stroke-width="3" />
+  <circle cx="216" cy="162" r="13" fill="url(#crystal-gem)" stroke="#fff5dc" stroke-width="3" />
+  <circle cx="256" cy="116" r="16" fill="url(#crystal-gem)" stroke="#fff5dc" stroke-width="3.5" />
+  <circle cx="296" cy="162" r="13" fill="url(#crystal-gem)" stroke="#fff5dc" stroke-width="3" />
+  <circle cx="406" cy="190" r="13" fill="url(#crystal-gem)" stroke="#fff5dc" stroke-width="3" />
+
+  <!-- Gema central de cristal facetado -->
+  <polygon points="256,216 284,262 256,308 228,262" fill="url(#crystal-gem)" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" />
+  <polygon points="256,216 284,262 256,262" fill="#ffffff" fill-opacity="0.45" />
+  <polygon points="256,262 284,262 256,308" fill="#ff69b4" fill-opacity="0.38" />
+
+  <!-- Gemas en la banda inferior -->
+  <polygon points="172,340 185,351 172,362 159,351" fill="url(#ruby-rose)" stroke="#fff4d6" stroke-width="2" />
+  <polygon points="256,337 272,351 256,365 240,351" fill="url(#crystal-gem)" stroke="#fff4d6" stroke-width="2.5" />
+  <polygon points="340,340 353,351 340,362 327,351" fill="url(#ruby-rose)" stroke="#fff4d6" stroke-width="2" />
+
+  <!-- Destellos cristalinos -->
+  <path d="M148 130 L153 144 L167 149 L153 154 L148 168 L143 154 L129 149 L143 144 Z" fill="#fff7e8" fill-opacity="0.9" />
+  <path d="M368 124 L372 135 L383 139 L372 143 L368 154 L364 143 L353 139 L364 135 Z" fill="#ffd9ee" fill-opacity="0.9" />
+  <path d="M388 278 L391 286 L399 289 L391 292 L388 300 L385 292 L377 289 L385 286 Z" fill="#ffffff" fill-opacity="0.82" />
+</svg>

@@ -1,6 +1,22 @@
 import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
 
+/**
+ * Solo se aceptan por red los campos de vestuario. Las rutas de modelo
+ * (modelUrl / customModelUrl blob:) son locales y nunca deben cargarse desde un paquete remoto.
+ */
+function sanitizeAppearance(appearance) {
+  if (!appearance || typeof appearance !== 'object') return null;
+  const clean = {};
+  if (typeof appearance.avatarId === 'string') clean.avatarId = appearance.avatarId;
+  if (typeof appearance.outfitId === 'string') clean.outfitId = appearance.outfitId;
+  if (typeof appearance.hairId === 'string') clean.hairId = appearance.hairId;
+  if (Array.isArray(appearance.accessories)) {
+    clean.accessories = appearance.accessories.filter((a) => typeof a === 'string');
+  }
+  return clean;
+}
+
 export class RemotePlayer {
   #scene;
   #peerId;
@@ -20,8 +36,9 @@ export class RemotePlayer {
     this.#scene = scene;
     this.#peerId = peerId;
     this.#name = profile.name || 'Compañero Real';
-    this.#rig = new CharacterRig(profile.appearance, textureFactory);
-    this.#appearanceKey = profile.appearance ? JSON.stringify(profile.appearance) : '';
+    const appearance = sanitizeAppearance(profile.appearance);
+    this.#rig = new CharacterRig(appearance, textureFactory);
+    this.#appearanceKey = appearance ? JSON.stringify(appearance) : '';
   }
 
   init() {
@@ -68,11 +85,12 @@ export class RemotePlayer {
     return new THREE.Sprite(mat);
   }
 
-  setProfile(name, appearance) {
+  setProfile(name, rawAppearance) {
     if (name && name !== this.#name) {
       this.#name = name;
       this.#replaceSprite('name', name);
     }
+    const appearance = sanitizeAppearance(rawAppearance);
     if (appearance) {
       // Los paquetes 'state' llegan ~15 veces/seg con la apariencia incluida:
       // solo reconstruimos geometría cuando la ropa cambia de verdad.

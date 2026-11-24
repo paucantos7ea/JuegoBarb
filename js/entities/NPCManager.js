@@ -15,6 +15,7 @@ export class NPCManager {
       yaw: -0.55,
       appearance: {
         avatarId: 'npc_adrian',
+        modelUrl: './assets/models/principe_adrian.glb',
         outfitId: 'principe_gala',
         hairId: 'principe_corto',
         accessories: ['cetro']
@@ -29,6 +30,7 @@ export class NPCManager {
       yaw: 0.75,
       appearance: {
         avatarId: 'npc_sofia',
+        modelUrl: './assets/models/estilista_sofia.glb',
         outfitId: 'gala_rosa',
         hairId: 'ondas_reales',
         accessories: ['tiara', 'bolso']
@@ -47,6 +49,7 @@ export class NPCManager {
       yaw: -0.9,
       appearance: {
         avatarId: 'npc_camila',
+        modelUrl: './assets/models/princesa_camila.glb',
         outfitId: 'casual_chic',
         hairId: 'coleta_perla',
         accessories: ['gafas', 'tiara']
@@ -63,6 +66,7 @@ export class NPCManager {
       yaw: -0.75,
       appearance: {
         avatarId: 'npc_maestra',
+        modelUrl: './assets/models/maestra_ceremonias.glb',
         outfitId: 'cristal_nocturno',
         hairId: 'recogido_imperial',
         accessories: ['tiara', 'cetro']
@@ -86,7 +90,7 @@ export class NPCManager {
       root.rotation.y = def.yaw;
 
       const label = this.#createTag(def.name);
-      label.position.set(0, 2.24, 0);
+      label.position.set(0, 2.15, 0);
       label.scale.set(2.05, 0.42, 1);
       root.add(label);
 
@@ -142,6 +146,7 @@ export class NPCManager {
       map: tex,
       color: 0xc8c8c8,
       transparent: true,
+      depthWrite: false,
       toneMapped: false
     });
     return new THREE.Sprite(mat);

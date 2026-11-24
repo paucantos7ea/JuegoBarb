@@ -1,0 +1,107 @@
+/* ==========================================================================
+   PWA Toolbar, Instalación y Pantalla Completa — Estética Cristal / Oro-Rosa
+   ========================================================================== */
+
+.pwa-toolbar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.pwa-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: transform 0.16s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.pwa-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.pwa-btn:focus-visible,
+.pwa-install-chip:focus-visible,
+#btn-pwa-fullscreen-hud:focus-visible {
+  outline: 2px solid var(--gold-main);
+  outline-offset: 2px;
+}
+
+.pwa-install-btn {
+  background: linear-gradient(135deg, #f374ae 0%, #d44d8f 55%, #e5b869 100%);
+  color: #fff;
+  border: 1px solid rgba(255, 240, 199, 0.85);
+  box-shadow: 0 5px 16px rgba(199, 65, 130, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.pwa-install-btn:hover:not(:disabled) {
+  box-shadow: 0 7px 22px rgba(199, 65, 130, 0.48), 0 0 14px rgba(229, 184, 105, 0.45);
+}
+
+.pwa-fullscreen-btn {
+  background: rgba(255, 248, 252, 0.84);
+  color: var(--rose-600);
+  border: 1px solid var(--glass-border-gold);
+  box-shadow: 0 4px 14px rgba(72, 22, 52, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.pwa-fullscreen-btn:hover:not(:disabled) {
+  background: #fff;
+  border-color: var(--rose-400);
+  box-shadow: 0 6px 18px rgba(153, 41, 97, 0.2);
+}
+
+.pwa-fullscreen-btn.is-fullscreen,
+#btn-pwa-fullscreen-hud.is-fullscreen {
+  background: linear-gradient(135deg, rgba(255, 241, 202, 0.94) 0%, rgba(255, 224, 240, 0.94) 100%);
+  color: #7c1f4d;
+  border-color: var(--gold-main);
+  box-shadow: 0 4px 16px rgba(229, 184, 105, 0.42);
+}
+
+.pwa-install-chip {
+  background: linear-gradient(135deg, rgba(243, 116, 174, 0.92) 0%, rgba(212, 77, 143, 0.92) 60%, rgba(217, 155, 86, 0.92) 100%);
+  color: #fff;
+  border-color: rgba(255, 240, 199, 0.8);
+  box-shadow: 0 4px 16px rgba(199, 65, 130, 0.34);
+}
+
+.pwa-install-chip:hover {
+  background: linear-gradient(135deg, #f684b8 0%, #dd5899 60%, #e5b869 100%);
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(199, 65, 130, 0.48);
+}
+
+#btn-pwa-fullscreen-hud {
+  min-width: 38px;
+  justify-content: center;
+  text-align: center;
+}
+
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  #btn-pwa-install-menu,
+  #btn-pwa-install-hud {
+    display: none !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .pwa-toolbar {
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .pwa-btn {
+    padding: 6px 12px;
+    font-size: 0.74rem;
+  }
+}
