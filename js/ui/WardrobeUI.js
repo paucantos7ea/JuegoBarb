@@ -1,6 +1,6 @@
 import { CharacterRig } from '../entities/CharacterRig.js';
 
-const DEFAULT_MODEL_TIP = 'Prueba un personaje .glb/.gltf (Mixamo o Blender) en vista local.';
+const DEFAULT_MODEL_TIP = 'Modelos 3D Mixamo activos por defecto. También puedes cargar tu propio .glb/.gltf local.';
 
 export class WardrobeUI {
   #overlayEl;
@@ -119,7 +119,7 @@ export class WardrobeUI {
     const uploadBtn = document.createElement('button');
     uploadBtn.type = 'button';
     uploadBtn.className = 'btn-secondary btn-sm';
-    uploadBtn.textContent = '📂 Probar modelo .GLB local';
+    uploadBtn.textContent = '📂 Cargar mi propio .GLB';
 
     const resetBtn = document.createElement('button');
     resetBtn.type = 'button';

@@ -9,6 +9,7 @@ import { CollisionSystem } from './world/CollisionSystem.js';
 import { GameModeManager } from './modes/GameModeManager.js';
 import { CoopExploreMode } from './modes/CoopExploreMode.js';
 import { MenuUI } from './ui/MenuUI.js';
+import { ModelLoader } from './entities/ModelLoader.js';
 
 class ReinoRosaApp {
   #engine = null;
@@ -59,6 +60,7 @@ class ReinoRosaApp {
     });
 
     await this.#loadMenuPreview('palacio_cristal');
+    ModelLoader.preloadDefaults();
     this.#lastFrameTime = performance.now();
     this.#loop(this.#lastFrameTime);
   }

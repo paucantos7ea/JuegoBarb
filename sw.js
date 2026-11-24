@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v2';
-const CACHE_ASSETS = 'reino-rosa-assets-v2';
+const CACHE_STATIC = 'reino-rosa-static-v3';
+const CACHE_ASSETS = 'reino-rosa-assets-v3';
 
 const PRECACHE_URLS = [
   './',
@@ -21,6 +21,7 @@ const PRECACHE_URLS = [
   './js/core/TextureFactory.js',
   './js/entities/CharacterPresets.js',
   './js/entities/CharacterRig.js',
+  './js/entities/GlbAvatarController.js',
   './js/entities/ModelLoader.js',
   './js/entities/NPCManager.js',
   './js/entities/PlayerController.js',
@@ -44,7 +45,7 @@ const PRECACHE_URLS = [
   './js/world/WorldThemes.js'
 ];
 
-const THREE_CDN_HOSTS = ['esm.sh', 'cdn.jsdelivr.net', 'unpkg.com'];
+const THREE_CDN_HOSTS = ['threejs.org', 'esm.sh', 'cdn.jsdelivr.net', 'unpkg.com', 'raw.githubusercontent.com'];
 const ASSET_EXTENSIONS = /\.(glb|gltf|png|jpe?g|webp|svg|ktx2|hdr|woff2?|ttf|otf)$/i;
 const SHELL_EXTENSIONS = /\.(js|css|html|webmanifest)$/i;
 // Índice y modelos propios (.glb/.gltf/models.json): red primero para detectar modelos nuevos o

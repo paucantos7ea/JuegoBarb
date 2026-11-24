@@ -1,6 +1,7 @@
 /**
  * Gestor de experiencia PWA y pantalla completa para Reino Rosa Imperial.
- * Administra el registro del Service Worker, el aviso de instalación nativa
+ * Administra el registro del Service Worker, el diálogo nativo de instalación
+ * (beforeinstallprompt), la guía de instalación desde la barra de direcciones
  * y el control de pantalla completa desde menú, HUD o tecla F11.
  */
 export class PwaManager {
@@ -8,11 +9,15 @@ export class PwaManager {
   #initialized = false;
   #installed = false;
   #swRegistration = null;
+  #guideTimer = null;
 
   #btnInstallMenu = null;
   #btnInstallHud = null;
   #btnFullscreenMenu = null;
   #btnFullscreenHud = null;
+  #installGuideEl = null;
+  #installGuideTextEl = null;
+  #btnGuideClose = null;
 
   #displayMediaQueries = [];
   #onBeforeInstallPrompt = null;
@@ -22,6 +27,7 @@ export class PwaManager {
   #onDisplayModeChange = null;
   #onInstallClick = null;
   #onFullscreenClick = null;
+  #onGuideCloseClick = null;
 
   /**
    * Inicializa listeners PWA, sincroniza botones del DOM y registra ./sw.js.
@@ -40,14 +46,22 @@ export class PwaManager {
   }
 
   /**
-   * Dispara el diálogo nativo de instalación si está disponible.
-   * @returns {Promise<boolean>} true si el usuario aceptó la instalación.
+   * Dispara el diálogo nativo de instalación si está disponible; si el navegador
+   * aún no ha emitido beforeinstallprompt o aplica restricciones de aula, muestra
+   * un aviso visual claro indicando el icono "Instalar Reino Rosa 3D" en la barra.
+   * @returns {Promise<boolean>} true si el usuario aceptó la instalación nativa.
    */
   async promptInstall() {
-    if (!this.#deferredPrompt) return false;
+    if (this.isInstalled()) return true;
+
+    if (!this.#deferredPrompt) {
+      this.#showManualInstallHint();
+      return false;
+    }
 
     const promptEvent = this.#deferredPrompt;
     this.#deferredPrompt = null;
+    this.#hideInstallGuide();
 
     try {
       await promptEvent.prompt();
@@ -60,6 +74,7 @@ export class PwaManager {
       return accepted;
     } catch {
       this.#syncInstallButtons();
+      this.#showManualInstallHint();
       return false;
     }
   }
@@ -119,6 +134,7 @@ export class PwaManager {
     if (!this.#initialized) return;
     this.#initialized = false;
 
+    this.#hideInstallGuide();
     window.removeEventListener('beforeinstallprompt', this.#onBeforeInstallPrompt);
     window.removeEventListener('appinstalled', this.#onAppInstalled);
     window.removeEventListener('keydown', this.#onKeyDown);
@@ -136,12 +152,16 @@ export class PwaManager {
     [this.#btnFullscreenMenu, this.#btnFullscreenHud].forEach((btn) => {
       btn?.removeEventListener('click', this.#onFullscreenClick);
     });
+    this.#btnGuideClose?.removeEventListener('click', this.#onGuideCloseClick);
 
     this.#deferredPrompt = null;
     this.#btnInstallMenu = null;
     this.#btnInstallHud = null;
     this.#btnFullscreenMenu = null;
     this.#btnFullscreenHud = null;
+    this.#installGuideEl = null;
+    this.#installGuideTextEl = null;
+    this.#btnGuideClose = null;
   }
 
   #cacheDomElements() {
@@ -149,6 +169,9 @@ export class PwaManager {
     this.#btnInstallHud = document.getElementById('btn-pwa-install-hud');
     this.#btnFullscreenMenu = document.getElementById('btn-pwa-fullscreen-menu');
     this.#btnFullscreenHud = document.getElementById('btn-pwa-fullscreen-hud');
+    this.#installGuideEl = document.getElementById('pwa-install-guide');
+    this.#installGuideTextEl = document.getElementById('pwa-install-guide-text');
+    this.#btnGuideClose = document.getElementById('btn-pwa-guide-close');
   }
 
   #setupDisplayModeWatchers() {
@@ -169,12 +192,14 @@ export class PwaManager {
     this.#onBeforeInstallPrompt = (event) => {
       event.preventDefault();
       this.#deferredPrompt = event;
+      this.#hideInstallGuide();
       this.#syncInstallButtons();
     };
 
     this.#onAppInstalled = () => {
       this.#installed = true;
       this.#deferredPrompt = null;
+      this.#hideInstallGuide();
       this.#syncInstallButtons();
     };
 
@@ -199,6 +224,10 @@ export class PwaManager {
       this.toggleFullscreen();
     };
 
+    this.#onGuideCloseClick = () => {
+      this.#hideInstallGuide();
+    };
+
     window.addEventListener('beforeinstallprompt', this.#onBeforeInstallPrompt);
     window.addEventListener('appinstalled', this.#onAppInstalled);
     window.addEventListener('keydown', this.#onKeyDown);
@@ -211,14 +240,58 @@ export class PwaManager {
     [this.#btnFullscreenMenu, this.#btnFullscreenHud].forEach((btn) => {
       btn?.addEventListener('click', this.#onFullscreenClick);
     });
+    this.#btnGuideClose?.addEventListener('click', this.#onGuideCloseClick);
   }
 
   #syncInstallButtons() {
-    const canShow = Boolean(this.#deferredPrompt) && !this.isInstalled();
-    [this.#btnInstallMenu, this.#btnInstallHud].forEach((btn) => {
-      if (!btn) return;
-      btn.classList.toggle('hidden', !canShow);
-    });
+    const installed = this.isInstalled();
+    const promptReady = Boolean(this.#deferredPrompt);
+
+    if (this.#btnInstallMenu) {
+      this.#btnInstallMenu.classList.toggle('hidden', installed);
+      this.#btnInstallMenu.classList.toggle('is-ready', promptReady && !installed);
+      this.#btnInstallMenu.title = promptReady
+        ? 'Instalar Reino Rosa 3D como aplicación de escritorio'
+        : 'Pulsa para instalar o ver cómo usar el icono de la barra de direcciones';
+    }
+
+    if (this.#btnInstallHud) {
+      this.#btnInstallHud.classList.toggle('hidden', installed);
+      this.#btnInstallHud.classList.toggle('is-ready', promptReady && !installed);
+    }
+  }
+
+  #showManualInstallHint() {
+    const message =
+      'Haz clic en el icono "Instalar Reino Rosa 3D" (🖥️) a la derecha de la barra de direcciones de Chrome o Edge, o abre el menú ⋮ → Guardar y compartir → Instalar página como aplicación.';
+
+    if (this.#installGuideEl && this.#installGuideTextEl) {
+      this.#installGuideTextEl.textContent = message;
+      this.#installGuideEl.classList.remove('hidden');
+      clearTimeout(this.#guideTimer);
+      this.#guideTimer = setTimeout(() => this.#hideInstallGuide(), 12000);
+    }
+
+    // Si estamos dentro de la partida (menú oculto), mostrar también un toast en el HUD
+    const menuEl = document.getElementById('menu-overlay');
+    const toastContainer = document.getElementById('toast-container');
+    if (menuEl && !menuEl.classList.contains('visible') && toastContainer) {
+      const div = document.createElement('div');
+      div.className = 'toast-msg';
+      div.textContent = '📲 Pulsa el icono "Instalar Reino Rosa 3D" en la barra de direcciones del navegador.';
+      toastContainer.appendChild(div);
+      setTimeout(() => {
+        div.style.opacity = '0';
+        div.style.transition = 'opacity 0.35s ease';
+        setTimeout(() => div.remove(), 360);
+      }, 5200);
+    }
+  }
+
+  #hideInstallGuide() {
+    clearTimeout(this.#guideTimer);
+    this.#guideTimer = null;
+    this.#installGuideEl?.classList.add('hidden');
   }
 
   #syncFullscreenState() {

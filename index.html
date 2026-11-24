@@ -9,6 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Reino Rosa 3D" />
   <title>Reino Rosa Imperial: El Palacio de Cristal</title>
   <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icons/icon-192.png" />
   <link rel="icon" type="image/svg+xml" href="./assets/icons/icon.svg" />
   <link rel="apple-touch-icon" href="./assets/icons/icon-192.png" />
   <link rel="stylesheet" href="./css/base.css" />
@@ -38,8 +39,12 @@
           <h1 class="menu-title">Reino Rosa Imperial</h1>
           <p class="menu-subtitle">El Palacio de Cristal</p>
           <div class="pwa-toolbar">
-            <button id="btn-pwa-install-menu" class="pwa-btn pwa-install-btn hidden" type="button">📲 Instalar App</button>
+            <button id="btn-pwa-install-menu" class="pwa-btn pwa-install-btn" type="button">📲 Instalar App en el PC</button>
             <button id="btn-pwa-fullscreen-menu" class="pwa-btn pwa-fullscreen-btn" type="button" title="Pantalla Completa [F11]">⛶ Pantalla Completa</button>
+          </div>
+          <div id="pwa-install-guide" class="pwa-install-guide hidden" role="status" aria-live="polite">
+            <span id="pwa-install-guide-text"></span>
+            <button id="btn-pwa-guide-close" class="pwa-guide-close" type="button" aria-label="Cerrar aviso">✕</button>
           </div>
         </header>
 

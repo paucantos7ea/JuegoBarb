@@ -47,6 +47,59 @@
   box-shadow: 0 7px 22px rgba(199, 65, 130, 0.48), 0 0 14px rgba(229, 184, 105, 0.45);
 }
 
+.pwa-install-btn.is-ready,
+.pwa-install-chip.is-ready {
+  animation: pwaInstallPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes pwaInstallPulse {
+  0%, 100% {
+    box-shadow: 0 5px 16px rgba(199, 65, 130, 0.36), 0 0 0 0 rgba(255, 105, 180, 0.42);
+  }
+  50% {
+    box-shadow: 0 7px 22px rgba(199, 65, 130, 0.54), 0 0 0 6px rgba(255, 105, 180, 0);
+  }
+}
+
+.pwa-install-guide {
+  margin: 10px auto 0;
+  max-width: 560px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 14px;
+  background: rgba(255, 245, 251, 0.94);
+  color: #6a1d44;
+  border: 1px solid rgba(229, 184, 105, 0.85);
+  box-shadow: 0 6px 20px rgba(72, 22, 52, 0.16);
+  font-size: 0.78rem;
+  line-height: 1.38;
+  text-align: left;
+}
+
+.pwa-install-guide.hidden {
+  display: none;
+}
+
+.pwa-guide-close {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(153, 41, 97, 0.25);
+  background: rgba(255, 255, 255, 0.85);
+  color: #7c1f4d;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pwa-guide-close:hover {
+  background: #ffe3f1;
+}
+
 .pwa-fullscreen-btn {
   background: rgba(255, 248, 252, 0.84);
   color: var(--rose-600);
