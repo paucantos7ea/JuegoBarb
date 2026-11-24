@@ -18,15 +18,17 @@ export class PlayerController {
   #cameraDistance = 7.8;
   #animState = 'idle';
   #externalControl = false;
+  #cameraOverride = false;
   #unsubJump = null;
   #desiredCamPos = new THREE.Vector3();
+  #desiredLookAt = new THREE.Vector3();
 
-  constructor(scene, camera, inputManager, collisionSystem, audioSynth, textureFactory = null) {
+  constructor(scene, camera, inputManager, collisionSystem, audioManager, textureFactory = null) {
     this.#scene = scene;
     this.#camera = camera;
     this.#input = inputManager;
     this.#collision = collisionSystem;
-    this.#audio = audioSynth;
+    this.#audio = audioManager;
     this.#textures = textureFactory;
   }
 
@@ -51,8 +53,21 @@ export class PlayerController {
     if (this.#externalControl) this.#rig?.cancelEmote();
   }
 
+  /** Pausa el posicionamiento de cámara en tercera persona mientras WardrobeCamera dirige el plano. */
+  setCameraOverride(active) {
+    this.#cameraOverride = Boolean(active);
+  }
+
   setAnimState(state) {
     this.#animState = state;
+  }
+
+  setFacingYaw(yaw) {
+    if (!Number.isFinite(yaw)) return;
+    this.#facingYaw = yaw;
+    if (this.#rig) {
+      this.#rig.getRoot().rotation.y = this.#facingYaw;
+    }
   }
 
   teleport(x, y, z, yaw = null) {
@@ -71,10 +86,10 @@ export class PlayerController {
   }
 
   /** Emotes [1-4]: solo con el personaje en el suelo y fuera de minijuegos. */
-  playEmote(id) {
+  playEmote(id, { silent = false } = {}) {
     if (!this.#rig || this.#externalControl || !this.#isGrounded) return false;
     const ok = this.#rig.playEmote(id);
-    if (ok) this.#audio?.playSparkle();
+    if (ok && !silent) this.#audio?.playSparkle();
     return ok;
   }
 
@@ -108,6 +123,22 @@ export class PlayerController {
 
   getRig() {
     return this.#rig;
+  }
+
+  /** Calcula la posición y punto de mira deseados de la cámara en tercera persona. */
+  getThirdPersonCameraPose(outPos, outLookAt) {
+    const groundY = this.#collision.getGroundHeight(this.#position.x, this.#position.z, this.#position.y, 1.15);
+    const targetX = this.#position.x;
+    const targetY = this.#position.y + 1.55;
+    const targetZ = this.#position.z;
+
+    const horizDist = Math.cos(this.#cameraPitch) * this.#cameraDistance;
+    const camX = targetX + Math.sin(this.#cameraYaw) * horizDist;
+    const camY = Math.max(groundY + 0.65, targetY + Math.sin(this.#cameraPitch) * this.#cameraDistance);
+    const camZ = targetZ + Math.cos(this.#cameraYaw) * horizDist;
+
+    outPos.set(camX, camY, camZ);
+    outLookAt.set(targetX, targetY, targetZ);
   }
 
   update(dt) {
@@ -195,19 +226,12 @@ export class PlayerController {
     root.rotation.y = this.#facingYaw;
     this.#rig.update(dt, this.#animState, isMoving ? speed : 0);
 
-    // Actualizar cámara en tercera persona
-    const targetX = this.#position.x;
-    const targetY = this.#position.y + 1.55;
-    const targetZ = this.#position.z;
-
-    const horizDist = Math.cos(this.#cameraPitch) * this.#cameraDistance;
-    const camX = targetX + Math.sin(this.#cameraYaw) * horizDist;
-    const camY = Math.max(groundY + 0.65, targetY + Math.sin(this.#cameraPitch) * this.#cameraDistance);
-    const camZ = targetZ + Math.cos(this.#cameraYaw) * horizDist;
-
-    this.#desiredCamPos.set(camX, camY, camZ);
-    this.#camera.position.lerp(this.#desiredCamPos, Math.min(1, dt * 10));
-    this.#camera.lookAt(targetX, targetY, targetZ);
+    // Actualizar cámara en tercera persona salvo cuando el Vestidor dirige el plano
+    if (!this.#cameraOverride) {
+      this.getThirdPersonCameraPose(this.#desiredCamPos, this.#desiredLookAt);
+      this.#camera.position.lerp(this.#desiredCamPos, Math.min(1, dt * 10));
+      this.#camera.lookAt(this.#desiredLookAt);
+    }
   }
 
   dispose() {

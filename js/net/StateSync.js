@@ -1,20 +1,22 @@
-import { RemotePlayer } from '../entities/RemotePlayer.js';
+import { RemotePlayer } from '../characters/RemotePlayer.js';
 
 export class StateSync {
   #scene;
   #peerManager;
   #textures;
+  #wardrobeFX;
   #remotePlayers = new Map();
   #sendTimer = 0;
   #unsubs = [];
   #callbacks = {};
   #getLocalState = null;
 
-  constructor(scene, peerManager, callbacks = {}, textureFactory = null) {
+  constructor(scene, peerManager, callbacks = {}, textureFactory = null, wardrobeFX = null) {
     this.#scene = scene;
     this.#peerManager = peerManager;
     this.#callbacks = callbacks;
     this.#textures = textureFactory;
+    this.#wardrobeFX = wardrobeFX;
   }
 
   init(getLocalStateFn) {
@@ -110,8 +112,12 @@ export class StateSync {
         break;
       }
       case 'appearance': {
-        const rp = this.#ensureRemotePlayer(from, { name: packet.name, appearance: packet.appearance });
-        rp?.setProfile(packet.name, packet.appearance);
+        const rp = this.#ensureRemotePlayer(from, { name: packet.name });
+        if (packet.fx) {
+          rp?.applyWardrobeChange(packet.name, packet.appearance, this.#wardrobeFX, packet.emote || 'spin');
+        } else {
+          rp?.setProfile(packet.name, packet.appearance);
+        }
         break;
       }
       case 'chat': {
@@ -144,8 +150,8 @@ export class StateSync {
     }
   }
 
-  broadcastAppearance(name, appearance) {
-    this.#peerManager.broadcast({ type: 'appearance', name, appearance });
+  broadcastAppearance(name, appearance, { fx = true, emote = 'spin' } = {}) {
+    this.#peerManager.broadcast({ type: 'appearance', name, appearance, fx, emote });
   }
 
   broadcastChat(name, text) {

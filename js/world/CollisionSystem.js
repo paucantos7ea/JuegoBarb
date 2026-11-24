@@ -135,6 +135,40 @@ export class CollisionSystem {
     pos.z = z;
   }
 
+  /**
+   * Comprueba si un punto 3D queda dentro de un muro o fuera de los límites del mundo
+   * (usado por la cámara del Vestidor Real para evitar recortes con paredes).
+   */
+  isPointBlocked(x, y, z, margin = 0.3) {
+    if (
+      x < this.#worldBounds.minX + margin ||
+      x > this.#worldBounds.maxX - margin ||
+      z < this.#worldBounds.minZ + margin ||
+      z > this.#worldBounds.maxZ - margin
+    ) {
+      return true;
+    }
+    for (const b of this.#boxes) {
+      if (y < b.minY - margin || y > b.maxY + margin) continue;
+      if (b.isCylinder) {
+        const dx = x - b.cx;
+        const dz = z - b.cz;
+        const r = b.radius + margin;
+        if (dx * dx + dz * dz < r * r) return true;
+        continue;
+      }
+      if (
+        x >= b.minX - margin &&
+        x <= b.maxX + margin &&
+        z >= b.minZ - margin &&
+        z <= b.maxZ + margin
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   getZoneName(pos) {
     if (pos.z <= -17 && pos.z >= -54 && Math.abs(pos.x) <= 24.5) {
       if (pos.y >= 6.2) {

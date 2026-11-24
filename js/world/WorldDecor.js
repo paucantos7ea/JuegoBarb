@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export class GardensBuilder {
+export class WorldDecor {
   #scene;
   #textures;
   #collision;

@@ -210,7 +210,7 @@
         <div class="hud-actions">
           <button id="btn-hud-wardrobe" class="icon-btn glass-chip" type="button" title="Vestidor Real [C]">👗 Vestidor</button>
           <button id="btn-hud-world" class="icon-btn glass-chip" type="button" title="Cambiar Reino">✨ Reino</button>
-          <button id="btn-hud-mute" class="icon-btn glass-chip" type="button" title="Silenciar música y sonido">🔊</button>
+          <button id="btn-hud-mute" class="icon-btn glass-chip" type="button" title="Silenciar efectos de sonido">🔊</button>
           <button id="btn-pwa-install-hud" class="icon-btn glass-chip pwa-install-chip hidden" type="button" title="Instalar App">📲 Instalar</button>
           <button id="btn-pwa-fullscreen-hud" class="icon-btn glass-chip" type="button" title="Pantalla Completa [F11]">⛶</button>
           <button id="btn-hud-menu" class="icon-btn glass-chip" type="button" title="Volver al Menú">☰ Menú</button>
@@ -304,12 +304,12 @@
       </div>
     </section>
 
-    <!-- Vestidor Real [C] -->
-    <section id="wardrobe-overlay" class="modal-backdrop hidden" aria-label="Vestidor Real">
+    <!-- Vestidor Real en Tiempo Real [C] -->
+    <section id="wardrobe-overlay" class="wardrobe-overlay hidden" aria-label="Vestidor Real">
       <div class="wardrobe-modal glass-panel">
         <header class="modal-header">
           <div>
-            <p class="modal-kicker">Atelier del Palacio</p>
+            <p class="modal-kicker">Atelier del Palacio · En Vivo</p>
             <h2>Vestidor Real</h2>
           </div>
           <button id="btn-close-wardrobe" class="btn-close" type="button" aria-label="Cerrar vestidor">✕</button>
@@ -356,9 +356,18 @@
         </div>
 
         <footer class="modal-footer">
-          <span class="wardrobe-tip">Tus cambios se sincronizan al instante con todo tu grupo.</span>
+          <span class="wardrobe-tip">Cambios visibles al instante con magia para todo tu grupo.</span>
           <button id="btn-wardrobe-done" class="btn-primary" type="button">¡Listo para brillar!</button>
         </footer>
+      </div>
+
+      <!-- Zona despejada derecha para observar y girar al personaje 360° -->
+      <div id="wardrobe-stage-area" class="wardrobe-stage-area" aria-label="Arrastra para girar al personaje 360 grados">
+        <div class="wardrobe-turn-controls glass-chip">
+          <button id="btn-wardrobe-turn-left" class="wardrobe-turn-btn" type="button" title="Girar a la izquierda" aria-label="Girar a la izquierda">⟲</button>
+          <span class="wardrobe-turn-hint">↔ Arrastra 360°</span>
+          <button id="btn-wardrobe-turn-right" class="wardrobe-turn-btn" type="button" title="Girar a la derecha" aria-label="Girar a la derecha">⟳</button>
+        </div>
       </div>
     </section>
 

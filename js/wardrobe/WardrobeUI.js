@@ -1,24 +1,33 @@
-import { CharacterRig } from '../entities/CharacterRig.js';
+import { CharacterRig } from '../characters/CharacterRig.js';
 
 const TABS = Object.freeze([
   { id: 'outfits', label: '👗 Vestidos' },
   { id: 'hairs', label: '💇‍♀️ Peinados' },
-  { id: 'colors', label: '🎨 Colores / Piel' },
+  { id: 'colors', label: '🎨 Colores' },
   { id: 'accessories', label: '👑 Accesorios' }
 ]);
 
 /**
- * Vestidor Real visual por pestañas (Vestidos, Peinados, Colores/Piel y Accesorios).
- * Aplica cambios instantáneos en 3D y los emite para sincronización P2P en tiempo real.
+ * Vestidor Real interactivo en tiempo real:
+ * - Panel lateral izquierdo (~36% del ancho máximo) dejando el resto totalmente libre y transparente.
+ * - Zona de arrastre sobre el personaje 3D + botones discretos ⟲ / ⟳ para girarlo 360°.
+ * - Emite cada cambio con categoría para lanzar el humo mágico y la pose de alegría sincronizada.
  */
 export class WardrobeUI {
   #overlayEl;
+  #stageEl;
   #audio;
   #onChange;
+  #onRotate;
+  #onResetRotate;
   #onClose;
+
   #isOpen = false;
   #activeTab = 'outfits';
   #cleanups = [];
+  #dragging = false;
+  #lastPointerX = 0;
+  #holdSpinDir = 0; // -1 izq, 0 quieto, +1 der
   #current = {
     outfitId: 'gala_rosa',
     hairId: 'melena_ondulada',
@@ -28,10 +37,13 @@ export class WardrobeUI {
     accessories: ['tiara']
   };
 
-  constructor({ audio, onChange, onClose }) {
+  constructor({ audio, onChange, onRotate, onResetRotate, onClose }) {
     this.#overlayEl = document.getElementById('wardrobe-overlay');
+    this.#stageEl = document.getElementById('wardrobe-stage-area');
     this.#audio = audio;
     this.#onChange = onChange;
+    this.#onRotate = onRotate;
+    this.#onResetRotate = onResetRotate;
     this.#onClose = onClose;
   }
 
@@ -39,15 +51,97 @@ export class WardrobeUI {
     this.#renderTabs();
     this.#renderPanels();
     this.#switchTab('outfits', false);
+    this.#bindControls();
+  }
 
+  #bindControls() {
     const closeBtn = document.getElementById('btn-close-wardrobe');
     const doneBtn = document.getElementById('btn-wardrobe-done');
-    const closeFn = () => this.close();
+    const closeFn = () => {
+      this.#audio?.playClick();
+      this.close();
+    };
     closeBtn?.addEventListener('click', closeFn);
     doneBtn?.addEventListener('click', closeFn);
     this.#cleanups.push(
       () => closeBtn?.removeEventListener('click', closeFn),
       () => doneBtn?.removeEventListener('click', closeFn)
+    );
+
+    // Arrastre con ratón/táctil sobre el lado libre del personaje para girar 360°
+    if (this.#stageEl) {
+      const onPointerDown = (e) => {
+        if (!this.#isOpen || e.target.closest('button')) return;
+        this.#dragging = true;
+        this.#lastPointerX = e.clientX;
+        this.#stageEl.classList.add('is-dragging');
+        this.#stageEl.setPointerCapture?.(e.pointerId);
+      };
+      const onPointerMove = (e) => {
+        if (!this.#dragging || !this.#isOpen) return;
+        const dx = e.clientX - this.#lastPointerX;
+        this.#lastPointerX = e.clientX;
+        if (Math.abs(dx) > 0) {
+          this.#onRotate?.(dx * 0.0115);
+        }
+      };
+      const onPointerUp = (e) => {
+        if (!this.#dragging) return;
+        this.#dragging = false;
+        this.#stageEl.classList.remove('is-dragging');
+        this.#stageEl.releasePointerCapture?.(e.pointerId);
+      };
+      const onDblClick = (e) => {
+        if (!this.#isOpen || e.target.closest('button')) return;
+        this.#onResetRotate?.();
+      };
+
+      this.#stageEl.addEventListener('pointerdown', onPointerDown);
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerUp);
+      this.#stageEl.addEventListener('dblclick', onDblClick);
+      this.#cleanups.push(
+        () => this.#stageEl.removeEventListener('pointerdown', onPointerDown),
+        () => window.removeEventListener('pointermove', onPointerMove),
+        () => window.removeEventListener('pointerup', onPointerUp),
+        () => window.removeEventListener('pointercancel', onPointerUp),
+        () => this.#stageEl.removeEventListener('dblclick', onDblClick)
+      );
+    }
+
+    // Botones discretos ⟲ / ⟳ (clic para giro rápido o mantener pulsado para giro continuo)
+    this.#bindTurnButton('btn-wardrobe-turn-left', -1);
+    this.#bindTurnButton('btn-wardrobe-turn-right', 1);
+
+    const stopHold = () => { this.#holdSpinDir = 0; };
+    window.addEventListener('pointerup', stopHold);
+    window.addEventListener('blur', stopHold);
+    this.#cleanups.push(
+      () => window.removeEventListener('pointerup', stopHold),
+      () => window.removeEventListener('blur', stopHold)
+    );
+  }
+
+  #bindTurnButton(id, dir) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    const onDown = (e) => {
+      e.stopPropagation();
+      this.#holdSpinDir = dir;
+      this.#onRotate?.(dir * 0.42);
+      this.#audio?.playClick();
+    };
+    const onUp = () => {
+      if (this.#holdSpinDir === dir) this.#holdSpinDir = 0;
+    };
+    btn.addEventListener('pointerdown', onDown);
+    btn.addEventListener('pointerup', onUp);
+    btn.addEventListener('pointerleave', onUp);
+    this.#cleanups.push(
+      () => btn.removeEventListener('pointerdown', onDown),
+      () => btn.removeEventListener('pointerup', onUp),
+      () => btn.removeEventListener('pointerleave', onUp)
     );
   }
 
@@ -111,9 +205,8 @@ export class WardrobeUI {
       `;
       const fn = () => {
         this.#current.outfitId = o.id;
-        this.#audio?.playSparkle();
         this.#refreshSelection();
-        this.#emitChange();
+        this.#emitChange('outfit');
       };
       btn.addEventListener('click', fn);
       this.#cleanups.push(() => btn.removeEventListener('click', fn));
@@ -137,9 +230,8 @@ export class WardrobeUI {
       `;
       const fn = () => {
         this.#current.hairId = h.id;
-        this.#audio?.playClick();
         this.#refreshSelection();
-        this.#emitChange();
+        this.#emitChange('hair');
       };
       btn.addEventListener('click', fn);
       this.#cleanups.push(() => btn.removeEventListener('click', fn));
@@ -174,9 +266,8 @@ export class WardrobeUI {
       `;
       const fn = () => {
         onPick(item);
-        this.#audio?.playClick();
         this.#refreshSelection();
-        this.#emitChange();
+        this.#emitChange('color');
       };
       btn.addEventListener('click', fn);
       this.#cleanups.push(() => btn.removeEventListener('click', fn));
@@ -203,9 +294,8 @@ export class WardrobeUI {
         if (set.has(a.id)) set.delete(a.id);
         else set.add(a.id);
         this.#current.accessories = [...set];
-        this.#audio?.playSparkle();
         this.#refreshSelection();
-        this.#emitChange();
+        this.#emitChange('accessory');
       };
       btn.addEventListener('click', fn);
       this.#cleanups.push(() => btn.removeEventListener('click', fn));
@@ -237,7 +327,7 @@ export class WardrobeUI {
     });
   }
 
-  #emitChange() {
+  #emitChange(category) {
     this.#onChange?.({
       outfitId: this.#current.outfitId,
       hairId: this.#current.hairId,
@@ -245,7 +335,7 @@ export class WardrobeUI {
       skinId: this.#current.skinId,
       eyeColorId: this.#current.eyeColorId,
       accessories: [...this.#current.accessories]
-    });
+    }, category);
   }
 
   open(currentAppearance) {
@@ -262,13 +352,20 @@ export class WardrobeUI {
     }
     this.#switchTab(this.#activeTab, false);
     this.#isOpen = true;
-    this.#overlayEl.classList.remove('hidden');
+    this.#dragging = false;
+    this.#holdSpinDir = 0;
+    document.body.classList.add('wardrobe-open');
+    this.#overlayEl?.classList.remove('hidden');
   }
 
   close() {
     if (!this.#isOpen) return;
     this.#isOpen = false;
-    this.#overlayEl.classList.add('hidden');
+    this.#dragging = false;
+    this.#holdSpinDir = 0;
+    this.#stageEl?.classList.remove('is-dragging');
+    document.body.classList.remove('wardrobe-open');
+    this.#overlayEl?.classList.add('hidden');
     this.#onClose?.();
   }
 
@@ -277,13 +374,23 @@ export class WardrobeUI {
     else this.open(currentAppearance);
   }
 
-  isOpen() { return this.#isOpen; }
-  update() {}
+  isOpen() {
+    return this.#isOpen;
+  }
+
+  update(dt) {
+    if (this.#isOpen && this.#holdSpinDir !== 0) {
+      this.#onRotate?.(this.#holdSpinDir * dt * 2.2);
+    }
+  }
 
   dispose() {
     for (const fn of this.#cleanups) fn();
     this.#cleanups.length = 0;
+    document.body.classList.remove('wardrobe-open');
     this.#overlayEl?.classList.add('hidden');
     this.#isOpen = false;
+    this.#dragging = false;
+    this.#holdSpinDir = 0;
   }
 }

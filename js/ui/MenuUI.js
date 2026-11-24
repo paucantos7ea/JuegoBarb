@@ -1,4 +1,4 @@
-import { CharacterRig } from '../entities/CharacterRig.js';
+import { CharacterRig } from '../characters/CharacterRig.js';
 
 export class MenuUI {
   #peerManager;

@@ -257,6 +257,7 @@ export class Engine {
     this.#scene.traverse((obj) => {
       const mats = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : [];
       for (const mat of mats) {
+        if (mat.userData?.isVfx) continue;
         if (obj.isSprite || mat.isSpriteMaterial) {
           if (mat.toneMapped !== labelDefaults.toneMapped) {
             // toneMapped forma parte de la clave del shader: requiere recompilar

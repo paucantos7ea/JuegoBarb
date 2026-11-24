@@ -1,29 +1,41 @@
 import * as THREE from 'three';
-import { BaseGameMode } from './BaseGameMode.js';
 import { CollisionSystem } from '../world/CollisionSystem.js';
-import { PlayerController } from '../entities/PlayerController.js';
-import { CatalogData } from '../entities/catalog/CatalogData.js';
-import { NPCManager } from '../entities/NPCManager.js';
-import { QuestSystem } from '../entities/QuestSystem.js';
-import { StateSync } from '../network/StateSync.js';
-import { MinigameManager } from '../minigames/MinigameManager.js';
+import { QuestSystem } from '../world/Quests.js';
+import { MinigameManager } from '../world/Minigames.js';
+import { PlayerController } from '../characters/PlayerController.js';
+import { CatalogData } from '../characters/catalog/CatalogData.js';
+import { NPCManager } from '../characters/NPCManager.js';
+import { WardrobeUI } from '../wardrobe/WardrobeUI.js';
+import { WardrobeCamera } from '../wardrobe/WardrobeCamera.js';
+import { WardrobeFX } from '../wardrobe/WardrobeFX.js';
+import { StateSync } from '../net/StateSync.js';
 import { HudUI } from '../ui/HudUI.js';
-import { WardrobeUI } from '../ui/WardrobeUI.js';
+import { DialogueUI } from '../ui/DialogueUI.js';
 
-export class CoopExploreMode extends BaseGameMode {
+/**
+ * Sesión principal de exploración y cooperativo LAN del Palacio de Cristal.
+ * Coordina mundo 3D, jugador, NPCs, misiones, minijuegos, Vestidor en tiempo real
+ * (cámara dedicada + humo mágico + pose) y sincronización P2P.
+ */
+export class CoopExploreMode {
+  #active = false;
   #ctx = null;
   #worldId = 'palacio_cristal';
   #playerName = 'Estrella Real';
   #collision = null;
   #castle = null;
-  #gardens = null;
+  #decor = null;
   #player = null;
   #npcs = null;
   #quests = null;
   #stateSync = null;
   #minigames = null;
   #hud = null;
+  #dialogue = null;
   #wardrobe = null;
+  #wardrobeCamera = null;
+  #wardrobeFX = null;
+  #pendingWardrobeFx = null;
   #unsubs = [];
   #currentHotspot = null;
 
@@ -34,11 +46,7 @@ export class CoopExploreMode extends BaseGameMode {
     { id: 'minigame:race', label: 'Iniciar Carrera por los Jardines', pos: new THREE.Vector3(10, 0, 12), radius: 3.6 }
   ];
 
-  constructor() {
-    super('coop_explore');
-  }
-
-  async onInit(context) {
+  async init(context) {
     this.#ctx = context;
     this.#worldId = context.profile.worldId || 'palacio_cristal';
     this.#playerName = context.profile.name || 'Estrella Real';
@@ -49,16 +57,15 @@ export class CoopExploreMode extends BaseGameMode {
     this.#collision = new CollisionSystem();
     this.#collision.init();
 
-    // Carga diferida (Lazy Loading) de generadores de mundo
-    const [{ CastleBuilder }, { GardensBuilder }] = await Promise.all([
+    const [{ CastleBuilder }, { WorldDecor }] = await Promise.all([
       import('../world/CastleBuilder.js'),
-      import('../world/GardensBuilder.js')
+      import('../world/WorldDecor.js')
     ]);
 
     this.#castle = new CastleBuilder(scene, context.textures, this.#collision);
     this.#castle.init();
-    this.#gardens = new GardensBuilder(scene, context.textures, this.#collision);
-    this.#gardens.init();
+    this.#decor = new WorldDecor(scene, context.textures, this.#collision);
+    this.#decor.init();
 
     this.#player = new PlayerController(scene, camera, context.input, this.#collision, context.audio, context.textures);
     this.#player.init(CatalogData.getDefaultAppearance(context.profile.avatarId));
@@ -73,6 +80,11 @@ export class CoopExploreMode extends BaseGameMode {
     });
     this.#quests.init();
 
+    this.#dialogue = new DialogueUI({
+      onClose: () => this.#resumePointerLockIfFree()
+    });
+    this.#dialogue.init();
+
     this.#hud = new HudUI({
       peerManager: context.peerManager,
       audio: context.audio,
@@ -84,7 +96,6 @@ export class CoopExploreMode extends BaseGameMode {
         onSendChat: (text) => this.#sendChat(text),
         onChatOpen: () => this.#ctx.input.exitPointerLock(),
         onChatClose: () => this.#resumePointerLockIfFree(),
-        onDialogueClose: () => this.#resumePointerLockIfFree(),
         onOpenInvite: () => {
           this.#hud.openInviteModal(this.#worldId);
           this.#syncControlLock();
@@ -94,24 +105,38 @@ export class CoopExploreMode extends BaseGameMode {
     });
     this.#hud.init();
 
+    // Sistema completo del Vestidor Real en tiempo real
+    this.#wardrobeFX = new WardrobeFX(scene);
+    this.#wardrobeFX.init();
+
+    this.#wardrobeCamera = new WardrobeCamera(camera, this.#player, this.#collision);
+
     this.#wardrobe = new WardrobeUI({
       audio: context.audio,
-      onChange: (partial) => this.#applyWardrobeChange(partial),
-      onClose: () => this.#syncControlLock(true)
+      onChange: (partial, category) => this.#applyWardrobeChange(partial, category),
+      onRotate: (deltaRad) => this.#wardrobeCamera.rotateCharacter(deltaRad),
+      onResetRotate: () => this.#wardrobeCamera.resetRotation(),
+      onClose: () => this.#handleWardrobeClosed()
     });
     this.#wardrobe.init();
 
-    this.#stateSync = new StateSync(scene, context.peerManager, {
-      onPartyChange: () => this.#refreshPartyHud(),
-      onToast: (msg) => this.#hud.showToast(msg),
-      onChatReceived: (sender, text) => this.#hud.appendChat(sender, text),
-      onRemoteQuestSync: (snap, notice) => {
-        this.#quests.applySnapshot(snap);
-        this.#hud.updateQuests(this.#quests.getQuestSummary());
-        if (notice) this.#hud.showToast(notice);
+    this.#stateSync = new StateSync(
+      scene,
+      context.peerManager,
+      {
+        onPartyChange: () => this.#refreshPartyHud(),
+        onToast: (msg) => this.#hud.showToast(msg),
+        onChatReceived: (sender, text) => this.#hud.appendChat(sender, text),
+        onRemoteQuestSync: (snap, notice) => {
+          this.#quests.applySnapshot(snap);
+          this.#hud.updateQuests(this.#quests.getQuestSummary());
+          if (notice) this.#hud.showToast(notice);
+        },
+        onRemoteWorldChange: (worldId) => this.#applyWorldTheme(worldId, false)
       },
-      onRemoteWorldChange: (worldId) => this.#applyWorldTheme(worldId, false)
-    }, context.textures);
+      context.textures,
+      this.#wardrobeFX
+    );
     this.#stateSync.init(() => ({
       name: this.#playerName,
       pos: this.#player.getPosition(),
@@ -137,7 +162,6 @@ export class CoopExploreMode extends BaseGameMode {
     this.#minigames.init();
 
     this.#bindInputActions();
-    // Con un diálogo/modal abierto, ni Tab ni un clic en el lienzo deben volver a capturar el ratón
     context.input.setPointerLockGuard(() => this.#isUiBusy(false));
     context.input.setPointerLockEnabled(true);
     this.#applyWorldTheme(this.#worldId, false);
@@ -145,8 +169,11 @@ export class CoopExploreMode extends BaseGameMode {
     this.#hud.setPointerLockState(context.input.isPointerLocked());
     this.#hud.updateQuests(this.#quests.getQuestSummary());
     this.#refreshPartyHud();
-    this.#hud.appendChat('Palacio', `¡Bienvenida/o ${this.#playerName}! Haz clic en la pantalla para capturar la cámara y pulsa [Tab] para liberar el ratón.`);
-    context.audio.startAmbient();
+    this.#hud.appendChat(
+      'Palacio',
+      `¡Bienvenida/o ${this.#playerName}! Pulsa [C] para probar ropa en vivo, clic para capturar cámara y [Tab] para liberar el ratón.`
+    );
+    this.#active = true;
   }
 
   #bindInputActions() {
@@ -163,12 +190,13 @@ export class CoopExploreMode extends BaseGameMode {
         }
       }),
       input.onAction('interact', () => this.#handleInteract()),
-      // Emotes [1-4]: solo sin menús, diálogos ni minijuegos abiertos
-      input.onAction('emote', (id) => { if (!this.#isUiBusy()) this.#player.playEmote(id); }),
+      input.onAction('emote', (id) => {
+        if (!this.#isUiBusy()) this.#player.playEmote(id);
+      }),
       input.onAction('escape', () => {
         if (this.#minigames.isActive()) this.#minigames.stop({ completed: false });
         else if (this.#wardrobe.isOpen()) this.#wardrobe.close();
-        else if (this.#hud.isDialogueOpen()) this.#hud.hideDialogue();
+        else if (this.#dialogue.isOpen()) this.#dialogue.hide();
         else if (this.#hud.isInviteModalOpen()) this.#hud.closeInviteModal();
         this.#syncControlLock();
       })
@@ -180,8 +208,7 @@ export class CoopExploreMode extends BaseGameMode {
     const theme = this.#ctx.worldThemes.getById(worldId);
     this.#ctx.engine.applyTheme(theme);
     this.#castle?.applyTheme(theme);
-    this.#gardens?.applyTheme(theme);
-    this.#ctx.audio?.setMood(theme.musicMood);
+    this.#decor?.applyTheme(theme);
     this.#hud?.setWorldInfo(theme.name, this.#collision.getZoneName(this.#player.getPosition()));
     if (broadcast) {
       this.#stateSync?.broadcastWorld(worldId);
@@ -196,17 +223,55 @@ export class CoopExploreMode extends BaseGameMode {
   }
 
   #toggleWardrobe() {
-    const wasOpen = this.#wardrobe.isOpen();
-    this.#hud.hideDialogue();
-    this.#wardrobe.toggle(this.#player.getAppearance());
-    this.#syncControlLock(wasOpen);
+    if (this.#wardrobe.isOpen()) {
+      this.#wardrobe.close();
+      return;
+    }
+    this.#dialogue.hide();
+    this.#hud.setInteractPrompt(null);
+    this.#ctx.input.exitPointerLock();
+    this.#wardrobe.open(this.#player.getAppearance());
+    this.#wardrobeCamera.enter();
+    this.#player.setCameraOverride(true);
+    this.#syncControlLock(false);
   }
 
-  #applyWardrobeChange(partial) {
-    this.#player.applyAppearance(partial);
-    const full = this.#player.getAppearance();
-    this.#quests.recordWardrobeUpdate(full);
-    this.#stateSync.broadcastAppearance(this.#playerName, full);
+  #handleWardrobeClosed() {
+    this.#wardrobeCamera?.exit();
+    this.#syncControlLock(true);
+  }
+
+  /**
+   * Transformación mágica en vivo:
+   * 1. Sonido suave de "poof/destello" + nube de humo rosado/blanco con destellos dorados.
+   * 2. En el pico del humo (~120 ms), aplica la nueva prenda y lanza un giro o pose de alegría.
+   * 3. Sincroniza el cambio y el humo mágico en tiempo real con el grupo P2P.
+   */
+  #applyWardrobeChange(partial, category = 'outfit') {
+    const targetAppearance = {
+      ...this.#player.getAppearance(),
+      ...partial,
+      accessories: [...(partial.accessories || this.#player.getAppearance().accessories || [])]
+    };
+    const joyEmote = category === 'accessory' || category === 'color' ? 'star' : 'spin';
+
+    this.#ctx.audio?.playWardrobePoof();
+    this.#stateSync.broadcastAppearance(this.#playerName, targetAppearance, {
+      fx: true,
+      emote: joyEmote
+    });
+
+    this.#pendingWardrobeFx?.cancelPeak();
+    const root = this.#player.getRig()?.getRoot();
+    this.#pendingWardrobeFx = this.#wardrobeFX.trigger(root, {
+      peakMs: 120,
+      onPeak: () => {
+        this.#pendingWardrobeFx = null;
+        this.#player.applyAppearance(targetAppearance);
+        this.#player.playEmote(joyEmote, { silent: true });
+        this.#quests.recordWardrobeUpdate(this.#player.getAppearance());
+      }
+    });
   }
 
   #sendChat(text) {
@@ -219,10 +284,13 @@ export class CoopExploreMode extends BaseGameMode {
     this.#hud.updateParty(this.#playerName, this.#stateSync.getRemoteList());
   }
 
-  /** ¿Hay vestidor, diálogo, invitación (o minijuego) abiertos? */
   #isUiBusy(includeMinigame = true) {
-    return Boolean(this.#wardrobe?.isOpen() || this.#hud?.isDialogueOpen() || this.#hud?.isInviteModalOpen()
-      || (includeMinigame && this.#minigames?.isActive()));
+    return Boolean(
+      this.#wardrobe?.isOpen() ||
+      this.#dialogue?.isOpen() ||
+      this.#hud?.isInviteModalOpen() ||
+      (includeMinigame && this.#minigames?.isActive())
+    );
   }
 
   #resumePointerLockIfFree() {
@@ -239,8 +307,8 @@ export class CoopExploreMode extends BaseGameMode {
 
   #handleInteract() {
     if (this.#minigames.isActive() || this.#wardrobe.isOpen()) return;
-    if (this.#hud.isDialogueOpen()) {
-      this.#hud.hideDialogue();
+    if (this.#dialogue.isOpen()) {
+      this.#dialogue.hide();
       this.#resumePointerLockIfFree();
       return;
     }
@@ -251,7 +319,7 @@ export class CoopExploreMode extends BaseGameMode {
       this.#ctx.audio?.playClick();
       this.#ctx.input.exitPointerLock();
       this.#quests.recordNpcTalk(npc.id);
-      this.#hud.showDialogue(npc, (actionType) => this.#handleDialogueAction(actionType));
+      this.#dialogue.show(npc, (actionType) => this.#handleDialogueAction(actionType));
       return;
     }
 
@@ -272,7 +340,9 @@ export class CoopExploreMode extends BaseGameMode {
   async #launchMinigame(id) {
     if (this.#minigames.isActive()) return;
     this.#wardrobe.close();
-    this.#hud.hideDialogue();
+    this.#wardrobeCamera.dispose();
+    this.#player.setCameraOverride(false);
+    this.#dialogue.hide();
     this.#hud.setInteractPrompt(null);
     this.#ctx.input.exitPointerLock();
     this.#ctx.audio?.playSparkle();
@@ -284,13 +354,23 @@ export class CoopExploreMode extends BaseGameMode {
     });
   }
 
-  onUpdate(dt) {
+  update(dt) {
+    if (!this.#active) return;
+
     this.#castle?.update(dt);
-    this.#gardens?.update(dt);
+    this.#decor?.update(dt);
+    this.#wardrobe?.update(dt);
+
+    const camControlledByWardrobe = Boolean(this.#wardrobeCamera?.isControllingCamera());
+    this.#player?.setCameraOverride(camControlledByWardrobe);
     this.#player?.update(dt);
+    if (camControlledByWardrobe) {
+      this.#wardrobeCamera.update(dt);
+    }
+    this.#wardrobeFX?.update(dt);
 
     const pos = this.#player.getPosition();
-    this.#npcs?.update(dt, pos, Boolean(this.#hud?.isDialogueOpen()));
+    this.#npcs?.update(dt, pos, Boolean(this.#dialogue?.isOpen()));
     this.#quests?.update(dt, pos);
     this.#stateSync?.update(dt);
 
@@ -299,7 +379,6 @@ export class CoopExploreMode extends BaseGameMode {
       return;
     }
 
-    // Actualizar brújula, zona actual, minimapa y prompt contextual
     this.#hud.updateCompass(this.#player.getCameraYaw());
     this.#hud.setZoneName(this.#collision.getZoneName(pos));
     this.#hud.drawMinimap(
@@ -308,6 +387,11 @@ export class CoopExploreMode extends BaseGameMode {
       this.#stateSync.getRemoteList(),
       this.#quests.getUncollectedGemPositions()
     );
+
+    if (this.#wardrobe.isOpen()) {
+      this.#hud.setInteractPrompt(null);
+      return;
+    }
 
     const nearNpc = this.#npcs.getNearestNPC(pos, 4.2);
     if (nearNpc) {
@@ -327,19 +411,26 @@ export class CoopExploreMode extends BaseGameMode {
     this.#hud.setInteractPrompt(found ? found.label : null);
   }
 
-  onDispose() {
+  dispose() {
+    this.#active = false;
+    this.#pendingWardrobeFx?.cancelPeak();
+    this.#pendingWardrobeFx = null;
+
     for (const u of this.#unsubs) u();
     this.#unsubs.length = 0;
 
     this.#minigames?.dispose();
     this.#wardrobe?.dispose();
+    this.#wardrobeCamera?.dispose();
+    this.#wardrobeFX?.dispose();
+    this.#dialogue?.dispose();
     this.#hud?.dispose();
     this.#stateSync?.dispose();
     this.#quests?.dispose();
     this.#npcs?.dispose();
     this.#player?.dispose();
     this.#castle?.dispose();
-    this.#gardens?.dispose();
+    this.#decor?.dispose();
     this.#collision?.dispose();
     this.#ctx?.input?.setPointerLockGuard(null);
     this.#ctx?.input?.setPointerLockEnabled(false);

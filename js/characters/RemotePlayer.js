@@ -34,6 +34,7 @@ export class RemotePlayer {
   #chatTimer = 0;
   #appearanceKey = '';
   #emoteSeq = -1;
+  #pendingFxHandle = null;
 
   constructor(scene, peerId, profile = {}, textureFactory = null) {
     this.#scene = scene;
@@ -94,7 +95,7 @@ export class RemotePlayer {
       this.#replaceSprite('name', name);
     }
     const appearance = sanitizeAppearance(rawAppearance);
-    if (appearance) {
+    if (appearance && !this.#pendingFxHandle) {
       // Los paquetes 'state' llegan ~15 veces/seg con la apariencia incluida:
       // solo reconstruimos geometría cuando la ropa cambia de verdad.
       const key = JSON.stringify(appearance);
@@ -103,6 +104,42 @@ export class RemotePlayer {
         this.#rig?.applyAppearance(appearance);
       }
     }
+  }
+
+  /**
+   * Aplica un cambio de vestidor remoto con nube de humo mágico en vivo,
+   * cambiando la vestimenta en el pico del humo (~120 ms) y lanzando la pose de alegría.
+   */
+  applyWardrobeChange(name, rawAppearance, wardrobeFX = null, emoteId = 'spin') {
+    if (name && name !== this.#name) {
+      this.#name = name;
+      this.#replaceSprite('name', name);
+    }
+    const appearance = sanitizeAppearance(rawAppearance);
+    if (!appearance) return;
+
+    const root = this.#rig?.getRoot();
+    if (!wardrobeFX || !root) {
+      this.#appearanceKey = JSON.stringify(appearance);
+      this.#rig?.applyAppearance(appearance);
+      if (emoteId) this.#rig?.playEmote(emoteId);
+      return;
+    }
+
+    this.#pendingFxHandle?.cancelPeak();
+    const key = JSON.stringify(appearance);
+    const handle = wardrobeFX.trigger(root, {
+      peakMs: 120,
+      onPeak: () => {
+        if (this.#pendingFxHandle === handle) {
+          this.#pendingFxHandle = null;
+        }
+        this.#appearanceKey = key;
+        this.#rig?.applyAppearance(appearance);
+        if (emoteId) this.#rig?.playEmote(emoteId);
+      }
+    });
+    this.#pendingFxHandle = handle;
   }
 
   #replaceSprite(kind, text) {
@@ -195,6 +232,8 @@ export class RemotePlayer {
   }
 
   dispose() {
+    this.#pendingFxHandle?.cancelPeak();
+    this.#pendingFxHandle = null;
     if (this.#nameSprite) {
       this.#nameSprite.material.map?.dispose();
       this.#nameSprite.material.dispose();

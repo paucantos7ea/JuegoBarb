@@ -31,8 +31,7 @@ export class WorldThemes {
       moteColor: 0xffe7a8,
       moteSize: 0.28,
       lanternIntensity: 0.9,
-      crystalEmissive: 0.35,
-      musicMood: 'golden'
+      crystalEmissive: 0.35
     },
     {
       id: 'jardines_perla',
@@ -62,8 +61,7 @@ export class WorldThemes {
       moteColor: 0xffb8df,
       moteSize: 0.32,
       lanternIntensity: 2.1,
-      crystalEmissive: 0.65,
-      musicMood: 'sunset'
+      crystalEmissive: 0.65
     },
     {
       id: 'gala_imperial',
@@ -93,8 +91,7 @@ export class WorldThemes {
       moteColor: 0xffe8a3,
       moteSize: 0.36,
       lanternIntensity: 3.2,
-      crystalEmissive: 1.05,
-      musicMood: 'gala'
+      crystalEmissive: 1.05
     }
   ];
 

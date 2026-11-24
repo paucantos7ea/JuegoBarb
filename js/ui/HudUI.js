@@ -5,7 +5,6 @@ export class HudUI {
   #hudEl;
   #minimapCtx = null;
   #boundCleanups = [];
-  #dialogueOpen = false;
   #inviteModalOpen = false;
   #inviteWorldId = 'palacio_cristal';
 
@@ -20,11 +19,13 @@ export class HudUI {
     const canvas = this.#el('minimap-canvas');
     this.#minimapCtx = canvas.getContext('2d');
 
+    this.#syncMuteButton();
+
     this.#on('btn-hud-wardrobe', 'click', () => this.#callbacks.onToggleWardrobe?.());
     this.#on('btn-hud-world', 'click', () => this.#callbacks.onCycleWorld?.());
     this.#on('btn-hud-mute', 'click', () => {
-      const muted = this.#audio?.toggleMute();
-      this.#el('btn-hud-mute').textContent = muted ? '🔇' : '🔊';
+      this.#audio?.toggleMute();
+      this.#syncMuteButton();
     });
     this.#on('btn-hud-menu', 'click', () => this.#callbacks.onReturnToMenu?.());
     this.#on('btn-hud-invite', 'click', () => this.#callbacks.onOpenInvite?.());
@@ -41,7 +42,6 @@ export class HudUI {
       });
     };
 
-    // Botones rápidos de minijuegos y chat rápido
     bindGroup('.activity-btn', (btn) => this.#callbacks.onStartMinigame?.(btn.dataset.minigame));
     bindGroup('.quick-chat-btn', (btn) => this.#callbacks.onSendChat?.(btn.dataset.msg));
 
@@ -75,7 +75,6 @@ export class HudUI {
       () => chatInput.removeEventListener('keydown', chatKeyDown)
     );
 
-    // Modal invitación en partida
     this.#boundCleanups.push(
       this.#peerManager.on('peerConnected', ({ name }) => {
         this.#el('ingame-invite-status').textContent = `¡${name} se ha unido! Puedes invitar a otro compañero con el código de arriba o cerrar esta ventana.`;
@@ -99,7 +98,6 @@ export class HudUI {
         const res = await this.#peerManager.acceptGuestAnswer(input.value);
         input.value = '';
         this.showToast(`Conectando con ${res.name}...`);
-        // Cada código sirve para un solo compañero: generamos el siguiente automáticamente
         const code = await this.#peerManager.createHostInvite(this.#inviteWorldId);
         this.#el('ingame-offer-code').value = code;
         status.textContent = `Conectando con ${res.name}... El código de arriba ya es nuevo para el siguiente compañero.`;
@@ -107,6 +105,15 @@ export class HudUI {
         status.textContent = err.message;
       }
     });
+  }
+
+  #syncMuteButton() {
+    const btn = this.#el('btn-hud-mute');
+    if (!btn) return;
+    const muted = Boolean(this.#audio?.isMuted());
+    btn.textContent = muted ? '🔇' : '🔊';
+    btn.title = muted ? 'Activar efectos de sonido' : 'Silenciar efectos de sonido';
+    btn.setAttribute('aria-pressed', String(muted));
   }
 
   #el(id) {
@@ -122,12 +129,12 @@ export class HudUI {
   }
 
   show() {
+    this.#syncMuteButton();
     this.#hudEl.classList.remove('hidden');
   }
 
   hide() {
     this.#hudEl.classList.add('hidden');
-    this.hideDialogue();
     this.closeInviteModal();
   }
 
@@ -225,47 +232,6 @@ export class HudUI {
     }, 3400);
   }
 
-  showDialogue(npc, onAction) {
-    this.#dialogueOpen = true;
-    this.#el('dialogue-speaker').textContent = npc.name;
-    this.#el('dialogue-role').textContent = npc.role;
-    this.#el('dialogue-text').textContent = npc.greeting;
-
-    const actions = this.#el('dialogue-actions');
-    actions.innerHTML = '';
-    const addBtn = (label, cls, handler) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = cls;
-      btn.textContent = label;
-      btn.addEventListener('click', () => {
-        btn.blur?.();
-        this.hideDialogue();
-        handler();
-      });
-      actions.appendChild(btn);
-    };
-
-    if (npc.actionLabel) addBtn(npc.actionLabel, 'btn-primary btn-sm', () => onAction?.(npc.actionType));
-    if (npc.secondaryLabel) addBtn(npc.secondaryLabel, 'btn-secondary btn-sm', () => onAction?.(npc.secondaryType));
-    addBtn('Cerrar', 'btn-secondary btn-sm', () => this.#callbacks.onDialogueClose?.());
-
-    this.#el('dialogue-box').classList.remove('hidden');
-  }
-
-  hideDialogue() {
-    this.#dialogueOpen = false;
-    const box = this.#el('dialogue-box');
-    box.classList.add('hidden');
-    if (box.contains(document.activeElement)) {
-      document.activeElement?.blur?.();
-    }
-  }
-
-  isDialogueOpen() {
-    return this.#dialogueOpen;
-  }
-
   async openInviteModal(worldId = 'palacio_cristal') {
     this.#inviteWorldId = worldId;
     this.#inviteModalOpen = true;
@@ -302,20 +268,17 @@ export class HudUI {
     ctx.fillStyle = '#2d152b';
     ctx.fillRect(0, 0, w, h);
 
-    // Castillo (Norte)
     ctx.fillStyle = 'rgba(255, 224, 240, 0.32)';
     ctx.strokeStyle = '#e5b869';
     ctx.lineWidth = 1.5;
     ctx.fillRect(toX(-24), toY(-54), toX(24) - toX(-24), toY(-22) - toY(-54));
     ctx.strokeRect(toX(-24), toY(-54), toX(24) - toX(-24), toY(-22) - toY(-54));
 
-    // Fuente central
     ctx.beginPath();
     ctx.arc(toX(0), toY(0), 7, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(130, 224, 255, 0.55)';
     ctx.fill();
 
-    // Pasarela Oeste y Mirador Sur
     ctx.fillStyle = 'rgba(243, 116, 174, 0.42)';
     ctx.fillRect(toX(-28.5), toY(-8), 8, 36);
     ctx.beginPath();
@@ -323,7 +286,6 @@ export class HudUI {
     ctx.fillStyle = 'rgba(255, 214, 153, 0.42)';
     ctx.fill();
 
-    // Gemas no recogidas
     ctx.fillStyle = '#ff6ec7';
     for (const gp of gemPositions) {
       const gx = toX(gp.x);
@@ -337,7 +299,6 @@ export class HudUI {
       ctx.fill();
     }
 
-    // Compañeros remotos
     ctx.fillStyle = '#5ac8fa';
     for (const r of remotes) {
       ctx.beginPath();
@@ -345,7 +306,6 @@ export class HudUI {
       ctx.fill();
     }
 
-    // Jugador local
     const px = toX(playerPos.x);
     const py = toY(playerPos.z);
     ctx.fillStyle = '#fff5d6';
