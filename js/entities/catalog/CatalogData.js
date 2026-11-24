@@ -89,26 +89,26 @@ export class CatalogData {
   static HAIRSTYLES = Object.freeze([
     { id: 'melena_ondulada', name: 'Melena Real Ondulada', icon: '🌊', desc: 'Ondas en cascada con semirrecogido y pasador cristal' },
     { id: 'coleta_alta', name: 'Coleta Alta Glamurosa', icon: '✨', desc: 'Coleta elevada en capas con lazo de perla' },
-    { id: 'recogido_mono', name: 'Recogido de Gala con Moño', icon: '👑', desc: 'Moño alto trenzado con horquillas doradas' },
+    { id: 'recogido_mono', name: 'Recogido con Moño de Gala', icon: '👑', desc: 'Moño alto trenzado con horquillas doradas' },
     { id: 'media_melena', name: 'Media Melena con Diadema', icon: '🎀', desc: 'Corte midi ondulado con diadema de perlas' },
     { id: 'trenza_lateral', name: 'Trenza Cascada Lateral', icon: '💫', desc: 'Trenza tejida sobre el hombro con lazo de oro' }
   ]);
 
   static HAIR_COLORS = Object.freeze([
-    { id: 'rubio_miel', name: 'Rubio Miel Dorado', hex: 0xf0c975, css: '#f0c975', brow: 0x9c743a },
+    { id: 'rubio_miel', name: 'Rubio Miel', hex: 0xf0c975, css: '#f0c975', brow: 0x9c743a },
     { id: 'rubio_platino', name: 'Rubio Platino', hex: 0xf2ebd9, css: '#f2ebd9', brow: 0xa69b88 },
     { id: 'castano_chocolate', name: 'Castaño Chocolate', hex: 0x522e1d, css: '#522e1d', brow: 0x381e12 },
     { id: 'pelirrojo_cobrizo', name: 'Pelirrojo Cobrizo', hex: 0xc2542d, css: '#c2542d', brow: 0x85371c },
     { id: 'negro_azabache', name: 'Negro Azabache', hex: 0x1e1824, css: '#1e1824', brow: 0x16111a },
-    { id: 'rosa_fantasia', name: 'Rosa Fantasía', hex: 0xf088ba, css: '#f088ba', brow: 0xa84e79 }
+    { id: 'rosa_pastel', name: 'Rosa Pastel', hex: 0xf5a3c7, css: '#f5a3c7', brow: 0xb0607f }
   ]);
 
   static ACCESSORIES = Object.freeze([
     { id: 'tiara', name: 'Tiara de Diamantes', icon: '💎', desc: 'Diadema de oro rosa con cristales luminosos' },
     { id: 'corona', name: 'Corona Imperial', icon: '👑', desc: 'Corona real completa con perlas y rubíes' },
     { id: 'cetro', name: 'Cetro Estelar', icon: '🪄', desc: 'Cetro dorado con estrella de cristal en mano' },
-    { id: 'bolso', name: 'Bolso de Mano Dorado', icon: '👜', desc: 'Bolso imperial dorado con broche de perla' },
-    { id: 'gafas', name: 'Gafas de Sol Chic', icon: '🕶️', desc: 'Montura estilizada oro rosa con lentes oscuros' }
+    { id: 'bolso', name: 'Bolso Dorado', icon: '👜', desc: 'Bolso imperial dorado con broche de perla' },
+    { id: 'gafas', name: 'Gafas Chic', icon: '🕶️', desc: 'Montura estilizada oro rosa con lentes oscuros' }
   ]);
 
   static SKIN_TONES = Object.freeze([
@@ -154,13 +154,14 @@ export class CatalogData {
 
   static NPC_AVATARS = Object.freeze([
     { id: 'npc_adrian', name: 'Príncipe Adrián', gender: 'male', skinId: 'miel', hairColorId: 'castano_chocolate', eyeColorId: 'zafiro', hairId: 'principe_tupe', outfitId: 'principe_gala' },
-    { id: 'npc_sofia', name: 'Estilista Sofía', gender: 'female', skinId: 'porcelana', hairColorId: 'rosa_fantasia', eyeColorId: 'esmeralda', hairId: 'melena_ondulada', outfitId: 'gala_rosa' },
+    { id: 'npc_sofia', name: 'Estilista Sofía', gender: 'female', skinId: 'porcelana', hairColorId: 'rosa_pastel', eyeColorId: 'esmeralda', hairId: 'melena_ondulada', outfitId: 'gala_rosa' },
     { id: 'npc_camila', name: 'Princesa Camila', gender: 'female', skinId: 'miel', hairColorId: 'pelirrojo_cobrizo', eyeColorId: 'miel', hairId: 'media_melena', outfitId: 'atardecer_perla' },
     { id: 'npc_maestra', name: 'Maestra de Ceremonias', gender: 'female', skinId: 'canela', hairColorId: 'rubio_platino', eyeColorId: 'violeta', hairId: 'recogido_mono', outfitId: 'gala_nocturna' }
   ]);
 
   static #LEGACY_OUTFIT = { casual_chic: 'chic_paseo', equitacion_real: 'amazona_palacio', cristal_nocturno: 'gala_nocturna' };
   static #LEGACY_HAIR = { ondas_reales: 'melena_ondulada', recogido_imperial: 'recogido_mono', coleta_perla: 'coleta_alta' };
+  static #LEGACY_HAIR_COLOR = { rosa_fantasia: 'rosa_pastel' };
 
   static getAvatar(id) {
     return CatalogData.AVATARS.find((a) => a.id === id)
@@ -180,7 +181,8 @@ export class CatalogData {
   }
 
   static getHairColor(id) {
-    return CatalogData.HAIR_COLORS.find((c) => c.id === id) || CatalogData.HAIR_COLORS[0];
+    const norm = CatalogData.#LEGACY_HAIR_COLOR[id] || id;
+    return CatalogData.HAIR_COLORS.find((c) => c.id === norm) || CatalogData.HAIR_COLORS[0];
   }
 
   static getSkinTone(id) {
@@ -200,7 +202,7 @@ export class CatalogData {
       hairColorId: av.hairColorId || 'rubio_miel',
       skinId: av.skinId || 'porcelana',
       eyeColorId: av.eyeColorId || 'zafiro',
-      accessories: [...(av.accessories || ['tiara'])]
+      accessories: [...(av.accessories || (av.gender === 'male' ? [] : ['tiara']))]
     };
   }
 }

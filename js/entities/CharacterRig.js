@@ -19,7 +19,7 @@ export class CharacterRig {
   static EYE_COLORS = CatalogData.EYE_COLORS;
 
   #root = null; #bodyGroup = null; #headGroup = null; #hairGroup = null; #outfitGroup = null;
-  #leftArm = null; #rightArm = null; #leftForearm = null; #rightForearm = null;
+  #leftShoulder = null; #rightShoulder = null; #leftForearm = null; #rightForearm = null;
   #leftLeg = null; #rightLeg = null; #leftShin = null; #rightShin = null;
   #puffSleeves = []; #armMeshes = []; #thighMeshes = []; #shinMeshes = []; #shoeMeshes = [];
   #accessoryNodes = {}; #materials = {}; #geometries = [];
@@ -33,7 +33,7 @@ export class CharacterRig {
         avatarId: base.avatarId,
         outfitId: initialAppearance.outfitId || base.outfitId,
         hairId: CatalogData.normalizeHairId(initialAppearance.hairId || base.hairId),
-        hairColorId: initialAppearance.hairColorId || base.hairColorId,
+        hairColorId: CatalogData.getHairColor(initialAppearance.hairColorId || base.hairColorId).id,
         skinId: initialAppearance.skinId || base.skinId,
         eyeColorId: initialAppearance.eyeColorId || base.eyeColorId,
         accessories: [...(initialAppearance.accessories || base.accessories)]
@@ -69,9 +69,11 @@ export class CharacterRig {
     );
 
     this.applyAppearance(this.#appearance);
+    // Lateralidad anatómica: el modelo mira a +Z local, su izquierda queda en +X.
+    // Abducción natural: izquierdo +0.32 / derecho -0.32 → brazos siempre fuera de la falda.
     const baseZ = this.#getBaseArmZ();
-    this.#leftArm.rotation.set(0, 0, -baseZ);
-    this.#rightArm.rotation.set(0, 0, baseZ);
+    this.#leftShoulder.rotation.set(0, 0, baseZ);
+    this.#rightShoulder.rotation.set(0, 0, -baseZ);
     return this.#root;
   }
 
@@ -79,19 +81,20 @@ export class CharacterRig {
 
   #createMaterials() {
     const m = this.#materials;
-    m.skin = new THREE.MeshStandardMaterial({ color: 0xfbe0d2, roughness: 0.50, metalness: 0.02 });
-    m.blush = new THREE.MeshBasicMaterial({ color: 0xf498b4, transparent: true, opacity: 0.28, depthWrite: false });
+    // Piel mate-satinada de muñeca: sin brillos plásticos
+    m.skin = new THREE.MeshStandardMaterial({ color: 0xfbe0d2, roughness: 0.72, metalness: 0.0 });
+    m.blush = new THREE.MeshBasicMaterial({ color: 0xf498b4, transparent: true, opacity: 0.42, depthWrite: false });
     m.eyelid = new THREE.MeshStandardMaterial({ color: 0xc88a96, roughness: 0.55, metalness: 0.02 });
     m.sclera = new THREE.MeshStandardMaterial({ color: 0xf6f8fc, roughness: 0.22, metalness: 0.02 });
     m.eyeIris = new THREE.MeshStandardMaterial({ color: 0x2d78e6, roughness: 0.16, metalness: 0.08 });
     m.eyeRing = new THREE.MeshStandardMaterial({ color: 0x164296, roughness: 0.25, metalness: 0.05 });
     m.eyeGlow = new THREE.MeshStandardMaterial({ color: 0x8ad6ff, emissive: 0x5ab4ff, emissiveIntensity: 0.25, roughness: 0.14 });
     m.pupil = new THREE.MeshStandardMaterial({ color: 0x100a16, roughness: 0.10, metalness: 0.05 });
-    m.catchlight = new THREE.MeshBasicMaterial({ color: 0xd8e2ea, toneMapped: false });
+    m.catchlight = new THREE.MeshBasicMaterial({ color: 0xffffff });
     m.lash = new THREE.MeshStandardMaterial({ color: 0x1b0f1b, roughness: 0.45, metalness: 0.04 });
     m.brow = new THREE.MeshStandardMaterial({ color: 0x9c743a, roughness: 0.48, metalness: 0.04 });
-    m.lips = new THREE.MeshPhysicalMaterial({ color: 0xe35f90, roughness: 0.22, metalness: 0.05, clearcoat: 0.65 });
-    m.hair = new THREE.MeshStandardMaterial({ color: 0xf0c975, roughness: 0.36, metalness: 0.08, side: THREE.DoubleSide });
+    m.lips = new THREE.MeshStandardMaterial({ color: 0xe86a80, roughness: 0.55, metalness: 0.0 });
+    m.hair = new THREE.MeshStandardMaterial({ color: 0xf0c975, roughness: 0.45, metalness: 0.04, side: THREE.DoubleSide });
     m.hair.userData.preserveRoughness = true;
     m.primary = new THREE.MeshPhysicalMaterial({ color: 0xf18bb8, roughness: 0.36, metalness: 0.08, sheen: 0.72, sheenColor: new THREE.Color(0xffe0ef), clearcoat: 0.14 });
     m.secondary = new THREE.MeshPhysicalMaterial({ color: 0xffdce9, roughness: 0.38, metalness: 0.08, sheen: 0.60, side: THREE.DoubleSide });
@@ -105,7 +108,7 @@ export class CharacterRig {
     const parts = PrinceRigBuilder.buildBody(this.#bodyGroup, this.#materials, (g) => this.#track(g));
     this.#leftLeg = parts.leftLeg; this.#rightLeg = parts.rightLeg;
     this.#leftShin = parts.leftShin; this.#rightShin = parts.rightShin;
-    this.#leftArm = parts.leftArm; this.#rightArm = parts.rightArm;
+    this.#leftShoulder = parts.leftShoulder; this.#rightShoulder = parts.rightShoulder;
     this.#leftForearm = parts.leftForearm; this.#rightForearm = parts.rightForearm;
     this.#thighMeshes = parts.thighMeshes; this.#shinMeshes = parts.shinMeshes;
     this.#shoeMeshes = parts.shoeMeshes; this.#outfitGroup = parts.outfitGroup;
@@ -120,7 +123,7 @@ export class CharacterRig {
     this.#bodyGroup.add(torso, neck);
 
     this.#leftLeg = new THREE.Group(); this.#rightLeg = new THREE.Group();
-    this.#leftLeg.position.set(-0.095, 0.92, 0); this.#rightLeg.position.set(0.095, 0.92, 0);
+    this.#leftLeg.position.set(0.095, 0.92, 0); this.#rightLeg.position.set(-0.095, 0.92, 0);
     const thighGeo = this.#track(new THREE.CylinderGeometry(0.064, 0.046, 0.44, 14));
     const shinGeo = this.#track(new THREE.CylinderGeometry(0.045, 0.032, 0.42, 14));
     const footGeo = this.#track(new THREE.BoxGeometry(0.068, 0.048, 0.165));
@@ -137,8 +140,8 @@ export class CharacterRig {
       if (i === 0) this.#leftShin = shinGroup; else this.#rightShin = shinGroup;
     });
 
-    this.#leftArm = new THREE.Group(); this.#rightArm = new THREE.Group();
-    this.#leftArm.position.set(-0.194, 1.335, 0); this.#rightArm.position.set(0.194, 1.335, 0);
+    this.#leftShoulder = new THREE.Group(); this.#rightShoulder = new THREE.Group();
+    this.#leftShoulder.position.set(0.194, 1.335, 0); this.#rightShoulder.position.set(-0.194, 1.335, 0);
     const shGeo = this.#track(new THREE.SphereGeometry(0.046, 12, 10));
     const puffGeo = this.#track(new THREE.SphereGeometry(0.080, 16, 12));
     const cuffGeo = this.#track(new THREE.TorusGeometry(0.048, 0.008, 8, 16));
@@ -146,18 +149,18 @@ export class CharacterRig {
     const loGeo = this.#track(new THREE.CylinderGeometry(0.031, 0.024, 0.25, 12));
     const hdGeo = this.#track(new THREE.SphereGeometry(0.032, 10, 10));
 
-    [this.#leftArm, this.#rightArm].forEach((arm, i) => {
+    [this.#leftShoulder, this.#rightShoulder].forEach((arm, i) => {
       const sh = new THREE.Mesh(shGeo, this.#materials.skin); arm.add(sh);
       const puffGroup = new THREE.Group();
       const puff = new THREE.Mesh(puffGeo, this.#materials.secondary);
-      puff.scale.set(1.06, 1.05, 0.96); puff.position.set(i === 0 ? -0.01 : 0.01, -0.025, 0); puff.castShadow = true;
+      puff.scale.set(1.06, 1.05, 0.96); puff.position.set(i === 0 ? 0.01 : -0.01, -0.025, 0); puff.castShadow = true;
       const cuff = new THREE.Mesh(cuffGeo, this.#materials.roseGold);
-      cuff.rotation.x = Math.PI / 2; cuff.position.set(i === 0 ? -0.005 : 0.005, -0.095, 0);
+      cuff.rotation.x = Math.PI / 2; cuff.position.set(i === 0 ? 0.005 : -0.005, -0.095, 0);
       puffGroup.add(puff, cuff); arm.add(puffGroup); this.#puffSleeves.push(puffGroup);
 
       const upper = new THREE.Mesh(upGeo, this.#materials.skin); upper.position.y = -0.14; upper.castShadow = true; arm.add(upper);
       const forearm = new THREE.Group(); forearm.position.y = -0.27;
-      forearm.rotation.set(-0.22, 0, i === 0 ? -0.08 : 0.08);
+      forearm.rotation.set(-0.22, 0, i === 0 ? 0.08 : -0.08);
       const lower = new THREE.Mesh(loGeo, this.#materials.skin); lower.position.y = -0.125; lower.castShadow = true; forearm.add(lower);
       const hand = new THREE.Mesh(hdGeo, this.#materials.skin); hand.scale.set(0.85, 1.38, 0.62); hand.position.y = -0.265; forearm.add(hand);
       arm.add(forearm); this.#bodyGroup.add(arm);
@@ -178,7 +181,7 @@ export class CharacterRig {
     if (config.avatarId) ap.avatarId = config.avatarId;
     if (config.outfitId) ap.outfitId = config.outfitId;
     if (config.hairId) ap.hairId = CatalogData.normalizeHairId(config.hairId);
-    if (config.hairColorId) ap.hairColorId = config.hairColorId;
+    if (config.hairColorId) ap.hairColorId = CatalogData.getHairColor(config.hairColorId).id;
     if (config.skinId) ap.skinId = config.skinId;
     if (config.eyeColorId) ap.eyeColorId = config.eyeColorId;
     if (Array.isArray(config.accessories)) ap.accessories = [...config.accessories];
@@ -239,10 +242,12 @@ export class CharacterRig {
 
   getRoot() { return this.#root; }
 
+  /** Abducción base del hombro en valor absoluto (izquierdo +, derecho -). */
   #getBaseArmZ() {
     if (this.#isMale) return 0.32;
-    const wideSkirt = ['ballgown', 'ice_gown', 'tiered_gown', 'starry_gown'].includes(this.#outfitStyle);
-    return wideSkirt ? 0.40 : 0.32;
+    // Faldas de baile muy amplias: margen mínimo extra para que la mano nunca roce el vuelo
+    const wideSkirt = ['ballgown', 'tiered_gown'].includes(this.#outfitStyle);
+    return wideSkirt ? 0.35 : 0.32;
   }
 
   update(dt, animState = 'idle', speed = 0) {
@@ -253,8 +258,8 @@ export class CharacterRig {
 
     const p = {
       bodyY: 0, bodyRotX: 0, bodyRotY: 0, headX: 0, headY: 0, headZ: 0,
-      lArmX: 0, lArmZ: -baseZ, rArmX: 0, rArmZ: baseZ,
-      lForeX: -0.22, lForeZ: -0.08, rForeX: -0.22, rForeZ: 0.08,
+      lArmX: 0, lArmZ: baseZ, rArmX: 0, rArmZ: -baseZ,
+      lForeX: -0.22, lForeZ: 0.08, rForeX: -0.22, rForeZ: -0.08,
       lLegX: 0, rLegX: 0, lShinX: 0, rShinX: 0, hairX: 0, hairZ: 0
     };
 
@@ -264,21 +269,21 @@ export class CharacterRig {
       Object.assign(p, {
         bodyY: Math.abs(Math.cos(t * freq)) * (run ? 0.055 : 0.026), bodyRotX: run ? 0.07 : 0.025,
         lLegX: swing, rLegX: -swing, lShinX: Math.max(0, -swing * (run ? 0.78 : 0.62)), rShinX: Math.max(0, swing * (run ? 0.78 : 0.62)),
-        lArmX: -swing * (run ? 0.58 : 0.46), rArmX: swing * (run ? 0.58 : 0.46), lArmZ: -openZ, rArmZ: openZ,
+        lArmX: -swing * (run ? 0.58 : 0.46), rArmX: swing * (run ? 0.58 : 0.46), lArmZ: openZ, rArmZ: -openZ,
         lForeX: (run ? -0.34 : -0.22) - Math.max(0, swing * 0.24), rForeX: (run ? -0.34 : -0.22) - Math.max(0, -swing * 0.24),
         headY: -swing * 0.05, headX: run ? -0.03 : -0.01, hairX: run ? 0.09 : 0.04, hairZ: Math.sin(t * freq) * 0.028
       });
     } else if (animState === 'jump') {
       // Salto estilizado limpio con brazos ligeramente abiertos, nunca cruzados
       Object.assign(p, {
-        bodyY: 0.04, bodyRotX: 0.035, headX: -0.05, lArmX: -0.18, rArmX: -0.18, lArmZ: -(baseZ + 0.22), rArmZ: baseZ + 0.22,
-        lForeX: -0.26, rForeX: -0.26, lForeZ: -0.10, rForeZ: 0.10, lLegX: -0.32, lShinX: 0.48, rLegX: 0.20, rShinX: 0.34, hairX: 0.13
+        bodyY: 0.04, bodyRotX: 0.035, headX: -0.05, lArmX: -0.18, rArmX: -0.18, lArmZ: baseZ + 0.22, rArmZ: -(baseZ + 0.22),
+        lForeX: -0.26, rForeX: -0.26, lForeZ: 0.10, rForeZ: -0.10, lLegX: -0.32, lShinX: 0.48, rLegX: 0.20, rShinX: 0.34, hairX: 0.13
       });
     } else if (animState === 'dance') {
       const step = Math.sin(t * 4.8);
       Object.assign(p, {
         bodyY: Math.abs(Math.sin(t * 6.0)) * 0.06, bodyRotY: Math.sin(t * 3.0) * 0.14,
-        lArmZ: -(0.78 + step * 0.22), rArmZ: 0.78 + Math.cos(t * 4.8) * 0.22,
+        lArmZ: 0.78 + step * 0.22, rArmZ: -(0.78 + Math.cos(t * 4.8) * 0.22),
         lArmX: -0.20 + Math.cos(t * 4.8) * 0.14, rArmX: -0.20 + step * 0.14,
         lForeX: -0.36, rForeX: -0.36, lLegX: step * 0.24, rLegX: -step * 0.24,
         lShinX: Math.max(0, -step * 0.26), rShinX: Math.max(0, step * 0.26),
@@ -286,14 +291,14 @@ export class CharacterRig {
       });
     } else if (animState === 'pose') {
       Object.assign(p, {
-        bodyY: 0.015, bodyRotY: 0.08, lArmZ: -(baseZ + 0.14), lArmX: -0.10, lForeX: -0.36,
-        rArmZ: this.#isMale ? baseZ + 0.14 : 0.96, rArmX: this.#isMale ? -0.16 : -0.30, rForeX: -0.32,
+        bodyY: 0.015, bodyRotY: 0.08, lArmZ: baseZ + 0.14, lArmX: -0.10, lForeX: -0.36,
+        rArmZ: this.#isMale ? -(baseZ + 0.14) : -0.96, rArmX: this.#isMale ? -0.16 : -0.30, rForeX: -0.32,
         lLegX: 0.10, rLegX: -0.14, lShinX: 0.08, rShinX: 0.16, headY: Math.sin(t * 2.0) * 0.12 - 0.05, headZ: 0.04
       });
     } else {
       const breath = Math.sin(t * 2.1);
       p.bodyY = speed > 0.1 ? 0 : breath * 0.012;
-      p.lArmZ = -(baseZ + breath * 0.016); p.rArmZ = baseZ + breath * 0.016;
+      p.lArmZ = baseZ + breath * 0.016; p.rArmZ = -(baseZ + breath * 0.016);
       p.headY = Math.sin(t * 0.85) * 0.06; p.headX = breath * 0.015; p.hairZ = Math.sin(t * 1.4) * 0.014;
     }
 
@@ -302,8 +307,8 @@ export class CharacterRig {
     b.rotation.set(L(b.rotation.x, p.bodyRotX, a), L(b.rotation.y, p.bodyRotY, a), 0);
     h.rotation.set(L(h.rotation.x, p.headX, a), L(h.rotation.y, p.headY, a), L(h.rotation.z, p.headZ, a));
     this.#hairGroup.rotation.set(L(this.#hairGroup.rotation.x, p.hairX, a), 0, L(this.#hairGroup.rotation.z, p.hairZ, a));
-    this.#leftArm.rotation.set(L(this.#leftArm.rotation.x, p.lArmX, a), 0, L(this.#leftArm.rotation.z, p.lArmZ, a));
-    this.#rightArm.rotation.set(L(this.#rightArm.rotation.x, p.rArmX, a), 0, L(this.#rightArm.rotation.z, p.rArmZ, a));
+    this.#leftShoulder.rotation.set(L(this.#leftShoulder.rotation.x, p.lArmX, a), 0, L(this.#leftShoulder.rotation.z, p.lArmZ, a));
+    this.#rightShoulder.rotation.set(L(this.#rightShoulder.rotation.x, p.rArmX, a), 0, L(this.#rightShoulder.rotation.z, p.rArmZ, a));
     this.#leftForearm.rotation.set(L(this.#leftForearm.rotation.x, p.lForeX, a), 0, L(this.#leftForearm.rotation.z, p.lForeZ, a));
     this.#rightForearm.rotation.set(L(this.#rightForearm.rotation.x, p.rForeX, a), 0, L(this.#rightForearm.rotation.z, p.rForeZ, a));
     this.#leftLeg.rotation.x = L(this.#leftLeg.rotation.x, p.lLegX, a);

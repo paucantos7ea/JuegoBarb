@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v4';
-const CACHE_ASSETS = 'reino-rosa-assets-v4';
+const CACHE_STATIC = 'reino-rosa-static-v5';
+const CACHE_ASSETS = 'reino-rosa-assets-v5';
 
 const PRECACHE_URLS = [
   './',
@@ -91,26 +91,27 @@ async function cacheFirstStrategy(request) {
   }
 }
 
-async function staleWhileRevalidate(event, request) {
+/**
+ * Red primero para el código propio (HTML/JS/CSS): tras cada despliegue se carga
+ * siempre la versión nueva y nunca se mezclan módulos viejos con nuevos.
+ * La caché solo se usa como respaldo sin conexión (PWA offline).
+ */
+async function networkFirstStrategy(request) {
   const cache = await caches.open(CACHE_STATIC);
-  const cached = await cache.match(request);
-
-  const networkPromise = fetch(request)
-    .then(async (response) => {
-      if (response && response.ok) {
-        await cache.put(request, response.clone());
-      }
+  try {
+    const response = await fetch(request, { cache: 'no-cache' });
+    if (response && response.ok) {
+      await cache.put(request, response.clone());
       return response;
-    })
-    .catch(() => null);
-
-  if (cached) {
-    event.waitUntil(networkPromise);
-    return cached;
+    }
+    const cachedOnError = await cache.match(request);
+    return cachedOnError || response;
+  } catch {
+    // Sin conexión: se usa la copia cacheada más abajo
   }
 
-  const networkResponse = await networkPromise;
-  if (networkResponse) return networkResponse;
+  const cached = await cache.match(request);
+  if (cached) return cached;
 
   if (request.mode === 'navigate') {
     const fallback = await cache.match('./index.html');
@@ -159,6 +160,6 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (isSameOriginShell(request, url)) {
-    event.respondWith(staleWhileRevalidate(event, request));
+    event.respondWith(networkFirstStrategy(request));
   }
 });

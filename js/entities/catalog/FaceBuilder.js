@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 
 /**
- * Constructor de rostros estilizados en geometría 3D pura (sin caras planas en canvas).
- * Incluye cráneo esculpido con pómulos y cuencas suaves, ojos 3D en capas con iris
- * luminoso, pupila, doble catchlight y arco de pestañas 3D, cejas arqueadas, nariz y labios.
+ * Constructor de rostros estilo muñeca en geometría 3D pura (sin caras pintadas en canvas).
+ * Cráneo suave, ojos grandes en capas (esclerótica, iris luminoso, pupila, dos catchlights
+ * y arco de pestañas), cejas finas, rubor difuminado, nariz diminuta y sonrisa coral.
  */
 export class FaceBuilder {
   /**
@@ -166,65 +166,68 @@ export class FaceBuilder {
   }
 
   static #buildBrows(headGroup, browMat, m, track) {
+    // Puntos medidos ~4 mm sobre la superficie del cráneo. Sin escalar la malla:
+    // los puntos están en coordenadas de la cabeza y un scale los hundiría en la piel.
     for (const s of [-1, 1]) {
       const curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(s * 0.022, m ? 0.056 : 0.058, 0.144),
-        new THREE.Vector3(s * 0.054, m ? 0.064 : 0.070, 0.138),
-        new THREE.Vector3(s * 0.088, m ? 0.054 : 0.058, 0.118)
+        new THREE.Vector3(s * 0.022, m ? 0.066 : 0.066, m ? 0.149 : 0.145),
+        new THREE.Vector3(s * 0.054, m ? 0.074 : 0.078, m ? 0.135 : 0.130),
+        new THREE.Vector3(s * 0.088, m ? 0.064 : 0.066, m ? 0.120 : 0.1135)
       ]);
-      const brow = new THREE.Mesh(track(new THREE.TubeGeometry(curve, 12, m ? 0.0055 : 0.0036, 6, false)), browMat);
-      brow.scale.set(1, 0.72, 0.65);
+      const brow = new THREE.Mesh(track(new THREE.TubeGeometry(curve, 14, m ? 0.0050 : 0.0032, 6, false)), browMat);
       headGroup.add(brow);
     }
   }
 
+  /** Nariz diminuta y delicada: un único relieve suave, sin puente marcado. */
   static #buildNose(headGroup, skinMat, m, track) {
-    const bridge = new THREE.Mesh(track(new THREE.ConeGeometry(m ? 0.013 : 0.010, m ? 0.044 : 0.036, 10)), skinMat);
-    bridge.position.set(0, -0.022, m ? 0.153 : 0.149);
-    bridge.rotation.x = Math.PI * 0.34;
-    const tip = new THREE.Mesh(track(new THREE.SphereGeometry(m ? 0.011 : 0.0092, 12, 10)), skinMat);
-    tip.scale.set(1.06, 0.84, 1.08);
-    tip.position.set(0, -0.034, m ? 0.161 : 0.157);
-    headGroup.add(bridge, tip);
+    const tip = new THREE.Mesh(track(new THREE.SphereGeometry(m ? 0.0105 : 0.0085, 12, 10)), skinMat);
+    tip.scale.set(1.15, 0.78, 0.9);
+    tip.position.set(0, -0.030, m ? 0.152 : 0.150);
+    headGroup.add(tip);
   }
 
-  static #buildLips(headGroup, lipMat, lineMat, m, track) {
-    const lipGroup = new THREE.Group();
-    lipGroup.position.set(0, m ? -0.074 : -0.072, m ? 0.144 : 0.139);
+  /** Sonrisa pequeña y dulce en coral/rosa: arco fino + leve relleno inferior (sin labios esculpidos). */
+  static #buildLips(headGroup, lipMat, _lineMat, m, track) {
+    const mouth = new THREE.Group();
+    // El rostro masculino es ~4 mm más prominente en la boca
+    mouth.position.set(0, m ? -0.074 : -0.071, m ? 0.0045 : 0);
 
-    const upperLobeGeo = track(new THREE.SphereGeometry(m ? 0.013 : 0.014, 12, 10));
-    for (const s of [-1, 1]) {
-      const lobe = new THREE.Mesh(upperLobeGeo, lipMat);
-      lobe.scale.set(m ? 1.25 : 1.18, m ? 0.42 : 0.56, 0.62);
-      lobe.position.set(s * (m ? 0.010 : 0.0095), 0.0045, 0.002);
-      lobe.rotation.z = s * -0.18;
-      lipGroup.add(lobe);
+    const w = m ? 0.019 : 0.016;
+    const smileCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-w, 0.0035, 0.1365),
+      new THREE.Vector3(-w * 0.5, -0.0005, 0.1405),
+      new THREE.Vector3(0, -0.0018, 0.1418),
+      new THREE.Vector3(w * 0.5, -0.0005, 0.1405),
+      new THREE.Vector3(w, 0.0035, 0.1365)
+    ]);
+    const smile = new THREE.Mesh(track(new THREE.TubeGeometry(smileCurve, 16, m ? 0.0022 : 0.0026, 6, false)), lipMat);
+    smile.scale.set(1, 0.8, 1);
+    mouth.add(smile);
+
+    if (!m) {
+      // Toque inferior suave que da la forma de "boca de muñeca"
+      const fill = new THREE.Mesh(track(new THREE.SphereGeometry(0.0072, 12, 8)), lipMat);
+      fill.scale.set(1.25, 0.5, 0.42);
+      fill.position.set(0, -0.0032, 0.1392);
+      mouth.add(fill);
     }
 
-    const lowerLip = new THREE.Mesh(track(new THREE.SphereGeometry(m ? 0.016 : 0.018, 14, 10)), lipMat);
-    lowerLip.scale.set(m ? 1.38 : 1.32, m ? 0.44 : 0.58, 0.65);
-    lowerLip.position.set(0, -0.0055, 0.001);
-    lipGroup.add(lowerLip);
-
-    // Sonrisa sutil esculpida entre ambos labios
-    const smileCurve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(m ? -0.024 : -0.023, 0.002, 0.004),
-      new THREE.Vector3(0, -0.0025, 0.010),
-      new THREE.Vector3(m ? 0.024 : 0.023, 0.002, 0.004)
-    ]);
-    const smile = new THREE.Mesh(track(new THREE.TubeGeometry(smileCurve, 10, 0.0013, 5, false)), lineMat);
-    lipGroup.add(smile);
-
-    headGroup.add(lipGroup);
+    headGroup.add(mouth);
   }
 
   static #buildCheekBlush(headGroup, blushMat, track) {
-    const blushGeo = track(new THREE.SphereGeometry(0.026, 12, 10));
+    // Óvalo aplanado apoyado sobre la mejilla y orientado según su normal (medida),
+    // para que asome como un rubor suave en lugar de quedar enterrado bajo la piel.
+    const blushGeo = track(new THREE.SphereGeometry(0.024, 14, 10));
+    const normal = new THREE.Vector3();
     for (const s of [-1, 1]) {
       const blush = new THREE.Mesh(blushGeo, blushMat);
-      blush.scale.set(1.18, 0.72, 0.25);
-      blush.position.set(s * 0.082, -0.026, 0.118);
-      blush.rotation.y = s * 0.46;
+      blush.scale.set(1.25, 0.72, 0.22);
+      blush.position.set(s * 0.080, -0.028, 0.1335);
+      normal.set(s * 0.52, -0.36, 0.77).normalize();
+      blush.lookAt(blush.position.clone().add(normal));
+      blush.renderOrder = 2;
       headGroup.add(blush);
     }
   }

@@ -38,8 +38,9 @@ export class PrinceRigBuilder {
   static #buildLimbs(bodyGroup, materials, track) {
     const leftLeg = new THREE.Group();
     const rightLeg = new THREE.Group();
-    leftLeg.position.set(-0.115, 0.90, 0);
-    rightLeg.position.set(0.115, 0.90, 0);
+    // Lateralidad anatómica (el modelo mira a +Z local): izquierda en +X
+    leftLeg.position.set(0.115, 0.90, 0);
+    rightLeg.position.set(-0.115, 0.90, 0);
 
     const thighGeo = track(new THREE.CylinderGeometry(0.075, 0.059, 0.44, 14));
     const shinGeo = track(new THREE.CylinderGeometry(0.058, 0.046, 0.42, 14));
@@ -80,10 +81,10 @@ export class PrinceRigBuilder {
       else rightShin = shinGroup;
     });
 
-    const leftArm = new THREE.Group();
-    const rightArm = new THREE.Group();
-    leftArm.position.set(-0.242, 1.375, 0);
-    rightArm.position.set(0.242, 1.375, 0);
+    const leftShoulder = new THREE.Group();
+    const rightShoulder = new THREE.Group();
+    leftShoulder.position.set(0.242, 1.375, 0);
+    rightShoulder.position.set(-0.242, 1.375, 0);
 
     const shGeo = track(new THREE.SphereGeometry(0.064, 12, 10));
     const upGeo = track(new THREE.CylinderGeometry(0.052, 0.043, 0.27, 12));
@@ -94,7 +95,7 @@ export class PrinceRigBuilder {
     let leftForearm = null;
     let rightForearm = null;
 
-    [leftArm, rightArm].forEach((arm, i) => {
+    [leftShoulder, rightShoulder].forEach((arm, i) => {
       arm.add(new THREE.Mesh(shGeo, materials.primary));
       const upper = new THREE.Mesh(upGeo, materials.primary);
       upper.position.y = -0.14;
@@ -103,7 +104,7 @@ export class PrinceRigBuilder {
 
       const forearm = new THREE.Group();
       forearm.position.y = -0.27;
-      forearm.rotation.set(-0.22, 0, i === 0 ? -0.08 : 0.08);
+      forearm.rotation.set(-0.22, 0, i === 0 ? 0.08 : -0.08);
       const lower = new THREE.Mesh(loGeo, materials.primary);
       lower.position.y = -0.125;
       lower.castShadow = true;
@@ -123,7 +124,7 @@ export class PrinceRigBuilder {
 
     return {
       leftLeg, rightLeg, leftShin, rightShin,
-      leftArm, rightArm, leftForearm, rightForearm,
+      leftShoulder, rightShoulder, leftForearm, rightForearm,
       thighMeshes, shinMeshes, shoeMeshes, puffSleeves: []
     };
   }

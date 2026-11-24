@@ -34,7 +34,7 @@ export class NPCManager {
         avatarId: 'npc_sofia',
         outfitId: 'gala_rosa',
         hairId: 'melena_ondulada',
-        hairColorId: 'rosa_fantasia',
+        hairColorId: 'rosa_pastel',
         skinId: 'porcelana',
         eyeColorId: 'esmeralda',
         accessories: ['tiara', 'bolso']

@@ -256,12 +256,12 @@ export class OutfitBuilder {
     // 4. Bolso de Mano Dorado (en mano izquierda)
     const bolso = new THREE.Group();
     const bag = new THREE.Mesh(track(new THREE.BoxGeometry(0.145, 0.118, 0.068)), materials.roseGold);
-    bag.position.set(-0.02, -0.34, 0.02);
+    bag.position.set(0.02, -0.34, 0.02);
     bag.castShadow = true;
     const clasp = new THREE.Mesh(track(new THREE.OctahedronGeometry(0.018, 0)), materials.crystal);
-    clasp.position.set(-0.02, -0.31, 0.058);
+    clasp.position.set(0.02, -0.31, 0.058);
     const strap = new THREE.Mesh(track(new THREE.TorusGeometry(0.048, 0.009, 6, 14, Math.PI)), materials.roseGold);
-    strap.position.set(-0.02, -0.278, 0.02);
+    strap.position.set(0.02, -0.278, 0.02);
     bolso.add(bag, clasp, strap);
     leftForearm.add(bolso);
     nodes.bolso = bolso;
@@ -270,12 +270,12 @@ export class OutfitBuilder {
     const cetro = new THREE.Group();
     const rod = new THREE.Mesh(track(new THREE.CylinderGeometry(0.014, 0.012, 0.74, 10)), materials.roseGold);
     rod.rotation.x = Math.PI / 2 - 0.32;
-    rod.position.set(0.01, -0.24, 0.19);
+    rod.position.set(-0.01, -0.24, 0.19);
     rod.castShadow = true;
     const halo = new THREE.Mesh(track(new THREE.TorusGeometry(0.082, 0.009, 8, 20)), materials.roseGold);
-    halo.position.set(0.01, -0.11, 0.51);
+    halo.position.set(-0.01, -0.11, 0.51);
     const star = new THREE.Mesh(track(new THREE.OctahedronGeometry(0.062, 0)), materials.crystal);
-    star.position.set(0.01, -0.11, 0.51);
+    star.position.set(-0.01, -0.11, 0.51);
     cetro.add(rod, halo, star);
     rightForearm.add(cetro);
     nodes.cetro = cetro;
