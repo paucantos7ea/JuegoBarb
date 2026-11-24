@@ -2016,4 +2016,9 @@ export class CasinoDomeBuilder {
     tex.needsUpdate = true;
     return this.#trackTex(tex);
   }
+
+  /**
+   * Adaptador de tema del reino (la cúpula conserva su estética cristal/oro-rosa imperial).
+   */
+  applyTheme() {}
 }
