@@ -55,8 +55,8 @@ export class Engine {
     this.#scene = new THREE.Scene();
     this.#scene.fog = new THREE.FogExp2(0xffe7f0, 0.0065);
 
-    this.#camera = new THREE.PerspectiveCamera(54, width / height, 0.15, 280);
-    this.#camera.position.set(22, 16, 26);
+    this.#camera = new THREE.PerspectiveCamera(54, width / height, 0.15, 360);
+    this.#camera.position.set(28, 19, 32);
 
     // Entorno PBR realista para metales oro rosa y cristales
     this.#pmremGenerator = new THREE.PMREMGenerator(this.#renderer);
@@ -80,8 +80,8 @@ export class Engine {
     this.#sunLight.castShadow = true;
     this.#sunLight.shadow.mapSize.set(2048, 2048);
     this.#sunLight.shadow.camera.near = 6;
-    this.#sunLight.shadow.camera.far = 160;
-    const d = 68;
+    this.#sunLight.shadow.camera.far = 220;
+    const d = 96;
     this.#sunLight.shadow.camera.left = -d;
     this.#sunLight.shadow.camera.right = d;
     this.#sunLight.shadow.camera.top = d;
@@ -96,7 +96,7 @@ export class Engine {
   }
 
   #setupSkyAndParticles() {
-    const skyGeo = new THREE.SphereGeometry(190, 32, 20);
+    const skyGeo = new THREE.SphereGeometry(240, 32, 20);
     const skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
@@ -135,7 +135,7 @@ export class Engine {
     for (let i = 0; i < starCount; i++) {
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(0.18 + Math.random() * 0.82);
-      const r = 165;
+      const r = 215;
       starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
       starPos[i * 3 + 1] = r * Math.cos(phi);
       starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
@@ -153,13 +153,13 @@ export class Engine {
     this.#scene.add(this.#starField);
 
     // Partículas ambientales flotantes (motas doradas / pétalos / luciérnagas)
-    const moteCount = 180;
+    const moteCount = 240;
     const motePos = new Float32Array(moteCount * 3);
     this.#moteVelocities = new Float32Array(moteCount * 3);
     for (let i = 0; i < moteCount; i++) {
-      motePos[i * 3] = (Math.random() - 0.5) * 105;
-      motePos[i * 3 + 1] = 1 + Math.random() * 18;
-      motePos[i * 3 + 2] = (Math.random() - 0.5) * 105 - 5;
+      motePos[i * 3] = (Math.random() - 0.5) * 170;
+      motePos[i * 3 + 1] = 1 + Math.random() * 20;
+      motePos[i * 3 + 2] = (Math.random() - 0.5) * 160 - 8;
       this.#moteVelocities[i * 3] = (Math.random() - 0.5) * 0.45;
       this.#moteVelocities[i * 3 + 1] = 0.15 + Math.random() * 0.35;
       this.#moteVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.45;
@@ -302,11 +302,11 @@ export class Engine {
         let x = pos.getX(i) + Math.sin(this.#elapsed * 0.7 + i) * 0.008 + this.#moteVelocities[i * 3] * dt;
         let y = pos.getY(i) + this.#moteVelocities[i * 3 + 1] * dt;
         let z = pos.getZ(i) + this.#moteVelocities[i * 3 + 2] * dt;
-        if (y > 20) y = 0.8;
-        if (x > 55) x = -55;
-        if (x < -55) x = 55;
-        if (z > 52) z = -56;
-        if (z < -56) z = 52;
+        if (y > 22) y = 0.8;
+        if (x > 85) x = -85;
+        if (x < -85) x = 85;
+        if (z > 72) z = -88;
+        if (z < -88) z = 72;
         pos.setXYZ(i, x, y, z);
       }
       pos.needsUpdate = true;
@@ -334,6 +334,10 @@ export class Engine {
 
   getDomElement() {
     return this.#renderer?.domElement ?? null;
+  }
+
+  getElapsed() {
+    return this.#elapsed;
   }
 
   #handleResize() {

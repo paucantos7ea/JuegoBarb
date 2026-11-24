@@ -1,7 +1,7 @@
 export class CollisionSystem {
   #boxes = [];
   #surfaces = [];
-  #worldBounds = { minX: -58, maxX: 58, minZ: -56, maxZ: 50 };
+  #worldBounds = { minX: -88, maxX: 88, minZ: -84, maxZ: 64 };
 
   init() {
     this.clear();
@@ -170,19 +170,26 @@ export class CollisionSystem {
   }
 
   getZoneName(pos) {
-    if (pos.z <= -17 && pos.z >= -54 && Math.abs(pos.x) <= 24.5) {
-      if (pos.y >= 6.2) {
-        return pos.z > -22.2 ? 'Balcón Real' : 'Galería Imperial (2ª Planta)';
-      }
-      if (pos.x < -11.5) return 'Vestidor Real';
-      if (pos.x > 11.5) return 'Salón de Baile';
-      return 'Gran Vestíbulo del Palacio';
+    if (pos.z < -54 && pos.z >= -77 && Math.abs(pos.x) <= 20.5) {
+      return 'Salón del Trono Real';
     }
-    if (pos.x < -19 && pos.z > -12 && pos.z < 24) return 'Pasarela de Moda Real';
-    if (pos.x > 16 && pos.z > -10 && pos.z < 24) return 'Jardines Geométricos';
-    if (pos.z > 35 && Math.abs(pos.x) < 12) return 'Mirador Real';
-    if (Math.hypot(pos.x, pos.z) < 14) return 'Plaza de la Fuente Monumental';
-    return 'Jardines del Palacio de Cristal';
+    if (pos.z <= -16.5 && pos.z >= -54.5 && pos.y >= 6.4) {
+      if (pos.z > -22.2) return 'Balcón Imperial';
+      if (pos.x < -14.5) return 'Suite Real de la Princesa';
+      if (pos.x > 14.5) return 'Biblioteca Real y Sala de Té';
+      return 'Galería Imperial (2ª Planta)';
+    }
+    if (pos.z <= -21.5 && pos.z >= -54.5 && Math.abs(pos.x) <= 36.5) {
+      if (pos.x < -14) return 'Atelier del Vestidor Real';
+      if (pos.x > 14) return 'Salón de Baile y Banquetes';
+      return 'Gran Vestíbulo Imperial';
+    }
+    if (pos.x < -27 && pos.z > -18 && pos.z < 28) return 'Gran Pasarela de Moda';
+    if (pos.x > 13 && pos.x < 28 && pos.z > 8 && pos.z < 22) return 'Arena de Carrera Real';
+    if (pos.x > 36 && pos.z < -28 && pos.z > -44) return 'Terraza Real de Baile';
+    if (pos.z > 36 && Math.abs(pos.x) < 12) return 'Mirador del Lago Imperial';
+    if (Math.hypot(pos.x, pos.z) < 15) return 'Plaza de la Gran Fuente';
+    return 'Jardines y Bosques Reales';
   }
 
   update() {}

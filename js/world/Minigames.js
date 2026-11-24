@@ -9,6 +9,7 @@ export class FashionRunwayGame {
   #player;
   #input;
   #audio;
+  #arena;
   #overlayEl;
   #onExit;
 
@@ -16,7 +17,7 @@ export class FashionRunwayGame {
   #sparkles = null;
   #sparkleVel = null;
   #phase = 'walk';
-  #currentZ = -6.5;
+  #currentZ = -12.0;
   #poseIndex = 0;
   #poseTimer = 0;
   #targetKey = 1;
@@ -25,10 +26,10 @@ export class FashionRunwayGame {
   #keyHandler = null;
 
   #stops = [
-    { z: -0.5, label: 'Pose Estrella' },
-    { z: 5.5, label: 'Giro Real' },
-    { z: 11.5, label: 'Saludo Imperial' },
-    { z: 17.5, label: 'Reverencia Final' }
+    { z: -4.0, label: 'Pose Estrella' },
+    { z: 4.0, label: 'Giro Real' },
+    { z: 12.0, label: 'Saludo Imperial' },
+    { z: 21.5, label: 'Reverencia en la T' }
   ];
 
   #poseNames = ['1 · Giro', '2 · Estrella', '3 · Saludo', '4 · Corona'];
@@ -39,6 +40,7 @@ export class FashionRunwayGame {
     this.#player = ctx.player;
     this.#input = ctx.input;
     this.#audio = ctx.audio;
+    this.#arena = ctx.arena;
     this.#overlayEl = ctx.overlayEl;
     this.#onExit = ctx.onExit;
   }
@@ -46,8 +48,9 @@ export class FashionRunwayGame {
   init() {
     this.#input.setControlsLocked(true);
     this.#player.setExternalControl(true);
-    this.#player.teleport(-26, 0.35, -6.5, 0);
+    this.#player.teleport(-46, 0.65, -12.0, 0);
     this.#player.setAnimState('walk');
+    this.#arena?.setRunwayShowActive(true);
 
     this.#buildVisuals();
     this.#renderUI();
@@ -64,7 +67,7 @@ export class FashionRunwayGame {
 
   #buildVisuals() {
     this.#group = new THREE.Group();
-    const ringGeo = new THREE.RingGeometry(0.9, 1.25, 28);
+    const ringGeo = new THREE.RingGeometry(0.95, 1.32, 32);
     const ringMat = new THREE.MeshBasicMaterial({
       color: 0xffd584,
       side: THREE.DoubleSide,
@@ -75,7 +78,7 @@ export class FashionRunwayGame {
     for (const stop of this.#stops) {
       const m = new THREE.Mesh(ringGeo, ringMat);
       m.rotation.x = -Math.PI / 2;
-      m.position.set(-26, 0.42, stop.z);
+      m.position.set(-46, 0.70, stop.z);
       this.#group.add(m);
     }
 
@@ -100,7 +103,7 @@ export class FashionRunwayGame {
   #triggerBurst(z) {
     const pos = this.#sparkles.geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) {
-      pos.setXYZ(i, -26, 1.4, z);
+      pos.setXYZ(i, -46, 1.8, z);
       const a = Math.random() * Math.PI * 2;
       const spd = 1.5 + Math.random() * 3.5;
       this.#sparkleVel[i * 3] = Math.cos(a) * spd;
@@ -167,6 +170,7 @@ export class FashionRunwayGame {
       this.#score += bonus;
       this.#hits++;
       this.#player.setAnimState('pose');
+      this.#arena?.triggerCrowdCheer(1.35);
       this.#triggerBurst(this.#currentZ);
       this.#audio?.playSparkle();
       if (promptEl) promptEl.textContent = `✨ ¡Pose Deslumbrante! +${bonus} pts`;
@@ -192,6 +196,7 @@ export class FashionRunwayGame {
   #finishShow() {
     this.#phase = 'finish';
     this.#player.setAnimState('pose');
+    this.#arena?.triggerCrowdCheer(1.6);
     this.#audio?.playQuestComplete();
     const stars = '★'.repeat(Math.max(1, Math.min(5, this.#hits + 1)));
     const card = this.#overlayEl.querySelector('#mg-fashion-card');
@@ -231,7 +236,7 @@ export class FashionRunwayGame {
         this.#currentZ = targetStop.z;
         this.#startPosePrompt();
       }
-      this.#player.getPosition().set(-26, 0.35, this.#currentZ);
+      this.#player.getPosition().set(-46, 0.65, this.#currentZ);
     } else if (this.#phase === 'pose') {
       this.#poseTimer -= dt;
       if (this.#poseTimer <= 0) {
@@ -239,14 +244,15 @@ export class FashionRunwayGame {
       }
     }
 
-    const px = -26;
+    const px = -46;
     const pz = this.#currentZ;
-    const desiredCam = new THREE.Vector3(px + Math.sin(pz * 0.14) * 3.8, 2.25, pz + 4.8);
+    const desiredCam = new THREE.Vector3(px + Math.sin(pz * 0.12) * 5.2, 2.8, pz + 6.4);
     this.#camera.position.lerp(desiredCam, Math.min(1, dt * 5));
-    this.#camera.lookAt(px, 1.45, pz);
+    this.#camera.lookAt(px, 1.65, pz);
   }
 
   dispose() {
+    this.#arena?.setRunwayShowActive(false);
     if (this.#keyHandler) {
       window.removeEventListener('keydown', this.#keyHandler);
       this.#keyHandler = null;
@@ -300,7 +306,7 @@ export class RoyalBallRhythmGame {
   init() {
     this.#input.setControlsLocked(true);
     this.#player.setExternalControl(true);
-    this.#player.teleport(18, 1.03, -35, 0);
+    this.#player.teleport(23, 1.03, -33, 0);
     this.#player.setAnimState('dance');
 
     this.#buildChart();
@@ -463,9 +469,9 @@ export class RoyalBallRhythmGame {
     }
 
     const angle = this.#songTime * 0.55;
-    const camPos = new THREE.Vector3(18 + Math.sin(angle) * 5.2, 3.2, -35 + Math.cos(angle) * 5.2);
+    const camPos = new THREE.Vector3(23 + Math.sin(angle) * 5.6, 3.4, -33 + Math.cos(angle) * 5.6);
     this.#camera.position.lerp(camPos, Math.min(1, dt * 6));
-    this.#camera.lookAt(18, 2.0, -35);
+    this.#camera.lookAt(23, 2.0, -33);
     this.#player.getRig().getRoot().rotation.y = Math.sin(this.#songTime * 2.2) * 0.6;
   }
 
@@ -481,12 +487,13 @@ export class RoyalBallRhythmGame {
 }
 
 /**
- * Minijuego 3: Carrera Contrarreloj por los Jardines (8 aros dorados con haz guía).
+ * Minijuego 3: Carrera Contrarreloj por los Jardines (10 aros dorados con haz guía).
  */
 export class GardenRaceGame {
   #scene;
   #player;
   #audio;
+  #arena;
   #overlayEl;
   #onExit;
 
@@ -501,26 +508,29 @@ export class GardenRaceGame {
   #finished = false;
 
   #ringCoords = [
-    [12, 1.5, 2],
-    [25, 1.5, -4],
-    [28, 1.5, 14],
-    [9, 1.5, 27],
-    [0, 2.7, 42],
-    [-14, 1.5, 25],
-    [-26, 1.85, 6],
-    [-10, 1.5, -10]
+    [30, 1.5, 22],
+    [46, 1.5, 14],
+    [34, 1.5, 36],
+    [0, 2.7, 45],
+    [-21, 2.1, 34],
+    [-34, 1.5, 18],
+    [-30, 1.5, 0],
+    [-12, 1.5, -14],
+    [10, 1.5, -10],
+    [18, 1.5, 14]
   ];
 
   constructor(ctx) {
     this.#scene = ctx.scene;
     this.#player = ctx.player;
     this.#audio = ctx.audio;
+    this.#arena = ctx.arena;
     this.#overlayEl = ctx.overlayEl;
     this.#onExit = ctx.onExit;
   }
 
   init() {
-    this.#player.teleport(10, 0, 12, Math.PI);
+    this.#player.teleport(18, 0, 14, 0);
     this.#buildRings();
     this.#renderUI();
   }
@@ -577,16 +587,17 @@ export class GardenRaceGame {
   }
 
   #renderUI() {
+    const total = this.#ringCoords.length;
     this.#overlayEl.innerHTML = `
       <div class="mg-top-bar glass-chip">
         <span class="mg-title">♛ Carrera por los Jardines</span>
-        <span class="mg-stat" id="race-rings">Aros: 0/8</span>
+        <span class="mg-stat" id="race-rings">Aros: 0/${total}</span>
         <span class="mg-stat" id="race-timer">00.0 s</span>
         <button id="race-exit" class="btn-secondary btn-sm" type="button">Salir</button>
       </div>
       <div id="race-banner" class="mg-center-card glass-panel">
         <h3 id="race-banner-title">¡Prepárate! 3...</h3>
-        <p style="font-size:0.84rem;color:#6c4a60;margin-top:4px;">Usa <strong>Shift</strong> para correr y atraviesa los 8 aros dorados siguiendo el haz de luz.</p>
+        <p style="font-size:0.84rem;color:#6c4a60;margin-top:4px;">Usa <strong>Shift</strong> para correr y atraviesa los ${total} aros dorados siguiendo el haz de luz.</p>
       </div>
     `;
 
@@ -597,9 +608,10 @@ export class GardenRaceGame {
 
   #finishRace() {
     this.#finished = true;
+    this.#arena?.triggerCrowdCheer(1.2);
     this.#audio?.playQuestComplete();
-    const medal = this.#raceTime <= 34 ? '🥇 Medalla de Oro Real'
-      : this.#raceTime <= 48 ? '🥈 Medalla de Plata Perla'
+    const medal = this.#raceTime <= 48 ? '🥇 Medalla de Oro Real'
+      : this.#raceTime <= 66 ? '🥈 Medalla de Plata Perla'
         : '🥉 Medalla de Bronce Rosa';
 
     const banner = this.#overlayEl.querySelector('#race-banner');
@@ -655,7 +667,7 @@ export class GardenRaceGame {
       this.#currentIdx++;
       this.#audio?.playGemCollect();
       const ringsEl = this.#overlayEl.querySelector('#race-rings');
-      if (ringsEl) ringsEl.textContent = `Aros: ${this.#currentIdx}/8`;
+      if (ringsEl) ringsEl.textContent = `Aros: ${this.#currentIdx}/${this.#ringCoords.length}`;
       this.#updateActiveHighlight();
       if (this.#currentIdx >= this.#ringMeshes.length) {
         this.#finishRace();

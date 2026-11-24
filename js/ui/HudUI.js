@@ -261,29 +261,45 @@ export class HudUI {
     if (!ctx) return;
     const w = 168;
     const h = 168;
-    const toX = (x) => ((x + 62) / 124) * w;
-    const toY = (z) => ((z + 60) / 118) * h;
+    const toX = (x) => ((x + 90) / 180) * w;
+    const toY = (z) => ((z + 84) / 154) * h;
 
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#2d152b';
     ctx.fillRect(0, 0, w, h);
 
+    // Gran Palacio (cuerpo principal + ábside del Trono)
     ctx.fillStyle = 'rgba(255, 224, 240, 0.32)';
     ctx.strokeStyle = '#e5b869';
-    ctx.lineWidth = 1.5;
-    ctx.fillRect(toX(-24), toY(-54), toX(24) - toX(-24), toY(-22) - toY(-54));
-    ctx.strokeRect(toX(-24), toY(-54), toX(24) - toX(-24), toY(-22) - toY(-54));
+    ctx.lineWidth = 1.4;
+    ctx.fillRect(toX(-36), toY(-54), toX(36) - toX(-36), toY(-22) - toY(-54));
+    ctx.strokeRect(toX(-36), toY(-54), toX(36) - toX(-36), toY(-22) - toY(-54));
+    ctx.fillRect(toX(-20), toY(-76), toX(20) - toX(-20), toY(-54) - toY(-76));
+    ctx.strokeRect(toX(-20), toY(-76), toX(20) - toX(-20), toY(-54) - toY(-76));
 
+    // Gran Fuente Monumental
     ctx.beginPath();
-    ctx.arc(toX(0), toY(0), 7, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(130, 224, 255, 0.55)';
+    ctx.arc(toX(0), toY(0), 6.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(130, 224, 255, 0.58)';
     ctx.fill();
 
-    ctx.fillStyle = 'rgba(243, 116, 174, 0.42)';
-    ctx.fillRect(toX(-28.5), toY(-8), 8, 36);
+    // Estanque Este de los Cisnes
     ctx.beginPath();
-    ctx.arc(toX(0), toY(44), 9, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 214, 153, 0.42)';
+    ctx.ellipse(toX(46), toY(26), 10, 8, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(110, 210, 250, 0.45)';
+    ctx.fill();
+
+    // Gran Pasarela en T + Gradas
+    ctx.fillStyle = 'rgba(243, 116, 174, 0.46)';
+    ctx.fillRect(toX(-48.8), toY(-13.5), toX(-43.2) - toX(-48.8), toY(19) - toY(-13.5));
+    ctx.fillRect(toX(-54.5), toY(19), toX(-37.5) - toX(-54.5), toY(24) - toY(19));
+
+    // Mirador Real y Lago Sur
+    ctx.fillStyle = 'rgba(110, 210, 250, 0.32)';
+    ctx.fillRect(0, toY(55), w, h - toY(55));
+    ctx.beginPath();
+    ctx.arc(toX(0), toY(46), 7.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 214, 153, 0.45)';
     ctx.fill();
 
     ctx.fillStyle = '#ff6ec7';

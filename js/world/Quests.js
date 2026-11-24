@@ -17,11 +17,11 @@ export class QuestSystem {
   };
 
   #gemSpecs = [
-    { id: 'gem_rubi', name: 'Rubí de los Jardines', pos: [0, 1.15, 24], color: 0xff5fa8 },
-    { id: 'gem_zafiro', name: 'Zafiro del Mirador', pos: [0, 2.35, 44], color: 0x67b8ff },
-    { id: 'gem_diamante', name: 'Diamante del Balcón Real', pos: [0, 8.15, -19.5], color: 0xfff0ff },
-    { id: 'gem_amatista', name: 'Amatista del Pabellón', pos: [28, 1.15, 6], color: 0xc27aff },
-    { id: 'gem_cuarzo', name: 'Cuarzo de la Escalinata', pos: [0, 5.15, -50.6], color: 0xffd27d }
+    { id: 'gem_rubi', name: 'Rubí de los Jardines', pos: [0, 1.15, 25], color: 0xff5fa8 },
+    { id: 'gem_zafiro', name: 'Zafiro del Mirador', pos: [0, 2.35, 46], color: 0x67b8ff },
+    { id: 'gem_diamante', name: 'Diamante del Balcón Imperial', pos: [0, 8.65, -19.2], color: 0xfff0ff },
+    { id: 'gem_amatista', name: 'Amatista del Salón del Trono', pos: [0, 2.75, -69.5], color: 0xc27aff },
+    { id: 'gem_cuarzo', name: 'Cuarzo de la Biblioteca Real', pos: [25.0, 8.65, -38.0], color: 0xffd27d }
   ];
 
   #requiredInvites = ['adrian', 'sofia', 'maestra'];

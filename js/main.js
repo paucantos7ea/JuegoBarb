@@ -66,15 +66,21 @@ class ReinoRosaApp {
     const scene = this.#engine.getScene();
     const dummyCol = new CollisionSystem();
     dummyCol.init();
-    const [{ CastleBuilder }, { WorldDecor }] = await Promise.all([
+    const [{ CastleBuilder }, { WorldDecor }, { ArenaBuilder }, { FaunaSystem }] = await Promise.all([
       import('./world/CastleBuilder.js'),
-      import('./world/WorldDecor.js')
+      import('./world/WorldDecor.js'),
+      import('./world/ArenaBuilder.js'),
+      import('./world/FaunaSystem.js')
     ]);
     const castle = new CastleBuilder(scene, this.#textures, dummyCol);
     const decor = new WorldDecor(scene, this.#textures, dummyCol);
+    const arena = new ArenaBuilder(scene, this.#textures, dummyCol);
+    const fauna = new FaunaSystem(scene);
     castle.init();
     decor.init();
-    this.#preview = { castle, decor, dummyCol };
+    arena.init();
+    fauna.init();
+    this.#preview = { castle, decor, arena, fauna, dummyCol };
     this.#applyPreviewTheme(worldId);
   }
 
@@ -83,12 +89,15 @@ class ReinoRosaApp {
     this.#engine.applyTheme(theme);
     this.#preview?.castle?.applyTheme(theme);
     this.#preview?.decor?.applyTheme(theme);
+    this.#preview?.arena?.applyTheme(theme);
   }
 
   #disposeMenuPreview() {
     if (!this.#preview) return;
     this.#preview.castle.dispose();
     this.#preview.decor.dispose();
+    this.#preview.arena.dispose();
+    this.#preview.fauna.dispose();
     this.#preview.dummyCol.dispose();
     this.#preview = null;
   }
@@ -136,13 +145,15 @@ class ReinoRosaApp {
       this.#orbitAngle += dt * 0.14;
       const cam = this.#engine.getCamera();
       cam.position.set(
-        Math.sin(this.#orbitAngle) * 34,
-        15.5 + Math.sin(this.#orbitAngle * 1.5) * 2.0,
-        Math.cos(this.#orbitAngle) * 32 - 10
+        Math.sin(this.#orbitAngle) * 44,
+        19.0 + Math.sin(this.#orbitAngle * 1.5) * 2.5,
+        Math.cos(this.#orbitAngle) * 42 - 12
       );
-      cam.lookAt(0, 7.5, -24);
+      cam.lookAt(0, 9.0, -28);
       this.#preview?.castle?.update(dt);
       this.#preview?.decor?.update(dt);
+      this.#preview?.arena?.update(dt);
+      this.#preview?.fauna?.update(dt, this.#engine.getElapsed());
     }
     this.#engine.render();
   }

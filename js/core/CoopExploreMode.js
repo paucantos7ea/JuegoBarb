@@ -25,6 +25,8 @@ export class CoopExploreMode {
   #collision = null;
   #castle = null;
   #decor = null;
+  #arena = null;
+  #fauna = null;
   #player = null;
   #npcs = null;
   #quests = null;
@@ -40,10 +42,13 @@ export class CoopExploreMode {
   #currentHotspot = null;
 
   #hotspots = [
-    { id: 'wardrobe_room', label: 'Usar Vestidor Real', pos: new THREE.Vector3(-18, 1.0, -35), radius: 3.4 },
-    { id: 'minigame:fashion', label: 'Iniciar Pasarela de Moda Real', pos: new THREE.Vector3(-26, 0.35, -7), radius: 3.6 },
-    { id: 'minigame:ball', label: 'Iniciar Baile en el Salón Real', pos: new THREE.Vector3(18, 1.0, -35), radius: 3.8 },
-    { id: 'minigame:race', label: 'Iniciar Carrera por los Jardines', pos: new THREE.Vector3(10, 0, 12), radius: 3.6 }
+    { id: 'wardrobe_room', label: 'Usar Vestidor Real', pos: new THREE.Vector3(-22, 1.0, -35), radius: 3.6 },
+    { id: 'wardrobe_room', label: 'Usar Vestidor de la Suite', pos: new THREE.Vector3(-22, 7.5, -50.5), radius: 3.4 },
+    { id: 'minigame:fashion', label: 'Iniciar Pasarela de Moda Real', pos: new THREE.Vector3(-36.5, 0, 0), radius: 4.5 },
+    { id: 'minigame:fashion', label: 'Desfilar en Gran Pasarela', pos: new THREE.Vector3(-46, 0.65, -11.5), radius: 4.2 },
+    { id: 'minigame:ball', label: 'Iniciar Baile en el Salón Real', pos: new THREE.Vector3(23, 1.0, -33), radius: 4.5 },
+    { id: 'minigame:ball', label: 'Ir al Baile en el Salón Real', pos: new THREE.Vector3(42.5, 0, -36), radius: 4.0 },
+    { id: 'minigame:race', label: 'Iniciar Carrera por los Jardines', pos: new THREE.Vector3(18, 0, 14), radius: 4.5 }
   ];
 
   async init(context) {
@@ -57,15 +62,21 @@ export class CoopExploreMode {
     this.#collision = new CollisionSystem();
     this.#collision.init();
 
-    const [{ CastleBuilder }, { WorldDecor }] = await Promise.all([
+    const [{ CastleBuilder }, { WorldDecor }, { ArenaBuilder }, { FaunaSystem }] = await Promise.all([
       import('../world/CastleBuilder.js'),
-      import('../world/WorldDecor.js')
+      import('../world/WorldDecor.js'),
+      import('../world/ArenaBuilder.js'),
+      import('../world/FaunaSystem.js')
     ]);
 
     this.#castle = new CastleBuilder(scene, context.textures, this.#collision);
     this.#castle.init();
     this.#decor = new WorldDecor(scene, context.textures, this.#collision);
     this.#decor.init();
+    this.#arena = new ArenaBuilder(scene, context.textures, this.#collision);
+    this.#arena.init();
+    this.#fauna = new FaunaSystem(scene);
+    this.#fauna.init();
 
     this.#player = new PlayerController(scene, camera, context.input, this.#collision, context.audio, context.textures);
     this.#player.init(CatalogData.getDefaultAppearance(context.profile.avatarId));
@@ -155,7 +166,8 @@ export class CoopExploreMode {
         player: this.#player,
         input: context.input,
         audio: context.audio,
-        castle: this.#castle
+        castle: this.#castle,
+        arena: this.#arena
       },
       document.getElementById('minigame-overlay')
     );
@@ -209,6 +221,7 @@ export class CoopExploreMode {
     this.#ctx.engine.applyTheme(theme);
     this.#castle?.applyTheme(theme);
     this.#decor?.applyTheme(theme);
+    this.#arena?.applyTheme(theme);
     this.#hud?.setWorldInfo(theme.name, this.#collision.getZoneName(this.#player.getPosition()));
     if (broadcast) {
       this.#stateSync?.broadcastWorld(worldId);
@@ -359,6 +372,7 @@ export class CoopExploreMode {
 
     this.#castle?.update(dt);
     this.#decor?.update(dt);
+    this.#arena?.update(dt);
     this.#wardrobe?.update(dt);
 
     const camControlledByWardrobe = Boolean(this.#wardrobeCamera?.isControllingCamera());
@@ -370,6 +384,7 @@ export class CoopExploreMode {
     this.#wardrobeFX?.update(dt);
 
     const pos = this.#player.getPosition();
+    this.#fauna?.update(dt, this.#ctx.engine.getElapsed(), pos, this.#ctx.input.isSprinting());
     this.#npcs?.update(dt, pos, Boolean(this.#dialogue?.isOpen()));
     this.#quests?.update(dt, pos);
     this.#stateSync?.update(dt);
@@ -429,6 +444,8 @@ export class CoopExploreMode {
     this.#quests?.dispose();
     this.#npcs?.dispose();
     this.#player?.dispose();
+    this.#arena?.dispose();
+    this.#fauna?.dispose();
     this.#castle?.dispose();
     this.#decor?.dispose();
     this.#collision?.dispose();
