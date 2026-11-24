@@ -15,10 +15,12 @@ export class NPCManager {
       yaw: -0.55,
       appearance: {
         avatarId: 'npc_adrian',
-        modelUrl: './assets/models/principe_adrian.glb',
         outfitId: 'principe_gala',
-        hairId: 'principe_corto',
-        accessories: ['cetro']
+        hairId: 'principe_tupe',
+        hairColorId: 'castano_chocolate',
+        skinId: 'miel',
+        eyeColorId: 'zafiro',
+        accessories: ['corona', 'cetro']
       },
       greeting: '¡Bienvenidos al Palacio de Cristal! Cinco Gemas del Reino brillan ocultas por los jardines, la escalinata y el Balcón Real. ¡Ayúdanos a reunirlas antes de la gran gala!'
     },
@@ -30,12 +32,14 @@ export class NPCManager {
       yaw: 0.75,
       appearance: {
         avatarId: 'npc_sofia',
-        modelUrl: './assets/models/estilista_sofia.glb',
         outfitId: 'gala_rosa',
-        hairId: 'ondas_reales',
+        hairId: 'melena_ondulada',
+        hairColorId: 'rosa_fantasia',
+        skinId: 'porcelana',
+        eyeColorId: 'esmeralda',
         accessories: ['tiara', 'bolso']
       },
-      greeting: '¡Fabuloso verte en el Vestidor Real! Pulsa [C] cuando quieras para cambiar de conjunto o combinar accesorios. ¿Te animas a brillar en la Pasarela de Moda Real?',
+      greeting: '¡Fabuloso verte en el Vestidor Real! Pulsa [C] cuando quieras para cambiar de vestido, peinado, colores o accesorios. ¿Te animas a brillar en la Pasarela de Moda Real?',
       actionLabel: '✦ Abrir Vestidor',
       actionType: 'wardrobe',
       secondaryLabel: '★ Ir a la Pasarela',
@@ -49,9 +53,11 @@ export class NPCManager {
       yaw: -0.9,
       appearance: {
         avatarId: 'npc_camila',
-        modelUrl: './assets/models/princesa_camila.glb',
-        outfitId: 'casual_chic',
-        hairId: 'coleta_perla',
+        outfitId: 'atardecer_perla',
+        hairId: 'media_melena',
+        hairColorId: 'pelirrojo_cobrizo',
+        skinId: 'miel',
+        eyeColorId: 'miel',
         accessories: ['gafas', 'tiara']
       },
       greeting: '¡Los jardines están radiantes hoy! Necesitamos entregar las Invitaciones Reales al Príncipe Adrián, a Estilista Sofía y a la Maestra de Ceremonias. ¿O prefieres una carrera contrarreloj?',
@@ -66,10 +72,12 @@ export class NPCManager {
       yaw: -0.75,
       appearance: {
         avatarId: 'npc_maestra',
-        modelUrl: './assets/models/maestra_ceremonias.glb',
-        outfitId: 'cristal_nocturno',
-        hairId: 'recogido_imperial',
-        accessories: ['tiara', 'cetro']
+        outfitId: 'gala_nocturna',
+        hairId: 'recogido_mono',
+        hairColorId: 'rubio_platino',
+        skinId: 'canela',
+        eyeColorId: 'violeta',
+        accessories: ['corona', 'cetro']
       },
       greeting: 'La pista de cristal está lista y la orquesta afinada. ¡Todo el reino espera tu gran baile imperial! Sigue el ritmo con W, A, S y D.',
       actionLabel: '♪ Iniciar Baile Real',

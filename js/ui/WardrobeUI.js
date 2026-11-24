@@ -1,21 +1,32 @@
 import { CharacterRig } from '../entities/CharacterRig.js';
 
-const DEFAULT_MODEL_TIP = 'Modelos 3D Mixamo activos por defecto. También puedes cargar tu propio .glb/.gltf local.';
+const TABS = Object.freeze([
+  { id: 'outfits', label: '👗 Vestidos' },
+  { id: 'hairs', label: '💇‍♀️ Peinados' },
+  { id: 'colors', label: '🎨 Colores / Piel' },
+  { id: 'accessories', label: '👑 Accesorios' }
+]);
 
+/**
+ * Vestidor Real visual por pestañas (Vestidos, Peinados, Colores/Piel y Accesorios).
+ * Aplica cambios instantáneos en 3D y los emite para sincronización P2P en tiempo real.
+ */
 export class WardrobeUI {
   #overlayEl;
   #audio;
   #onChange;
   #onClose;
   #isOpen = false;
-  #current = { outfitId: 'gala_rosa', hairId: 'ondas_reales', accessories: ['tiara'] };
+  #activeTab = 'outfits';
   #cleanups = [];
-  #customModelUrl = null;
-  #customModelName = null;
-  #customGroupEl = null;
-  #fileInputEl = null;
-  #resetModelBtn = null;
-  #modelTipEl = null;
+  #current = {
+    outfitId: 'gala_rosa',
+    hairId: 'melena_ondulada',
+    hairColorId: 'rubio_miel',
+    skinId: 'porcelana',
+    eyeColorId: 'zafiro',
+    accessories: ['tiara']
+  };
 
   constructor({ audio, onChange, onClose }) {
     this.#overlayEl = document.getElementById('wardrobe-overlay');
@@ -25,195 +36,203 @@ export class WardrobeUI {
   }
 
   init() {
-    this.#renderAll();
-    this.#injectCustomModelSection();
+    this.#renderTabs();
+    this.#renderPanels();
+    this.#switchTab('outfits', false);
+
     const closeBtn = document.getElementById('btn-close-wardrobe');
     const doneBtn = document.getElementById('btn-wardrobe-done');
     const closeFn = () => this.close();
-    closeBtn.addEventListener('click', closeFn);
-    doneBtn.addEventListener('click', closeFn);
+    closeBtn?.addEventListener('click', closeFn);
+    doneBtn?.addEventListener('click', closeFn);
     this.#cleanups.push(
-      () => closeBtn.removeEventListener('click', closeFn),
-      () => doneBtn.removeEventListener('click', closeFn)
+      () => closeBtn?.removeEventListener('click', closeFn),
+      () => doneBtn?.removeEventListener('click', closeFn)
     );
   }
 
-  #renderAll() {
-    const outfitsEl = document.getElementById('wardrobe-outfits');
-    const hairsEl = document.getElementById('wardrobe-hairs');
-    const accEl = document.getElementById('wardrobe-accessories');
+  #renderTabs() {
+    const tabsEl = document.getElementById('wardrobe-tabs');
+    if (!tabsEl) return;
+    tabsEl.innerHTML = '';
 
-    outfitsEl.innerHTML = '';
+    for (const tab of TABS) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'wardrobe-tab';
+      btn.dataset.tab = tab.id;
+      btn.setAttribute('role', 'tab');
+      btn.textContent = tab.label;
+      const fn = () => this.#switchTab(tab.id, true);
+      btn.addEventListener('click', fn);
+      this.#cleanups.push(() => btn.removeEventListener('click', fn));
+      tabsEl.appendChild(btn);
+    }
+  }
+
+  #switchTab(tabId, playSound = true) {
+    this.#activeTab = tabId;
+    if (playSound) this.#audio?.playClick();
+
+    this.#overlayEl?.querySelectorAll('.wardrobe-tab').forEach((btn) => {
+      const active = btn.dataset.tab === tabId;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', String(active));
+    });
+    this.#overlayEl?.querySelectorAll('.wardrobe-panel').forEach((panel) => {
+      panel.classList.toggle('active', panel.dataset.panel === tabId);
+    });
+  }
+
+  #renderPanels() {
+    this.#renderOutfits();
+    this.#renderHairs();
+    this.#renderColorSwatches();
+    this.#renderAccessories();
+    this.#refreshSelection();
+  }
+
+  #renderOutfits() {
+    const el = document.getElementById('wardrobe-outfits');
+    if (!el) return;
+    el.innerHTML = '';
     for (const o of CharacterRig.OUTFITS) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'wardrobe-item';
       btn.dataset.outfit = o.id;
-      btn.innerHTML = `<span class="wardrobe-swatch" style="background:${o.swatch}"></span><strong>${o.name}</strong><span>${o.desc}</span>`;
-      btn.addEventListener('click', () => {
+      btn.innerHTML = `
+        <div class="wardrobe-card-head">
+          <span class="wardrobe-swatch" style="background:${o.swatch}"></span>
+          <span class="wardrobe-icon">${o.icon}</span>
+        </div>
+        <strong>${o.name}</strong>
+        <span>${o.desc}</span>
+      `;
+      const fn = () => {
         this.#current.outfitId = o.id;
         this.#audio?.playSparkle();
         this.#refreshSelection();
         this.#emitChange();
-      });
-      outfitsEl.appendChild(btn);
+      };
+      btn.addEventListener('click', fn);
+      this.#cleanups.push(() => btn.removeEventListener('click', fn));
+      el.appendChild(btn);
     }
+  }
 
-    hairsEl.innerHTML = '';
+  #renderHairs() {
+    const el = document.getElementById('wardrobe-hairs');
+    if (!el) return;
+    el.innerHTML = '';
     for (const h of CharacterRig.HAIRSTYLES) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'wardrobe-item';
       btn.dataset.hair = h.id;
-      btn.innerHTML = `<strong>${h.name}</strong><span>${h.desc}</span>`;
-      btn.addEventListener('click', () => {
+      btn.innerHTML = `
+        <div class="wardrobe-card-head"><span class="wardrobe-icon">${h.icon}</span></div>
+        <strong>${h.name}</strong>
+        <span>${h.desc}</span>
+      `;
+      const fn = () => {
         this.#current.hairId = h.id;
         this.#audio?.playClick();
         this.#refreshSelection();
         this.#emitChange();
-      });
-      hairsEl.appendChild(btn);
+      };
+      btn.addEventListener('click', fn);
+      this.#cleanups.push(() => btn.removeEventListener('click', fn));
+      el.appendChild(btn);
     }
+  }
 
-    accEl.innerHTML = '';
+  #renderColorSwatches() {
+    this.#renderSwatchGrid('wardrobe-hair-colors', CharacterRig.HAIR_COLORS, 'hairColor', (item) => {
+      this.#current.hairColorId = item.id;
+    });
+    this.#renderSwatchGrid('wardrobe-skin-tones', CharacterRig.SKIN_TONES, 'skinTone', (item) => {
+      this.#current.skinId = item.id;
+    });
+    this.#renderSwatchGrid('wardrobe-eye-colors', CharacterRig.EYE_COLORS, 'eyeColor', (item) => {
+      this.#current.eyeColorId = item.id;
+    });
+  }
+
+  #renderSwatchGrid(containerId, items, dataAttr, onPick) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '';
+    for (const item of items) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'wardrobe-swatch-card';
+      btn.dataset[dataAttr] = item.id;
+      btn.innerHTML = `
+        <span class="swatch-dot" style="background:${item.css}"></span>
+        <span>${item.name}</span>
+      `;
+      const fn = () => {
+        onPick(item);
+        this.#audio?.playClick();
+        this.#refreshSelection();
+        this.#emitChange();
+      };
+      btn.addEventListener('click', fn);
+      this.#cleanups.push(() => btn.removeEventListener('click', fn));
+      el.appendChild(btn);
+    }
+  }
+
+  #renderAccessories() {
+    const el = document.getElementById('wardrobe-accessories');
+    if (!el) return;
+    el.innerHTML = '';
     for (const a of CharacterRig.ACCESSORIES) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'wardrobe-item';
       btn.dataset.acc = a.id;
-      btn.innerHTML = `<strong>${a.name}</strong><span>${a.desc}</span>`;
-      btn.addEventListener('click', () => {
+      btn.innerHTML = `
+        <div class="wardrobe-card-head"><span class="wardrobe-icon">${a.icon}</span></div>
+        <strong>${a.name}</strong>
+        <span>${a.desc}</span>
+      `;
+      const fn = () => {
         const set = new Set(this.#current.accessories);
         if (set.has(a.id)) set.delete(a.id);
         else set.add(a.id);
         this.#current.accessories = [...set];
-        this.#audio?.playClick();
+        this.#audio?.playSparkle();
         this.#refreshSelection();
         this.#emitChange();
-      });
-      accEl.appendChild(btn);
-    }
-
-    this.#refreshSelection();
-  }
-
-  #injectCustomModelSection() {
-    const bodyEl = this.#overlayEl?.querySelector('.wardrobe-body');
-    if (!bodyEl) return;
-
-    this.#customGroupEl?.remove();
-    const group = document.createElement('div');
-    group.className = 'wardrobe-group';
-
-    const title = document.createElement('h3');
-    title.textContent = 'Modelo 3D Personalizado (.GLB)';
-
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:10px';
-
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.glb,.gltf';
-    fileInput.hidden = true;
-
-    const uploadBtn = document.createElement('button');
-    uploadBtn.type = 'button';
-    uploadBtn.className = 'btn-secondary btn-sm';
-    uploadBtn.textContent = '📂 Cargar mi propio .GLB';
-
-    const resetBtn = document.createElement('button');
-    resetBtn.type = 'button';
-    resetBtn.className = 'btn-secondary btn-sm hidden';
-    resetBtn.textContent = '↺ Volver al avatar base';
-
-    const tip = document.createElement('span');
-    tip.className = 'wardrobe-tip';
-    tip.textContent = DEFAULT_MODEL_TIP;
-
-    const onUpload = () => { this.#audio?.playClick(); fileInput.click(); };
-    const onFile = () => {
-      const file = fileInput.files?.[0];
-      // Vaciar el input permite volver a elegir el mismo archivo (si no, 'change' no se dispara)
-      fileInput.value = '';
-      if (!file) return;
-      // La URL anterior se revoca aquí; el CharacterRig libera la malla/texturas del modelo
-      // anterior al montar el nuevo (o al volver al rig procedural).
-      this.#revokeCustomModelUrl();
-      const url = URL.createObjectURL(file);
-      this.#customModelUrl = url;
-      this.#customModelName = file.name;
-      this.#audio?.playSparkle();
-      this.#refreshCustomModelState();
-      if (this.#modelTipEl) this.#modelTipEl.textContent = `Cargando ${file.name}...`;
-      const result = this.#onChange?.({ ...this.#current, accessories: [...this.#current.accessories], customModelUrl: url });
-      Promise.resolve(result).then((ok) => {
-        // Ignorar si el usuario ya eligió otro archivo o restauró el avatar
-        if (this.#customModelUrl !== url) return;
-        if (ok === false) {
-          this.#revokeCustomModelUrl();
-          this.#customModelName = null;
-          this.#onChange?.({ ...this.#current, accessories: [...this.#current.accessories], customModelUrl: null });
-          this.#refreshCustomModelState();
-          if (this.#modelTipEl) this.#modelTipEl.textContent = `No se pudo cargar ${file.name}: usa un .glb válido (o .gltf con todo embebido).`;
-        } else {
-          this.#refreshCustomModelState();
-        }
-      }).catch(() => {});
-    };
-    const onReset = () => {
-      this.#revokeCustomModelUrl();
-      this.#customModelName = null;
-      fileInput.value = '';
-      this.#audio?.playClick();
-      this.#refreshCustomModelState();
-      this.#onChange?.({ ...this.#current, accessories: [...this.#current.accessories], customModelUrl: null });
-    };
-
-    uploadBtn.addEventListener('click', onUpload);
-    fileInput.addEventListener('change', onFile);
-    resetBtn.addEventListener('click', onReset);
-    this.#cleanups.push(
-      () => uploadBtn.removeEventListener('click', onUpload),
-      () => fileInput.removeEventListener('change', onFile),
-      () => resetBtn.removeEventListener('click', onReset)
-    );
-
-    row.append(fileInput, uploadBtn, resetBtn, tip);
-    group.append(title, row);
-    bodyEl.appendChild(group);
-
-    this.#customGroupEl = group;
-    this.#fileInputEl = fileInput;
-    this.#resetModelBtn = resetBtn;
-    this.#modelTipEl = tip;
-    this.#refreshCustomModelState();
-  }
-
-  #refreshCustomModelState() {
-    if (!this.#resetModelBtn || !this.#modelTipEl) return;
-    const active = Boolean(this.#customModelUrl);
-    this.#resetModelBtn.classList.toggle('hidden', !active);
-    this.#modelTipEl.textContent = active
-      ? `Modelo local activo: ${this.#customModelName || 'archivo.glb'} (elige un conjunto arriba para teñir)`
-      : DEFAULT_MODEL_TIP;
-  }
-
-  #revokeCustomModelUrl() {
-    if (this.#customModelUrl) {
-      URL.revokeObjectURL(this.#customModelUrl);
-      this.#customModelUrl = null;
+      };
+      btn.addEventListener('click', fn);
+      this.#cleanups.push(() => btn.removeEventListener('click', fn));
+      el.appendChild(btn);
     }
   }
 
   #refreshSelection() {
-    document.querySelectorAll('#wardrobe-outfits .wardrobe-item').forEach((el) => {
+    const root = this.#overlayEl;
+    if (!root) return;
+    root.querySelectorAll('#wardrobe-outfits .wardrobe-item').forEach((el) => {
       el.classList.toggle('active', el.dataset.outfit === this.#current.outfitId);
     });
-    document.querySelectorAll('#wardrobe-hairs .wardrobe-item').forEach((el) => {
+    root.querySelectorAll('#wardrobe-hairs .wardrobe-item').forEach((el) => {
       el.classList.toggle('active', el.dataset.hair === this.#current.hairId);
     });
+    root.querySelectorAll('#wardrobe-hair-colors .wardrobe-swatch-card').forEach((el) => {
+      el.classList.toggle('active', el.dataset.hairColor === this.#current.hairColorId);
+    });
+    root.querySelectorAll('#wardrobe-skin-tones .wardrobe-swatch-card').forEach((el) => {
+      el.classList.toggle('active', el.dataset.skinTone === this.#current.skinId);
+    });
+    root.querySelectorAll('#wardrobe-eye-colors .wardrobe-swatch-card').forEach((el) => {
+      el.classList.toggle('active', el.dataset.eyeColor === this.#current.eyeColorId);
+    });
     const activeAcc = new Set(this.#current.accessories);
-    document.querySelectorAll('#wardrobe-accessories .wardrobe-item').forEach((el) => {
+    root.querySelectorAll('#wardrobe-accessories .wardrobe-item').forEach((el) => {
       el.classList.toggle('active', activeAcc.has(el.dataset.acc));
     });
   }
@@ -222,6 +241,9 @@ export class WardrobeUI {
     this.#onChange?.({
       outfitId: this.#current.outfitId,
       hairId: this.#current.hairId,
+      hairColorId: this.#current.hairColorId,
+      skinId: this.#current.skinId,
+      eyeColorId: this.#current.eyeColorId,
       accessories: [...this.#current.accessories]
     });
   }
@@ -230,12 +252,15 @@ export class WardrobeUI {
     if (currentAppearance) {
       this.#current = {
         outfitId: currentAppearance.outfitId || 'gala_rosa',
-        hairId: currentAppearance.hairId || 'ondas_reales',
+        hairId: currentAppearance.hairId || 'melena_ondulada',
+        hairColorId: currentAppearance.hairColorId || 'rubio_miel',
+        skinId: currentAppearance.skinId || 'porcelana',
+        eyeColorId: currentAppearance.eyeColorId || 'zafiro',
         accessories: [...(currentAppearance.accessories || [])]
       };
       this.#refreshSelection();
     }
-    this.#refreshCustomModelState();
+    this.#switchTab(this.#activeTab, false);
     this.#isOpen = true;
     this.#overlayEl.classList.remove('hidden');
   }
@@ -256,17 +281,9 @@ export class WardrobeUI {
   update() {}
 
   dispose() {
-    this.#revokeCustomModelUrl();
-    this.#customModelName = null;
-    if (this.#fileInputEl) this.#fileInputEl.value = '';
     for (const fn of this.#cleanups) fn();
     this.#cleanups.length = 0;
-    this.#customGroupEl?.remove();
-    this.#customGroupEl = null;
-    this.#fileInputEl = null;
-    this.#resetModelBtn = null;
-    this.#modelTipEl = null;
-    this.#overlayEl.classList.add('hidden');
+    this.#overlayEl?.classList.add('hidden');
     this.#isOpen = false;
   }
 }

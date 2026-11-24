@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BaseGameMode } from './BaseGameMode.js';
 import { CollisionSystem } from '../world/CollisionSystem.js';
 import { PlayerController } from '../entities/PlayerController.js';
+import { CatalogData } from '../entities/catalog/CatalogData.js';
 import { NPCManager } from '../entities/NPCManager.js';
 import { QuestSystem } from '../entities/QuestSystem.js';
 import { StateSync } from '../network/StateSync.js';
@@ -60,12 +61,7 @@ export class CoopExploreMode extends BaseGameMode {
     this.#gardens.init();
 
     this.#player = new PlayerController(scene, camera, context.input, this.#collision, context.audio, context.textures);
-    this.#player.init({
-      avatarId: context.profile.avatarId,
-      outfitId: 'gala_rosa',
-      hairId: 'ondas_reales',
-      accessories: ['tiara']
-    });
+    this.#player.init(CatalogData.getDefaultAppearance(context.profile.avatarId));
 
     this.#npcs = new NPCManager(scene, context.textures);
     this.#npcs.init();
@@ -209,11 +205,9 @@ export class CoopExploreMode extends BaseGameMode {
 
   #applyWardrobeChange(partial) {
     this.#player.applyAppearance(partial);
-    // getAppearance() no incluye customModelUrl: la URL blob: local nunca se envía por red
     const full = this.#player.getAppearance();
     this.#quests.recordWardrobeUpdate(full);
     this.#stateSync.broadcastAppearance(this.#playerName, full);
-    return this.#player.whenModelReady();
   }
 
   #sendChat(text) {

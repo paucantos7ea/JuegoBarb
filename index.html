@@ -90,7 +90,7 @@
               </p>
               <ul class="feature-list">
                 <li>Castillo interior y exterior sin pantallas de carga</li>
-                <li>Vestidor en tiempo real con 4 conjuntos y accesorios</li>
+                <li>Vestidor en tiempo real con 6 vestidos, 5 peinados, colores y accesorios</li>
                 <li>Pasarela de Moda, Baile Real y Carrera por los Jardines</li>
               </ul>
               <button id="btn-start-solo" class="btn-primary btn-large" type="button">
@@ -310,20 +310,43 @@
           <button id="btn-close-wardrobe" class="btn-close" type="button" aria-label="Cerrar vestidor">✕</button>
         </header>
 
+        <div id="wardrobe-tabs" class="wardrobe-tabs" role="tablist" aria-label="Categorías del Vestidor"></div>
+
         <div class="wardrobe-body">
-          <div class="wardrobe-group">
-            <h3>Conjuntos de Moda</h3>
-            <div id="wardrobe-outfits" class="wardrobe-options"></div>
+          <div class="wardrobe-panel active" data-panel="outfits" role="tabpanel">
+            <div class="wardrobe-group">
+              <h3>Alta Costura Real (6 Conjuntos)</h3>
+              <div id="wardrobe-outfits" class="wardrobe-options"></div>
+            </div>
           </div>
 
-          <div class="wardrobe-group">
-            <h3>Peinados Reales</h3>
-            <div id="wardrobe-hairs" class="wardrobe-options"></div>
+          <div class="wardrobe-panel" data-panel="hairs" role="tabpanel">
+            <div class="wardrobe-group">
+              <h3>Peinados Esculpidos (5 Estilos)</h3>
+              <div id="wardrobe-hairs" class="wardrobe-options"></div>
+            </div>
           </div>
 
-          <div class="wardrobe-group">
-            <h3>Accesorios (Combinables)</h3>
-            <div id="wardrobe-accessories" class="wardrobe-options"></div>
+          <div class="wardrobe-panel" data-panel="colors" role="tabpanel">
+            <div class="wardrobe-group">
+              <h3>Color de Cabello</h3>
+              <div id="wardrobe-hair-colors" class="wardrobe-swatch-grid"></div>
+            </div>
+            <div class="wardrobe-group">
+              <h3>Tono de Piel</h3>
+              <div id="wardrobe-skin-tones" class="wardrobe-swatch-grid"></div>
+            </div>
+            <div class="wardrobe-group">
+              <h3>Color de Ojos</h3>
+              <div id="wardrobe-eye-colors" class="wardrobe-swatch-grid"></div>
+            </div>
+          </div>
+
+          <div class="wardrobe-panel" data-panel="accessories" role="tabpanel">
+            <div class="wardrobe-group">
+              <h3>Accesorios Acoplables (Combinables)</h3>
+              <div id="wardrobe-accessories" class="wardrobe-options"></div>
+            </div>
           </div>
         </div>
 

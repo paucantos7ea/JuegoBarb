@@ -72,11 +72,6 @@ export class PlayerController {
     this.#rig?.applyAppearance(appearance);
   }
 
-  /** @returns {Promise<boolean>} true si el modelo .glb solicitado está montado. */
-  whenModelReady() {
-    return this.#rig?.whenModelReady() ?? Promise.resolve(false);
-  }
-
   getAppearance() {
     return this.#rig?.getAppearance();
   }

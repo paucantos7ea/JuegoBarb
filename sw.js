@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v3';
-const CACHE_ASSETS = 'reino-rosa-assets-v3';
+const CACHE_STATIC = 'reino-rosa-static-v4';
+const CACHE_ASSETS = 'reino-rosa-assets-v4';
 
 const PRECACHE_URLS = [
   './',
@@ -12,21 +12,22 @@ const PRECACHE_URLS = [
   './assets/icons/icon.svg',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
-  './assets/models/models.json',
   './js/main.js',
   './js/core/AudioSynthesizer.js',
   './js/core/Engine.js',
   './js/core/InputManager.js',
   './js/core/PwaManager.js',
   './js/core/TextureFactory.js',
-  './js/entities/CharacterPresets.js',
   './js/entities/CharacterRig.js',
-  './js/entities/GlbAvatarController.js',
-  './js/entities/ModelLoader.js',
   './js/entities/NPCManager.js',
   './js/entities/PlayerController.js',
   './js/entities/QuestSystem.js',
   './js/entities/RemotePlayer.js',
+  './js/entities/catalog/CatalogData.js',
+  './js/entities/catalog/FaceBuilder.js',
+  './js/entities/catalog/HairBuilder.js',
+  './js/entities/catalog/OutfitBuilder.js',
+  './js/entities/catalog/PrinceRigBuilder.js',
   './js/minigames/FashionRunwayGame.js',
   './js/minigames/GardenRaceGame.js',
   './js/minigames/MinigameManager.js',
@@ -45,12 +46,9 @@ const PRECACHE_URLS = [
   './js/world/WorldThemes.js'
 ];
 
-const THREE_CDN_HOSTS = ['threejs.org', 'esm.sh', 'cdn.jsdelivr.net', 'unpkg.com', 'raw.githubusercontent.com'];
-const ASSET_EXTENSIONS = /\.(glb|gltf|png|jpe?g|webp|svg|ktx2|hdr|woff2?|ttf|otf)$/i;
+const THREE_CDN_HOSTS = ['esm.sh', 'cdn.jsdelivr.net', 'unpkg.com'];
+const ASSET_EXTENSIONS = /\.(png|jpe?g|webp|svg|woff2?|ttf|otf)$/i;
 const SHELL_EXTENSIONS = /\.(js|css|html|webmanifest)$/i;
-// Índice y modelos propios (.glb/.gltf/models.json): red primero para detectar modelos nuevos o
-// reemplazados sin cambiar la versión de caché; la copia cacheada solo se usa sin conexión.
-const LOCAL_MODELS_RE = /\/assets\/models\/[^/]+\.(glb|gltf|json)$/i;
 
 function isCdnAsset(url) {
   return THREE_CDN_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
@@ -84,27 +82,12 @@ async function cacheFirstStrategy(request) {
 
   try {
     const response = await fetch(request);
-    // Solo almacenar respuestas válidas u opacas; nunca cachear 404 de modelos .glb ausentes
     if (response && (response.ok || response.type === 'opaque')) {
       await cache.put(request, response.clone());
     }
     return response;
   } catch {
     return Response.error();
-  }
-}
-
-async function networkFirst(request, cacheName) {
-  const cache = await caches.open(cacheName);
-  try {
-    const response = await fetch(request, { cache: 'no-cache' });
-    if (response && response.ok) {
-      await cache.put(request, response.clone());
-    }
-    return response;
-  } catch {
-    const cached = await cache.match(request, { ignoreSearch: true });
-    return cached || Response.error();
   }
 }
 
@@ -169,12 +152,6 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
-
-  if (url.origin === self.location.origin && LOCAL_MODELS_RE.test(url.pathname)) {
-    const cacheName = url.pathname.endsWith('.json') ? CACHE_STATIC : CACHE_ASSETS;
-    event.respondWith(networkFirst(request, cacheName));
-    return;
-  }
 
   if (isCacheFirstRequest(url)) {
     event.respondWith(cacheFirstStrategy(request));

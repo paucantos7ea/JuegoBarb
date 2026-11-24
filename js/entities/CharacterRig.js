@@ -1,301 +1,256 @@
 import * as THREE from 'three';
-import { CharacterPresets } from './CharacterPresets.js';
-import { TextureFactory } from '../core/TextureFactory.js';
-import { ModelLoader } from './ModelLoader.js';
-import { GlbAvatarController } from './GlbAvatarController.js';
+import { CatalogData } from './catalog/CatalogData.js';
+import { FaceBuilder } from './catalog/FaceBuilder.js';
+import { HairBuilder } from './catalog/HairBuilder.js';
+import { OutfitBuilder } from './catalog/OutfitBuilder.js';
+import { PrinceRigBuilder } from './catalog/PrinceRigBuilder.js';
 
 /**
- * Rig modular de personaje 3D: carga modelos .glb reales con esqueleto Mixamo
- * por defecto (CDN oficial o archivos locales) y mantiene el rig procedural
- * únicamente como respaldo de emergencia sin conexión.
+ * Rig 3D estilizado de personaje con esqueleto articulado propio y cambio
+ * instantáneo de vestimenta, peinado, colores y accesorios en tiempo real.
  */
 export class CharacterRig {
-  static AVATARS = CharacterPresets.AVATARS;
-  static OUTFITS = CharacterPresets.OUTFITS;
-  static HAIRSTYLES = CharacterPresets.HAIRSTYLES;
-  static ACCESSORIES = CharacterPresets.ACCESSORIES;
+  static AVATARS = CatalogData.AVATARS;
+  static OUTFITS = CatalogData.OUTFITS;
+  static HAIRSTYLES = CatalogData.HAIRSTYLES;
+  static HAIR_COLORS = CatalogData.HAIR_COLORS;
+  static ACCESSORIES = CatalogData.ACCESSORIES;
+  static SKIN_TONES = CatalogData.SKIN_TONES;
+  static EYE_COLORS = CatalogData.EYE_COLORS;
 
-  #root = null; #proceduralGroup = null; #glbGroup = null; #bodyGroup = null;
-  #headGroup = null; #hairGroup = null; #outfitGroup = null;
+  #root = null; #bodyGroup = null; #headGroup = null; #hairGroup = null; #outfitGroup = null;
   #leftArm = null; #rightArm = null; #leftForearm = null; #rightForearm = null;
   #leftLeg = null; #rightLeg = null; #leftShin = null; #rightShin = null;
-  #puffSleeves = []; #thighMeshes = []; #shinMeshes = []; #shoeMeshes = [];
+  #puffSleeves = []; #armMeshes = []; #thighMeshes = []; #shinMeshes = []; #shoeMeshes = [];
   #accessoryNodes = {}; #materials = {}; #geometries = [];
-  #textureFactory = null; #ownsTextures = false; #isMale = false; #outfitStyle = 'ballgown'; #animTime = 0;
-  #appearance = { avatarId: 'aurora', outfitId: 'gala_rosa', hairId: 'ondas_reales', accessories: ['tiara'] };
-  #modelUrl = null; #customModelUrl = null; #requestKey = null; #loadToken = 0; #disposed = false;
-  #glbController = new GlbAvatarController();
-  #modelReady = Promise.resolve(false);
-  #lastAnimState = 'idle';
+  #isMale = false; #outfitStyle = 'ballgown'; #animTime = 0;
+  #appearance = CatalogData.getDefaultAppearance('aurora');
 
-  constructor(initialAppearance = null, textureFactory = null) {
+  constructor(initialAppearance = null) {
     if (initialAppearance) {
-      const a = initialAppearance;
-      this.#appearance = { avatarId: a.avatarId || 'aurora', outfitId: a.outfitId || 'gala_rosa', hairId: a.hairId || 'ondas_reales', accessories: [...(a.accessories || ['tiara'])] };
-      this.#modelUrl = a.modelUrl || null;
+      const base = CatalogData.getDefaultAppearance(initialAppearance.avatarId || 'aurora');
+      this.#appearance = {
+        avatarId: base.avatarId,
+        outfitId: initialAppearance.outfitId || base.outfitId,
+        hairId: CatalogData.normalizeHairId(initialAppearance.hairId || base.hairId),
+        hairColorId: initialAppearance.hairColorId || base.hairColorId,
+        skinId: initialAppearance.skinId || base.skinId,
+        eyeColorId: initialAppearance.eyeColorId || base.eyeColorId,
+        accessories: [...(initialAppearance.accessories || base.accessories)]
+      };
     }
-    this.#textureFactory = textureFactory;
   }
 
   init() {
-    if (!this.#textureFactory) { this.#textureFactory = new TextureFactory(); this.#textureFactory.init(); this.#ownsTextures = true; }
-    const avatar = CharacterPresets.getAvatar(this.#appearance.avatarId);
+    const avatar = CatalogData.getAvatar(this.#appearance.avatarId);
     this.#isMale = avatar.gender === 'male';
     this.#root = new THREE.Group();
-    this.#proceduralGroup = new THREE.Group();
-    this.#glbGroup = new THREE.Group();
-    this.#glbGroup.visible = false;
     this.#bodyGroup = new THREE.Group();
-    this.#proceduralGroup.add(this.#bodyGroup);
-    this.#root.add(this.#proceduralGroup, this.#glbGroup);
+    this.#root.add(this.#bodyGroup);
 
-    this.#createMaterials(avatar);
-    this.#buildBody();
-    this.#buildHead(avatar);
-    this.#accessoryNodes = CharacterPresets.buildAccessories(this.#headGroup, this.#leftForearm, this.#rightForearm, this.#materials, (g) => this.#track(g));
-    this.#applyState(this.#appearance);
+    this.#createMaterials();
+    if (this.#isMale) {
+      this.#buildPrinceBody();
+    } else {
+      this.#buildPrincessBody();
+    }
+
+    this.#headGroup = FaceBuilder.buildHead(this.#materials, this.#isMale, (g) => this.#track(g));
+    this.#hairGroup = new THREE.Group();
+    this.#headGroup.add(this.#hairGroup);
+    this.#bodyGroup.add(this.#headGroup);
+
+    this.#accessoryNodes = OutfitBuilder.buildAccessories(
+      this.#headGroup,
+      this.#leftForearm,
+      this.#rightForearm,
+      this.#materials,
+      (g) => this.#track(g)
+    );
+
+    this.applyAppearance(this.#appearance);
     const baseZ = this.#getBaseArmZ();
     this.#leftArm.rotation.set(0, 0, -baseZ);
     this.#rightArm.rotation.set(0, 0, baseZ);
     return this.#root;
   }
 
-  #createMaterials(avatar) {
-    const m = this.#materials;
-    m.skin = new THREE.MeshStandardMaterial({ color: avatar.skin, roughness: 0.5, metalness: 0.02 });
-    m.face = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.48, metalness: 0.02 });
-    m.lips = new THREE.MeshPhysicalMaterial({ color: avatar.lipHex, roughness: 0.2, metalness: 0.05, clearcoat: 0.55 });
-    m.hair = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.05, side: THREE.DoubleSide });
-    m.hair.userData.preserveRoughness = true;
-    m.primary = new THREE.MeshPhysicalMaterial({ color: 0xf18bb8, roughness: 0.34, metalness: 0.08, sheen: 0.72, sheenColor: new THREE.Color(0xffe0ef), clearcoat: 0.15 });
-    m.secondary = new THREE.MeshPhysicalMaterial({ color: 0xffd5e8, roughness: 0.36, metalness: 0.08, sheen: 0.6, side: THREE.DoubleSide });
-    m.roseGold = new THREE.MeshStandardMaterial({ color: 0xf2ba98, metalness: 0.88, roughness: 0.18 });
-    m.crystal = new THREE.MeshPhysicalMaterial({ color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 0.45, roughness: 0.1, metalness: 0.15, clearcoat: 0.8 });
-    m.shawl = new THREE.MeshPhysicalMaterial({ color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.18, roughness: 0.12, transparent: true, opacity: 0.56, side: THREE.DoubleSide });
-    m.dark = new THREE.MeshStandardMaterial({ color: 0x221520, roughness: 0.28, metalness: 0.32 });
-  }
-
   #track(geo) { this.#geometries.push(geo); return geo; }
 
-  #buildBody() {
-    const m = this.#isMale;
-    const torsoPts = m
-      ? [[0.01, 0.86], [0.145, 0.88], [0.15, 1.02], [0.165, 1.16], [0.21, 1.32], [0.19, 1.41], [0.068, 1.44]]
-      : [[0.01, 0.86], [0.14, 0.9], [0.102, 1.05], [0.132, 1.19], [0.152, 1.28], [0.124, 1.36], [0.05, 1.39]];
-    const torso = new THREE.Mesh(this.#track(new THREE.LatheGeometry(torsoPts.map(([x, y]) => new THREE.Vector2(x, y)), 22)), this.#materials.primary);
-    torso.scale.set(1.06, 1, 0.74); torso.castShadow = true;
-    const neck = new THREE.Mesh(this.#track(new THREE.CylinderGeometry(m ? 0.056 : 0.043, m ? 0.064 : 0.05, m ? 0.13 : 0.145, 14)), this.#materials.skin);
-    neck.position.y = m ? 1.44 : 1.405; neck.castShadow = true;
-    this.#bodyGroup.add(torso, neck);
-    this.#buildLimbs(m);
-    this.#outfitGroup = new THREE.Group();
-    this.#bodyGroup.add(this.#outfitGroup);
+  #createMaterials() {
+    const m = this.#materials;
+    m.skin = new THREE.MeshStandardMaterial({ color: 0xfbe0d2, roughness: 0.50, metalness: 0.02 });
+    m.blush = new THREE.MeshBasicMaterial({ color: 0xf498b4, transparent: true, opacity: 0.28, depthWrite: false });
+    m.eyelid = new THREE.MeshStandardMaterial({ color: 0xc88a96, roughness: 0.55, metalness: 0.02 });
+    m.sclera = new THREE.MeshStandardMaterial({ color: 0xf6f8fc, roughness: 0.22, metalness: 0.02 });
+    m.eyeIris = new THREE.MeshStandardMaterial({ color: 0x2d78e6, roughness: 0.16, metalness: 0.08 });
+    m.eyeRing = new THREE.MeshStandardMaterial({ color: 0x164296, roughness: 0.25, metalness: 0.05 });
+    m.eyeGlow = new THREE.MeshStandardMaterial({ color: 0x8ad6ff, emissive: 0x5ab4ff, emissiveIntensity: 0.25, roughness: 0.14 });
+    m.pupil = new THREE.MeshStandardMaterial({ color: 0x100a16, roughness: 0.10, metalness: 0.05 });
+    m.catchlight = new THREE.MeshBasicMaterial({ color: 0xd8e2ea, toneMapped: false });
+    m.lash = new THREE.MeshStandardMaterial({ color: 0x1b0f1b, roughness: 0.45, metalness: 0.04 });
+    m.brow = new THREE.MeshStandardMaterial({ color: 0x9c743a, roughness: 0.48, metalness: 0.04 });
+    m.lips = new THREE.MeshPhysicalMaterial({ color: 0xe35f90, roughness: 0.22, metalness: 0.05, clearcoat: 0.65 });
+    m.hair = new THREE.MeshStandardMaterial({ color: 0xf0c975, roughness: 0.36, metalness: 0.08, side: THREE.DoubleSide });
+    m.hair.userData.preserveRoughness = true;
+    m.primary = new THREE.MeshPhysicalMaterial({ color: 0xf18bb8, roughness: 0.36, metalness: 0.08, sheen: 0.72, sheenColor: new THREE.Color(0xffe0ef), clearcoat: 0.14 });
+    m.secondary = new THREE.MeshPhysicalMaterial({ color: 0xffdce9, roughness: 0.38, metalness: 0.08, sheen: 0.60, side: THREE.DoubleSide });
+    m.roseGold = new THREE.MeshStandardMaterial({ color: 0xf0be74, metalness: 0.84, roughness: 0.22 });
+    m.crystal = new THREE.MeshPhysicalMaterial({ color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 0.42, roughness: 0.12, metalness: 0.15, clearcoat: 0.8 });
+    m.shawl = new THREE.MeshPhysicalMaterial({ color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.18, roughness: 0.14, transparent: true, opacity: 0.52, side: THREE.DoubleSide });
+    m.dark = new THREE.MeshStandardMaterial({ color: 0x221520, roughness: 0.30, metalness: 0.28 });
   }
 
-  #buildLimbs(m) {
+  #buildPrinceBody() {
+    const parts = PrinceRigBuilder.buildBody(this.#bodyGroup, this.#materials, (g) => this.#track(g));
+    this.#leftLeg = parts.leftLeg; this.#rightLeg = parts.rightLeg;
+    this.#leftShin = parts.leftShin; this.#rightShin = parts.rightShin;
+    this.#leftArm = parts.leftArm; this.#rightArm = parts.rightArm;
+    this.#leftForearm = parts.leftForearm; this.#rightForearm = parts.rightForearm;
+    this.#thighMeshes = parts.thighMeshes; this.#shinMeshes = parts.shinMeshes;
+    this.#shoeMeshes = parts.shoeMeshes; this.#outfitGroup = parts.outfitGroup;
+  }
+
+  #buildPrincessBody() {
+    const torsoPts = [[0.01, 0.86], [0.14, 0.90], [0.102, 1.05], [0.132, 1.19], [0.152, 1.28], [0.124, 1.36], [0.048, 1.39]];
+    const torso = new THREE.Mesh(this.#track(new THREE.LatheGeometry(torsoPts.map(([x, y]) => new THREE.Vector2(x, y)), 22)), this.#materials.primary);
+    torso.scale.set(1.06, 1, 0.74); torso.castShadow = true;
+    const neck = new THREE.Mesh(this.#track(new THREE.CylinderGeometry(0.042, 0.048, 0.148, 14)), this.#materials.skin);
+    neck.position.y = 1.41; neck.castShadow = true;
+    this.#bodyGroup.add(torso, neck);
+
     this.#leftLeg = new THREE.Group(); this.#rightLeg = new THREE.Group();
-    this.#leftLeg.position.set(m ? -0.115 : -0.095, m ? 0.9 : 0.92, 0);
-    this.#rightLeg.position.set(m ? 0.115 : 0.095, m ? 0.9 : 0.92, 0);
-    const thighGeo = this.#track(new THREE.CylinderGeometry(m ? 0.074 : 0.064, m ? 0.058 : 0.046, 0.44, 14));
-    const shinGeo = this.#track(new THREE.CylinderGeometry(m ? 0.056 : 0.045, m ? 0.044 : 0.032, 0.42, 14));
-    const footGeo = this.#track(new THREE.BoxGeometry(m ? 0.095 : 0.068, m ? 0.075 : 0.048, m ? 0.21 : 0.165));
-    const heelGeo = this.#track(new THREE.CylinderGeometry(0.014, 0.01, 0.068, 8));
+    this.#leftLeg.position.set(-0.095, 0.92, 0); this.#rightLeg.position.set(0.095, 0.92, 0);
+    const thighGeo = this.#track(new THREE.CylinderGeometry(0.064, 0.046, 0.44, 14));
+    const shinGeo = this.#track(new THREE.CylinderGeometry(0.045, 0.032, 0.42, 14));
+    const footGeo = this.#track(new THREE.BoxGeometry(0.068, 0.048, 0.165));
+    const heelGeo = this.#track(new THREE.CylinderGeometry(0.014, 0.010, 0.068, 8));
 
     [this.#leftLeg, this.#rightLeg].forEach((leg, i) => {
-      const thigh = new THREE.Mesh(thighGeo, this.#materials.secondary);
-      thigh.position.y = -0.22; thigh.castShadow = true; leg.add(thigh);
+      const thigh = new THREE.Mesh(thighGeo, this.#materials.skin); thigh.position.y = -0.22; thigh.castShadow = true; leg.add(thigh);
       const shinGroup = new THREE.Group(); shinGroup.position.y = -0.44;
-      const shin = new THREE.Mesh(shinGeo, this.#materials.secondary);
-      shin.position.y = -0.21; shin.castShadow = true; shinGroup.add(shin);
-      const shoe = new THREE.Mesh(footGeo, this.#materials.roseGold);
-      shoe.position.set(0, -0.43, m ? 0.045 : 0.035); shoe.castShadow = true; shinGroup.add(shoe);
-      if (!m) { const heel = new THREE.Mesh(heelGeo, this.#materials.roseGold); heel.position.set(0, -0.45, -0.032); shinGroup.add(heel); }
+      const shin = new THREE.Mesh(shinGeo, this.#materials.skin); shin.position.y = -0.21; shin.castShadow = true; shinGroup.add(shin);
+      const shoe = new THREE.Mesh(footGeo, this.#materials.roseGold); shoe.position.set(0, -0.43, 0.035); shoe.castShadow = true; shinGroup.add(shoe);
+      const heel = new THREE.Mesh(heelGeo, this.#materials.roseGold); heel.position.set(0, -0.45, -0.032); shinGroup.add(heel);
       leg.add(shinGroup); this.#bodyGroup.add(leg);
       this.#thighMeshes.push(thigh); this.#shinMeshes.push(shin); this.#shoeMeshes.push(shoe);
       if (i === 0) this.#leftShin = shinGroup; else this.#rightShin = shinGroup;
     });
 
     this.#leftArm = new THREE.Group(); this.#rightArm = new THREE.Group();
-    this.#leftArm.position.set(m ? -0.235 : -0.192, m ? 1.37 : 1.335, 0);
-    this.#rightArm.position.set(m ? 0.235 : 0.192, m ? 1.37 : 1.335, 0);
-    const shGeo = this.#track(new THREE.SphereGeometry(m ? 0.062 : 0.046, 12, 10));
-    const puffGeo = this.#track(new THREE.SphereGeometry(0.082, 16, 12));
+    this.#leftArm.position.set(-0.194, 1.335, 0); this.#rightArm.position.set(0.194, 1.335, 0);
+    const shGeo = this.#track(new THREE.SphereGeometry(0.046, 12, 10));
+    const puffGeo = this.#track(new THREE.SphereGeometry(0.080, 16, 12));
     const cuffGeo = this.#track(new THREE.TorusGeometry(0.048, 0.008, 8, 16));
-    const upGeo = this.#track(new THREE.CylinderGeometry(m ? 0.05 : 0.038, m ? 0.042 : 0.032, 0.27, 12));
-    const loGeo = this.#track(new THREE.CylinderGeometry(m ? 0.041 : 0.031, m ? 0.032 : 0.024, 0.25, 12));
-    const hdGeo = this.#track(new THREE.SphereGeometry(m ? 0.04 : 0.032, 10, 10));
-    const sleeveMat = m ? this.#materials.primary : this.#materials.skin;
+    const upGeo = this.#track(new THREE.CylinderGeometry(0.038, 0.032, 0.27, 12));
+    const loGeo = this.#track(new THREE.CylinderGeometry(0.031, 0.024, 0.25, 12));
+    const hdGeo = this.#track(new THREE.SphereGeometry(0.032, 10, 10));
 
     [this.#leftArm, this.#rightArm].forEach((arm, i) => {
-      arm.add(new THREE.Mesh(shGeo, sleeveMat));
-      if (!m) {
-        const puffGroup = new THREE.Group();
-        const puff = new THREE.Mesh(puffGeo, this.#materials.secondary);
-        puff.scale.set(1.06, 1.05, 0.96); puff.position.set(i === 0 ? -0.01 : 0.01, -0.025, 0); puff.castShadow = true;
-        const cuff = new THREE.Mesh(cuffGeo, this.#materials.roseGold);
-        cuff.rotation.x = Math.PI / 2; cuff.position.set(i === 0 ? -0.005 : 0.005, -0.095, 0);
-        puffGroup.add(puff, cuff); arm.add(puffGroup); this.#puffSleeves.push(puffGroup);
-      }
-      const upper = new THREE.Mesh(upGeo, sleeveMat); upper.position.y = -0.14; upper.castShadow = true; arm.add(upper);
+      const sh = new THREE.Mesh(shGeo, this.#materials.skin); arm.add(sh);
+      const puffGroup = new THREE.Group();
+      const puff = new THREE.Mesh(puffGeo, this.#materials.secondary);
+      puff.scale.set(1.06, 1.05, 0.96); puff.position.set(i === 0 ? -0.01 : 0.01, -0.025, 0); puff.castShadow = true;
+      const cuff = new THREE.Mesh(cuffGeo, this.#materials.roseGold);
+      cuff.rotation.x = Math.PI / 2; cuff.position.set(i === 0 ? -0.005 : 0.005, -0.095, 0);
+      puffGroup.add(puff, cuff); arm.add(puffGroup); this.#puffSleeves.push(puffGroup);
+
+      const upper = new THREE.Mesh(upGeo, this.#materials.skin); upper.position.y = -0.14; upper.castShadow = true; arm.add(upper);
       const forearm = new THREE.Group(); forearm.position.y = -0.27;
       forearm.rotation.set(-0.22, 0, i === 0 ? -0.08 : 0.08);
-      const lower = new THREE.Mesh(loGeo, sleeveMat); lower.position.y = -0.125; lower.castShadow = true; forearm.add(lower);
+      const lower = new THREE.Mesh(loGeo, this.#materials.skin); lower.position.y = -0.125; lower.castShadow = true; forearm.add(lower);
       const hand = new THREE.Mesh(hdGeo, this.#materials.skin); hand.scale.set(0.85, 1.38, 0.62); hand.position.y = -0.265; forearm.add(hand);
       arm.add(forearm); this.#bodyGroup.add(arm);
+      this.#armMeshes.push(sh, upper, lower);
       if (i === 0) this.#leftForearm = forearm; else this.#rightForearm = forearm;
     });
+
+    this.#outfitGroup = new THREE.Group();
+    this.#bodyGroup.add(this.#outfitGroup);
   }
 
-  #buildHead(avatar) {
-    const m = this.#isMale;
-    this.#headGroup = new THREE.Group(); this.#headGroup.position.y = m ? 1.62 : 1.575;
-    const headGeo = this.#track(new THREE.SphereGeometry(0.165, 36, 26, -Math.PI / 2, Math.PI * 2));
-    const pos = headGeo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      let x = pos.getX(i) * (m ? 0.96 : 0.93), y = pos.getY(i) * (m ? 1.15 : 1.16), z = pos.getZ(i) * 0.97;
-      if (!m && z > 0.04 && y > -0.055 && y < 0.025) {
-        const cheek = Math.exp(-Math.pow((y + 0.018) / 0.035, 2)) * Math.min(1, Math.abs(x) / 0.08);
-        x *= 1 + cheek * 0.045; z += cheek * 0.008;
-      }
-      if (y < -0.01) {
-        const t = Math.min(1, Math.abs((y + 0.01) / 0.185));
-        x *= 1 - Math.pow(t, 1.15) * (m ? 0.20 : 0.30);
-        z *= 1 - Math.pow(t, 1.4) * (m ? 0.04 : 0.08);
-      }
-      pos.setXYZ(i, x, y, z);
-    }
-    headGeo.computeVertexNormals();
-    const headMesh = new THREE.Mesh(headGeo, this.#materials.face); headMesh.castShadow = true;
-    const noseBridge = new THREE.Mesh(this.#track(new THREE.ConeGeometry(0.011, 0.036, 10)), this.#materials.skin);
-    noseBridge.position.set(0, -0.032, 0.155); noseBridge.rotation.x = Math.PI * 0.32;
-    const noseTip = new THREE.Mesh(this.#track(new THREE.SphereGeometry(0.009, 10, 8)), this.#materials.skin);
-    noseTip.scale.set(1.0, 0.88, 1.12); noseTip.position.set(0, -0.042, 0.161);
-    const lip = new THREE.Mesh(this.#track(new THREE.SphereGeometry(0.015, 12, 8)), this.#materials.lips);
-    lip.scale.set(m ? 1.25 : 1.38, m ? 0.32 : 0.38, 0.45); lip.position.set(0, -0.072, 0.145);
-    this.#headGroup.add(headMesh, noseBridge, noseTip, lip);
-    const earGeo = this.#track(new THREE.SphereGeometry(0.023, 8, 8));
-    for (const s of [-1, 1]) {
-      const ear = new THREE.Mesh(earGeo, this.#materials.skin);
-      ear.scale.set(0.52, 1.15, 0.78); ear.position.set(s * 0.149, -0.012, -0.006);
-      this.#headGroup.add(ear);
-    }
-    this.#hairGroup = new THREE.Group();
-    this.#headGroup.add(this.#hairGroup);
-    this.#bodyGroup.add(this.#headGroup);
-    this.#updateTextures(avatar);
-  }
-
-  #updateTextures(avatar) {
-    const faceMap = this.#textureFactory.getFaceTexture(avatar);
-    if (this.#materials.face.map !== faceMap) { this.#materials.face.map = faceMap; this.#materials.face.needsUpdate = true; }
-    const hairMap = this.#textureFactory.getHairTexture(avatar);
-    if (this.#materials.hair.map !== hairMap) { this.#materials.hair.map = hairMap; this.#materials.hair.needsUpdate = true; }
-    this.#materials.lips.color.set(avatar.lipHex);
-  }
-
-  #clearGroup(group) {
-    if (!group) return;
-    while (group.children.length > 0) { const c = group.children[0]; c.geometry?.dispose(); group.remove(c); }
-  }
-
-  applyAppearance(partial) { if (partial) this.#applyState(partial); }
-
-  #applyState(partial) {
+  /**
+   * Reconstruye al instante vestido, peinado, colores, piel, ojos y accesorios en tiempo real.
+   */
+  applyAppearance(config) {
+    if (!config) return;
     const ap = this.#appearance;
-    if (partial.avatarId) ap.avatarId = partial.avatarId;
-    if (partial.outfitId) ap.outfitId = partial.outfitId;
-    if (partial.hairId) ap.hairId = partial.hairId;
-    if (partial.accessories) ap.accessories = [...partial.accessories];
-    if ('modelUrl' in partial) this.#modelUrl = partial.modelUrl || null;
-    if ('customModelUrl' in partial) {
-      this.#customModelUrl = typeof partial.customModelUrl === 'string' && partial.customModelUrl
-        ? partial.customModelUrl
-        : null;
-    }
+    if (config.avatarId) ap.avatarId = config.avatarId;
+    if (config.outfitId) ap.outfitId = config.outfitId;
+    if (config.hairId) ap.hairId = CatalogData.normalizeHairId(config.hairId);
+    if (config.hairColorId) ap.hairColorId = config.hairColorId;
+    if (config.skinId) ap.skinId = config.skinId;
+    if (config.eyeColorId) ap.eyeColorId = config.eyeColorId;
+    if (Array.isArray(config.accessories)) ap.accessories = [...config.accessories];
 
-    const avatar = CharacterPresets.getAvatar(ap.avatarId);
-    const outfit = CharacterPresets.getOutfit(ap.outfitId);
-    this.#isMale = avatar.gender === 'male';
+    const outfit = CatalogData.getOutfit(ap.outfitId);
+    const skin = CatalogData.getSkinTone(ap.skinId);
+    const hairColor = CatalogData.getHairColor(ap.hairColorId);
+    const eye = CatalogData.getEyeColor(ap.eyeColorId);
+    const m = this.#materials;
+
     this.#outfitStyle = outfit.style;
-    this.#materials.skin.color.setHex(avatar.skin);
-    this.#materials.primary.color.setHex(outfit.primary);
-    this.#materials.secondary.color.setHex(outfit.secondary);
-    this.#updateTextures(avatar);
+    m.skin.color.setHex(skin.hex);
+    m.blush.color.setHex(skin.blush);
+    m.lips.color.setHex(skin.lip);
+    m.hair.color.setHex(hairColor.hex);
+    m.brow.color.setHex(hairColor.brow);
+    m.eyeIris.color.setHex(eye.iris);
+    m.eyeRing.color.setHex(eye.ring);
+    m.eyeGlow.color.setHex(eye.glow);
+    m.eyeGlow.emissive.setHex(eye.iris);
+    m.primary.color.setHex(outfit.primary);
+    m.secondary.color.setHex(outfit.secondary);
+    m.roseGold.color.setHex(outfit.accent || 0xf0be74);
+    m.shawl.color.setHex(outfit.style === 'starry_gown' ? 0xd0a8ff : 0xc2eeff);
 
-    const skinLegs = outfit.style === 'ballgown' || outfit.style === 'mermaid';
-    const tallBoots = outfit.style === 'prince' || outfit.style === 'riding';
-    for (const m of this.#thighMeshes) m.material = skinLegs ? this.#materials.skin : this.#materials.secondary;
-    for (const m of this.#shinMeshes) m.material = tallBoots ? this.#materials.dark : (skinLegs ? this.#materials.skin : this.#materials.secondary);
-    for (const m of this.#shoeMeshes) m.material = tallBoots ? this.#materials.dark : this.#materials.roseGold;
-    for (const ps of this.#puffSleeves) ps.visible = outfit.style === 'ballgown';
+    if (!this.#isMale) {
+      const longSleeves = outfit.style === 'chic_midi' || outfit.style === 'riding';
+      const tallBoots = outfit.style === 'chic_midi' || outfit.style === 'riding';
+      const ridingBreeches = outfit.style === 'riding';
+      for (const am of this.#armMeshes) am.material = longSleeves ? m.primary : m.skin;
+      for (const th of this.#thighMeshes) th.material = ridingBreeches ? m.secondary : m.skin;
+      for (const sh of this.#shinMeshes) sh.material = tallBoots ? m.dark : m.skin;
+      for (const so of this.#shoeMeshes) so.material = tallBoots ? m.dark : m.roseGold;
+      for (const ps of this.#puffSleeves) ps.visible = outfit.style === 'ballgown';
+      OutfitBuilder.populateOutfit(this.#outfitGroup, outfit, m);
+    }
 
-    this.#clearGroup(this.#outfitGroup);
-    CharacterPresets.populateOutfit(this.#outfitGroup, outfit, this.#materials, this.#isMale);
-    this.#clearGroup(this.#hairGroup);
-    CharacterPresets.populateHair(this.#hairGroup, ap.hairId, this.#materials, this.#isMale);
+    OutfitBuilder.clearGroup(this.#hairGroup);
+    HairBuilder.populate(this.#hairGroup, this.#isMale ? 'principe_tupe' : ap.hairId, m, this.#isMale);
 
-    const active = new Set(ap.accessories);
-    for (const [id, node] of Object.entries(this.#accessoryNodes)) node.visible = active.has(id);
-
-    const nextKey = `${ap.avatarId}|${this.#modelUrl || ''}|${this.#customModelUrl || ''}`;
-    if (nextKey !== this.#requestKey) {
-      this.#requestKey = nextKey;
-      this.#modelReady = this.#loadRealModel(ap.avatarId, this.#modelUrl, this.#customModelUrl);
-    } else if (this.#glbController.isMounted()) {
-      this.#glbController.applyAppearance(avatar, outfit, ap.hairId, ap.accessories, this.#isMale);
+    const activeAcc = new Set(ap.accessories);
+    for (const [id, node] of Object.entries(this.#accessoryNodes)) {
+      node.visible = activeAcc.has(id);
     }
   }
 
-  /** Promesa que resuelve true si el modelo .glb real quedó montado (false = respaldo procedural). */
-  whenModelReady() { return this.#modelReady; }
-
-  async #loadRealModel(avatarId, localUrl, customUrl) {
-    const token = ++this.#loadToken;
-    let loaded = null;
-    try { loaded = await ModelLoader.loadCharacterModel({ avatarId, localUrl, customUrl }); } catch { loaded = null; }
-    if (token !== this.#loadToken || this.#disposed) { loaded?.dispose(); return false; }
-    if (!loaded) { this.#clearGlbModel(); return false; }
-    try {
-      this.#mountGlbModel(loaded);
-      return true;
-    } catch (err) {
-      console.warn('[CharacterRig] Modelo .glb no compatible, usando respaldo procedural.', err);
-      this.#clearGlbModel();
-      return false;
-    }
+  getAppearance() {
+    return {
+      avatarId: this.#appearance.avatarId,
+      outfitId: this.#appearance.outfitId,
+      hairId: this.#appearance.hairId,
+      hairColorId: this.#appearance.hairColorId,
+      skinId: this.#appearance.skinId,
+      eyeColorId: this.#appearance.eyeColorId,
+      accessories: [...this.#appearance.accessories]
+    };
   }
 
-  #mountGlbModel(loaded) {
-    this.#clearGlbModel();
-    this.#glbController.mount(loaded, this.#materials, this.#lastAnimState);
-    this.#glbGroup.add(loaded.root);
-    this.#glbGroup.visible = true; this.#proceduralGroup.visible = false;
-    const ap = this.#appearance;
-    this.#glbController.applyAppearance(CharacterPresets.getAvatar(ap.avatarId), CharacterPresets.getOutfit(ap.outfitId), ap.hairId, ap.accessories, this.#isMale);
-  }
-
-  #clearGlbModel() {
-    const entry = this.#glbController.getEntry();
-    if (entry) this.#glbGroup?.remove(entry.root);
-    this.#glbController.dispose();
-    if (this.#glbGroup) this.#glbGroup.visible = false;
-    if (this.#proceduralGroup) this.#proceduralGroup.visible = true;
-  }
-
-  getAppearance() { return { avatarId: this.#appearance.avatarId, outfitId: this.#appearance.outfitId, hairId: this.#appearance.hairId, accessories: [...this.#appearance.accessories] }; }
   getRoot() { return this.#root; }
-  #getBaseArmZ() { return this.#outfitStyle === 'ballgown' ? 0.36 : (this.#isMale ? 0.32 : 0.33); }
+
+  #getBaseArmZ() {
+    if (this.#isMale) return 0.32;
+    const wideSkirt = ['ballgown', 'ice_gown', 'tiered_gown', 'starry_gown'].includes(this.#outfitStyle);
+    return wideSkirt ? 0.40 : 0.32;
+  }
 
   update(dt, animState = 'idle', speed = 0) {
     const safeDt = Math.max(0, Math.min(dt, 0.1));
-    this.#lastAnimState = animState;
-    if (this.#glbController.isMounted() && this.#glbGroup?.visible) {
-      this.#glbController.update(safeDt, animState);
-      return;
-    }
-
     this.#animTime += safeDt;
-    const t = this.#animTime, baseZ = this.#getBaseArmZ();
+    const t = this.#animTime;
+    const baseZ = this.#getBaseArmZ();
+
     const p = {
       bodyY: 0, bodyRotX: 0, bodyRotY: 0, headX: 0, headY: 0, headZ: 0,
       lArmX: 0, lArmZ: -baseZ, rArmX: 0, rArmZ: baseZ,
@@ -304,40 +259,41 @@ export class CharacterRig {
     };
 
     if (animState === 'walk' || animState === 'run') {
-      const run = animState === 'run', freq = run ? 11.2 : 7.4, swing = Math.sin(t * freq) * (run ? 0.65 : 0.40);
-      const openZ = baseZ + (run ? 0.06 : 0.02);
+      const run = animState === 'run', freq = run ? 11.2 : 7.4, swing = Math.sin(t * freq) * (run ? 0.62 : 0.38);
+      const openZ = baseZ + (run ? 0.06 : 0.03);
       Object.assign(p, {
-        bodyY: Math.abs(Math.cos(t * freq)) * (run ? 0.055 : 0.026), bodyRotX: run ? 0.075 : 0.028,
-        lLegX: swing, rLegX: -swing, lShinX: Math.max(0, -swing * (run ? 0.8 : 0.65)), rShinX: Math.max(0, swing * (run ? 0.8 : 0.65)),
-        lArmX: -swing * (run ? 0.64 : 0.52), rArmX: swing * (run ? 0.64 : 0.52), lArmZ: -openZ, rArmZ: openZ,
-        lForeX: (run ? -0.36 : -0.22) - Math.max(0, swing * 0.28), rForeX: (run ? -0.36 : -0.22) - Math.max(0, -swing * 0.28),
-        headY: -swing * 0.05, headX: run ? -0.035 : -0.012, hairX: run ? 0.1 : 0.04, hairZ: Math.sin(t * freq) * 0.03
+        bodyY: Math.abs(Math.cos(t * freq)) * (run ? 0.055 : 0.026), bodyRotX: run ? 0.07 : 0.025,
+        lLegX: swing, rLegX: -swing, lShinX: Math.max(0, -swing * (run ? 0.78 : 0.62)), rShinX: Math.max(0, swing * (run ? 0.78 : 0.62)),
+        lArmX: -swing * (run ? 0.58 : 0.46), rArmX: swing * (run ? 0.58 : 0.46), lArmZ: -openZ, rArmZ: openZ,
+        lForeX: (run ? -0.34 : -0.22) - Math.max(0, swing * 0.24), rForeX: (run ? -0.34 : -0.22) - Math.max(0, -swing * 0.24),
+        headY: -swing * 0.05, headX: run ? -0.03 : -0.01, hairX: run ? 0.09 : 0.04, hairZ: Math.sin(t * freq) * 0.028
       });
     } else if (animState === 'jump') {
+      // Salto estilizado limpio con brazos ligeramente abiertos, nunca cruzados
       Object.assign(p, {
-        bodyY: 0.04, bodyRotX: 0.04, headX: -0.06, lArmX: -0.30, rArmX: -0.30, lArmZ: -0.74, rArmZ: 0.74,
-        lForeX: -0.28, rForeX: -0.28, lForeZ: -0.1, rForeZ: 0.1, lLegX: -0.34, lShinX: 0.52, rLegX: 0.22, rShinX: 0.36, hairX: 0.14
+        bodyY: 0.04, bodyRotX: 0.035, headX: -0.05, lArmX: -0.18, rArmX: -0.18, lArmZ: -(baseZ + 0.22), rArmZ: baseZ + 0.22,
+        lForeX: -0.26, rForeX: -0.26, lForeZ: -0.10, rForeZ: 0.10, lLegX: -0.32, lShinX: 0.48, rLegX: 0.20, rShinX: 0.34, hairX: 0.13
       });
     } else if (animState === 'dance') {
       const step = Math.sin(t * 4.8);
       Object.assign(p, {
-        bodyY: Math.abs(Math.sin(t * 6.0)) * 0.065, bodyRotY: Math.sin(t * 3.0) * 0.14,
-        lArmZ: -(0.86 + step * 0.25), rArmZ: 0.86 + Math.cos(t * 4.8) * 0.25,
-        lArmX: -0.24 + Math.cos(t * 4.8) * 0.15, rArmX: -0.24 + step * 0.15,
-        lForeX: -0.4, rForeX: -0.4, lForeZ: -0.1, rForeZ: 0.1, lLegX: step * 0.24, rLegX: -step * 0.24,
+        bodyY: Math.abs(Math.sin(t * 6.0)) * 0.06, bodyRotY: Math.sin(t * 3.0) * 0.14,
+        lArmZ: -(0.78 + step * 0.22), rArmZ: 0.78 + Math.cos(t * 4.8) * 0.22,
+        lArmX: -0.20 + Math.cos(t * 4.8) * 0.14, rArmX: -0.20 + step * 0.14,
+        lForeX: -0.36, rForeX: -0.36, lLegX: step * 0.24, rLegX: -step * 0.24,
         lShinX: Math.max(0, -step * 0.26), rShinX: Math.max(0, step * 0.26),
-        headY: Math.sin(t * 3.0) * 0.16, headZ: Math.sin(t * 2.4) * 0.05, hairZ: Math.sin(t * 4.8) * 0.05
+        headY: Math.sin(t * 3.0) * 0.15, headZ: Math.sin(t * 2.4) * 0.05, hairZ: Math.sin(t * 4.8) * 0.04
       });
     } else if (animState === 'pose') {
       Object.assign(p, {
-        bodyY: 0.015, bodyRotY: 0.08, lArmZ: -(baseZ + 0.14), lArmX: -0.1, lForeX: -0.4, lForeZ: -0.08,
-        rArmZ: this.#isMale ? baseZ + 0.14 : 1.02, rArmX: this.#isMale ? -0.18 : -0.34, rForeX: -0.34, rForeZ: this.#isMale ? 0.08 : 0.12,
-        lLegX: 0.1, rLegX: -0.14, lShinX: 0.08, rShinX: 0.16, headY: Math.sin(t * 2.0) * 0.12 - 0.05, headZ: 0.04
+        bodyY: 0.015, bodyRotY: 0.08, lArmZ: -(baseZ + 0.14), lArmX: -0.10, lForeX: -0.36,
+        rArmZ: this.#isMale ? baseZ + 0.14 : 0.96, rArmX: this.#isMale ? -0.16 : -0.30, rForeX: -0.32,
+        lLegX: 0.10, rLegX: -0.14, lShinX: 0.08, rShinX: 0.16, headY: Math.sin(t * 2.0) * 0.12 - 0.05, headZ: 0.04
       });
     } else {
       const breath = Math.sin(t * 2.1);
       p.bodyY = speed > 0.1 ? 0 : breath * 0.012;
-      p.lArmZ = -(baseZ + breath * 0.018); p.rArmZ = baseZ + breath * 0.018;
+      p.lArmZ = -(baseZ + breath * 0.016); p.rArmZ = baseZ + breath * 0.016;
       p.headY = Math.sin(t * 0.85) * 0.06; p.headX = breath * 0.015; p.hairZ = Math.sin(t * 1.4) * 0.014;
     }
 
@@ -357,15 +313,11 @@ export class CharacterRig {
   }
 
   dispose() {
-    this.#disposed = true;
-    this.#loadToken++;
-    this.#clearGlbModel();
     for (const g of this.#geometries) g.dispose();
     this.#geometries.length = 0;
-    this.#clearGroup(this.#outfitGroup);
-    this.#clearGroup(this.#hairGroup);
+    OutfitBuilder.clearGroup(this.#outfitGroup);
+    OutfitBuilder.clearGroup(this.#hairGroup);
     for (const mat of Object.values(this.#materials)) mat.dispose();
     this.#materials = {};
-    if (this.#ownsTextures) this.#textureFactory?.dispose();
   }
 }

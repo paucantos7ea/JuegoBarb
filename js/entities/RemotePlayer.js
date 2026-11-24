@@ -2,15 +2,15 @@ import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
 
 /**
- * Solo se aceptan por red los campos de vestuario. Las rutas de modelo
- * (modelUrl / customModelUrl blob:) son locales y nunca deben cargarse desde un paquete remoto.
+ * Valida los campos del catálogo 3D recibidos por red para sincronizar
+ * vestidos, peinados, colores de cabello, piel, ojos y accesorios en tiempo real.
  */
 function sanitizeAppearance(appearance) {
   if (!appearance || typeof appearance !== 'object') return null;
   const clean = {};
-  if (typeof appearance.avatarId === 'string') clean.avatarId = appearance.avatarId;
-  if (typeof appearance.outfitId === 'string') clean.outfitId = appearance.outfitId;
-  if (typeof appearance.hairId === 'string') clean.hairId = appearance.hairId;
+  for (const key of ['avatarId', 'outfitId', 'hairId', 'hairColorId', 'skinId', 'eyeColorId']) {
+    if (typeof appearance[key] === 'string') clean[key] = appearance[key];
+  }
   if (Array.isArray(appearance.accessories)) {
     clean.accessories = appearance.accessories.filter((a) => typeof a === 'string');
   }
