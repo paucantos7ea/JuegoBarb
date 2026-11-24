@@ -48,6 +48,7 @@ export class PlayerController {
 
   setExternalControl(active) {
     this.#externalControl = Boolean(active);
+    if (this.#externalControl) this.#rig?.cancelEmote();
   }
 
   setAnimState(state) {
@@ -65,7 +66,20 @@ export class PlayerController {
     if (this.#rig) {
       this.#rig.getRoot().position.copy(this.#position);
       this.#rig.getRoot().rotation.y = this.#facingYaw;
+      this.#rig.resetMotion();
     }
+  }
+
+  /** Emotes [1-4]: solo con el personaje en el suelo y fuera de minijuegos. */
+  playEmote(id) {
+    if (!this.#rig || this.#externalControl || !this.#isGrounded) return false;
+    const ok = this.#rig.playEmote(id);
+    if (ok) this.#audio?.playSparkle();
+    return ok;
+  }
+
+  getEmote() {
+    return this.#rig?.getEmote() ?? null;
   }
 
   applyAppearance(appearance) {

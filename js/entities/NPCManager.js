@@ -122,7 +122,8 @@ export class NPCManager {
         root,
         label,
         ring,
-        pos: new THREE.Vector3(...def.position)
+        pos: new THREE.Vector3(...def.position),
+        look: new THREE.Vector3()
       });
     }
   }
@@ -177,18 +178,31 @@ export class NPCManager {
     return this.#npcs.map((n) => ({ id: n.def.id, name: n.def.name, pos: n.pos }));
   }
 
-  update(dt, playerPos) {
+  /**
+   * NPCs con vida propia: reposo vivo con respiración y parpadeo, la cabeza sigue al jugador
+   * al acercarse, el cuerpo se gira con calma al entrar en distancia de charla y, con el
+   * diálogo abierto, el NPC más cercano gesticula mientras habla.
+   */
+  update(dt, playerPos, dialogueOpen = false) {
+    const speaker = dialogueOpen && playerPos ? this.getNearestNPC(playerPos, 4.2) : null;
     for (const npc of this.#npcs) {
       const dist = playerPos ? npc.pos.distanceTo(playerPos) : 99;
+      const talking = speaker === npc.def;
       if (dist < 6.0 && playerPos) {
-        const targetYaw = Math.atan2(playerPos.x - npc.pos.x, playerPos.z - npc.pos.z);
-        let diff = targetYaw - npc.root.rotation.y;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        npc.root.rotation.y += diff * Math.min(1, dt * 4);
+        npc.look.copy(playerPos);
+        npc.rig.setLookTarget(npc.look);
+        if (dist < 4.2) {
+          const targetYaw = Math.atan2(playerPos.x - npc.pos.x, playerPos.z - npc.pos.z);
+          let diff = targetYaw - npc.root.rotation.y;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          npc.root.rotation.y += diff * Math.min(1, dt * (talking ? 3.0 : 1.4));
+        }
+      } else {
+        npc.rig.setLookTarget(null);
       }
       npc.ring.rotation.z += dt * 0.9;
-      npc.rig.update(dt, dist < 4.2 ? 'pose' : 'idle', 0);
+      npc.rig.update(dt, talking ? 'talk' : 'idle', 0);
     }
   }
 

@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v5';
-const CACHE_ASSETS = 'reino-rosa-assets-v5';
+const CACHE_STATIC = 'reino-rosa-static-v6';
+const CACHE_ASSETS = 'reino-rosa-assets-v6';
 
 const PRECACHE_URLS = [
   './',
@@ -18,7 +18,10 @@ const PRECACHE_URLS = [
   './js/core/InputManager.js',
   './js/core/PwaManager.js',
   './js/core/TextureFactory.js',
+  './js/entities/CharacterAnimator.js',
   './js/entities/CharacterRig.js',
+  './js/entities/animation/PoseLibrary.js',
+  './js/entities/animation/SpringMotion.js',
   './js/entities/NPCManager.js',
   './js/entities/PlayerController.js',
   './js/entities/QuestSystem.js',

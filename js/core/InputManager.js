@@ -13,6 +13,7 @@ export class InputManager {
   #pointerLockGuard = null;
   #actionListeners = new Map();
   #boundHandlers = {};
+  static #EMOTE_KEYS = { Digit1: 'wave', Digit2: 'spin', Digit3: 'curtsy', Digit4: 'star', Numpad1: 'wave', Numpad2: 'spin', Numpad3: 'curtsy', Numpad4: 'star' };
 
   constructor(domElement) {
     this.#domElement = domElement;
@@ -51,9 +52,7 @@ export class InputManager {
   }
 
   #resetLookDeltas() {
-    this.#lookDeltaX = 0;
-    this.#lookDeltaY = 0;
-    this.#zoomDelta = 0;
+    this.#lookDeltaX = this.#lookDeltaY = this.#zoomDelta = 0;
   }
 
   #isTypingInField() {
@@ -195,6 +194,7 @@ export class InputManager {
         return;
       }
       if (e.code === 'Space') this.#emit('jump');
+      if (InputManager.#EMOTE_KEYS[e.code]) this.#emit('emote', InputManager.#EMOTE_KEYS[e.code]);
     }
 
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {

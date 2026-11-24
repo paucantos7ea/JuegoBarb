@@ -17,6 +17,8 @@ function sanitizeAppearance(appearance) {
   return clean;
 }
 
+const ANIM_STATES = new Set(['idle', 'walk', 'run', 'jump', 'dance', 'pose']);
+
 export class RemotePlayer {
   #scene;
   #peerId;
@@ -31,6 +33,7 @@ export class RemotePlayer {
   #chatSprite = null;
   #chatTimer = 0;
   #appearanceKey = '';
+  #emoteSeq = -1;
 
   constructor(scene, peerId, profile = {}, textureFactory = null) {
     this.#scene = scene;
@@ -139,8 +142,14 @@ export class RemotePlayer {
     if (typeof state.yaw === 'number') {
       this.#targetYaw = state.yaw;
     }
-    if (state.anim) {
+    if (ANIM_STATES.has(state.anim)) {
       this.#animState = state.anim;
+    }
+    // Emote remoto: se reproduce una vez por cada número de secuencia nuevo
+    const emote = state.emote;
+    if (emote && typeof emote.id === 'string' && Number.isFinite(emote.seq) && emote.seq !== this.#emoteSeq) {
+      this.#emoteSeq = emote.seq;
+      this.#rig?.playEmote(emote.id);
     }
     if (state.name || state.appearance) {
       this.setProfile(state.name, state.appearance);

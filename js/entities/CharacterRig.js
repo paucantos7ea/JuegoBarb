@@ -4,10 +4,18 @@ import { FaceBuilder } from './catalog/FaceBuilder.js';
 import { HairBuilder } from './catalog/HairBuilder.js';
 import { OutfitBuilder } from './catalog/OutfitBuilder.js';
 import { PrinceRigBuilder } from './catalog/PrinceRigBuilder.js';
+import { CharacterAnimator } from './CharacterAnimator.js';
+
+const SPINE_Y = 1.0;   // Pivote de la columna (cintura): el torso se inclina sin mover los pies
+const WAIST_Y = 1.04;  // Pivote del vuelo de la falda
+const HAIR_PIVOT = new THREE.Vector3(0, 0.1, -0.06); // Nuca: origen del balanceo del pelo largo
+const _box = new THREE.Box3();
 
 /**
- * Rig 3D estilizado de personaje con esqueleto articulado propio y cambio
+ * Rig 3D estilizado de personaje con esqueleto articulado propio (cadera, columna, cabeza,
+ * brazos y piernas), pivotes con física secundaria para falda y pelo largo, y cambio
  * instantáneo de vestimenta, peinado, colores y accesorios en tiempo real.
+ * La animación vive en CharacterAnimator.
  */
 export class CharacterRig {
   static AVATARS = CatalogData.AVATARS;
@@ -23,7 +31,9 @@ export class CharacterRig {
   #leftLeg = null; #rightLeg = null; #leftShin = null; #rightShin = null;
   #puffSleeves = []; #armMeshes = []; #thighMeshes = []; #shinMeshes = []; #shoeMeshes = [];
   #accessoryNodes = {}; #materials = {}; #geometries = [];
-  #isMale = false; #outfitStyle = 'ballgown'; #animTime = 0;
+  #spine = null; #spineInner = null; #skirtPivot = null; #skirtInner = null;
+  #hairSwing = null; #hairSwingInner = null; #torso = null; #animator = null;
+  #isMale = false; #outfitStyle = 'ballgown';
   #appearance = CatalogData.getDefaultAppearance('aurora');
 
   constructor(initialAppearance = null) {
@@ -47,6 +57,9 @@ export class CharacterRig {
     this.#root = new THREE.Group();
     this.#bodyGroup = new THREE.Group();
     this.#root.add(this.#bodyGroup);
+    // Columna (torso, brazos, cabeza) con pivote en la cintura y vuelo de falda en la cadera
+    [this.#spine, this.#spineInner] = this.#makePivot(this.#bodyGroup, new THREE.Vector3(0, SPINE_Y, 0));
+    [this.#skirtPivot, this.#skirtInner] = this.#makePivot(this.#bodyGroup, new THREE.Vector3(0, WAIST_Y, 0));
 
     this.#createMaterials();
     if (this.#isMale) {
@@ -58,7 +71,8 @@ export class CharacterRig {
     this.#headGroup = FaceBuilder.buildHead(this.#materials, this.#isMale, (g) => this.#track(g));
     this.#hairGroup = new THREE.Group();
     this.#headGroup.add(this.#hairGroup);
-    this.#bodyGroup.add(this.#headGroup);
+    [this.#hairSwing, this.#hairSwingInner] = this.#makePivot(this.#hairGroup, HAIR_PIVOT);
+    this.#spineInner.add(this.#headGroup);
 
     this.#accessoryNodes = OutfitBuilder.buildAccessories(
       this.#headGroup,
@@ -67,6 +81,15 @@ export class CharacterRig {
       this.#materials,
       (g) => this.#track(g)
     );
+
+    this.#animator = new CharacterAnimator({
+      root: this.#root, body: this.#bodyGroup, spine: this.#spine, head: this.#headGroup,
+      hairSwing: this.#hairSwing, skirtPivot: this.#skirtPivot, torso: this.#torso,
+      eyes: this.#headGroup.children.filter((c) => c.userData.isEye),
+      lShoulder: this.#leftShoulder, rShoulder: this.#rightShoulder,
+      lFore: this.#leftForearm, rFore: this.#rightForearm,
+      lLeg: this.#leftLeg, rLeg: this.#rightLeg, lShin: this.#leftShin, rShin: this.#rightShin
+    }, this.#isMale);
 
     this.applyAppearance(this.#appearance);
     // Lateralidad anatómica: el modelo mira a +Z local, su izquierda queda en +X.
@@ -78,6 +101,40 @@ export class CharacterRig {
   }
 
   #track(geo) { this.#geometries.push(geo); return geo; }
+
+  /** Crea un pivote en `at` cuyo hijo interior compensa el desplazamiento (mismo marco que el padre). */
+  #makePivot(parent, at) {
+    const pivot = new THREE.Group();
+    pivot.position.copy(at);
+    const inner = new THREE.Group();
+    inner.position.copy(at).negate();
+    pivot.add(inner);
+    parent.add(pivot);
+    return [pivot, inner];
+  }
+
+  /** Mueve las mallas que cumplen `test` de un grupo a otro (ambos con el mismo marco local). */
+  #moveMeshes(from, to, test) {
+    for (const child of [...from.children]) {
+      if (child.isMesh && test(child)) {
+        from.remove(child);
+        to.add(child);
+      }
+    }
+  }
+
+  /** Falda/faldones (tornos) y adornos bajos van al pivote de cintura para tener vuelo. */
+  #isSkirtPart(mesh) {
+    return mesh.geometry?.type === 'LatheGeometry' || mesh.position.y < 0.6;
+  }
+
+  /** Mechones y mantos que caen por debajo de las orejas tienen balanceo con inercia. */
+  #isLongHair(mesh) {
+    const geo = mesh.geometry;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    mesh.updateMatrix();
+    return _box.copy(geo.boundingBox).applyMatrix4(mesh.matrix).min.y < -0.12;
+  }
 
   #createMaterials() {
     const m = this.#materials;
@@ -105,13 +162,15 @@ export class CharacterRig {
   }
 
   #buildPrinceBody() {
-    const parts = PrinceRigBuilder.buildBody(this.#bodyGroup, this.#materials, (g) => this.#track(g));
+    const parts = PrinceRigBuilder.buildBody(this.#bodyGroup, this.#spineInner, this.#materials, (g) => this.#track(g));
+    this.#torso = parts.torso;
     this.#leftLeg = parts.leftLeg; this.#rightLeg = parts.rightLeg;
     this.#leftShin = parts.leftShin; this.#rightShin = parts.rightShin;
     this.#leftShoulder = parts.leftShoulder; this.#rightShoulder = parts.rightShoulder;
     this.#leftForearm = parts.leftForearm; this.#rightForearm = parts.rightForearm;
     this.#thighMeshes = parts.thighMeshes; this.#shinMeshes = parts.shinMeshes;
     this.#shoeMeshes = parts.shoeMeshes; this.#outfitGroup = parts.outfitGroup;
+    this.#moveMeshes(this.#outfitGroup, this.#skirtInner, (m) => this.#isSkirtPart(m));
   }
 
   #buildPrincessBody() {
@@ -120,7 +179,8 @@ export class CharacterRig {
     torso.scale.set(1.06, 1, 0.74); torso.castShadow = true;
     const neck = new THREE.Mesh(this.#track(new THREE.CylinderGeometry(0.042, 0.048, 0.148, 14)), this.#materials.skin);
     neck.position.y = 1.41; neck.castShadow = true;
-    this.#bodyGroup.add(torso, neck);
+    this.#spineInner.add(torso, neck);
+    this.#torso = torso;
 
     this.#leftLeg = new THREE.Group(); this.#rightLeg = new THREE.Group();
     this.#leftLeg.position.set(0.095, 0.92, 0); this.#rightLeg.position.set(-0.095, 0.92, 0);
@@ -163,13 +223,13 @@ export class CharacterRig {
       forearm.rotation.set(-0.22, 0, i === 0 ? 0.08 : -0.08);
       const lower = new THREE.Mesh(loGeo, this.#materials.skin); lower.position.y = -0.125; lower.castShadow = true; forearm.add(lower);
       const hand = new THREE.Mesh(hdGeo, this.#materials.skin); hand.scale.set(0.85, 1.38, 0.62); hand.position.y = -0.265; forearm.add(hand);
-      arm.add(forearm); this.#bodyGroup.add(arm);
+      arm.add(forearm); this.#spineInner.add(arm);
       this.#armMeshes.push(sh, upper, lower);
       if (i === 0) this.#leftForearm = forearm; else this.#rightForearm = forearm;
     });
 
     this.#outfitGroup = new THREE.Group();
-    this.#bodyGroup.add(this.#outfitGroup);
+    this.#spineInner.add(this.#outfitGroup);
   }
 
   /**
@@ -216,11 +276,18 @@ export class CharacterRig {
       for (const sh of this.#shinMeshes) sh.material = tallBoots ? m.dark : m.skin;
       for (const so of this.#shoeMeshes) so.material = tallBoots ? m.dark : m.roseGold;
       for (const ps of this.#puffSleeves) ps.visible = outfit.style === 'ballgown';
+      OutfitBuilder.clearGroup(this.#skirtInner);
       OutfitBuilder.populateOutfit(this.#outfitGroup, outfit, m);
+      this.#moveMeshes(this.#outfitGroup, this.#skirtInner, (mesh) => this.#isSkirtPart(mesh));
     }
 
+    // Libera el pelo anterior (incluido el pivote con inercia) y reconstruye el nuevo peinado
+    OutfitBuilder.clearGroup(this.#hairSwingInner);
     OutfitBuilder.clearGroup(this.#hairGroup);
     HairBuilder.populate(this.#hairGroup, this.#isMale ? 'principe_tupe' : ap.hairId, m, this.#isMale);
+    this.#hairGroup.add(this.#hairSwing);
+    this.#moveMeshes(this.#hairGroup, this.#hairSwingInner, (mesh) => this.#isLongHair(mesh));
+    this.#animator?.setBaseArmZ(this.#getBaseArmZ());
 
     const activeAcc = new Set(ap.accessories);
     for (const [id, node] of Object.entries(this.#accessoryNodes)) {
@@ -250,77 +317,24 @@ export class CharacterRig {
     return wideSkirt ? 0.35 : 0.32;
   }
 
+  /** Avanza la animación (idle, walk, run, jump, dance, pose, talk) y la física secundaria. */
   update(dt, animState = 'idle', speed = 0) {
-    const safeDt = Math.max(0, Math.min(dt, 0.1));
-    this.#animTime += safeDt;
-    const t = this.#animTime;
-    const baseZ = this.#getBaseArmZ();
-
-    const p = {
-      bodyY: 0, bodyRotX: 0, bodyRotY: 0, headX: 0, headY: 0, headZ: 0,
-      lArmX: 0, lArmZ: baseZ, rArmX: 0, rArmZ: -baseZ,
-      lForeX: -0.22, lForeZ: 0.08, rForeX: -0.22, rForeZ: -0.08,
-      lLegX: 0, rLegX: 0, lShinX: 0, rShinX: 0, hairX: 0, hairZ: 0
-    };
-
-    if (animState === 'walk' || animState === 'run') {
-      const run = animState === 'run', freq = run ? 11.2 : 7.4, swing = Math.sin(t * freq) * (run ? 0.62 : 0.38);
-      const openZ = baseZ + (run ? 0.06 : 0.03);
-      Object.assign(p, {
-        bodyY: Math.abs(Math.cos(t * freq)) * (run ? 0.055 : 0.026), bodyRotX: run ? 0.07 : 0.025,
-        lLegX: swing, rLegX: -swing, lShinX: Math.max(0, -swing * (run ? 0.78 : 0.62)), rShinX: Math.max(0, swing * (run ? 0.78 : 0.62)),
-        lArmX: -swing * (run ? 0.58 : 0.46), rArmX: swing * (run ? 0.58 : 0.46), lArmZ: openZ, rArmZ: -openZ,
-        lForeX: (run ? -0.34 : -0.22) - Math.max(0, swing * 0.24), rForeX: (run ? -0.34 : -0.22) - Math.max(0, -swing * 0.24),
-        headY: -swing * 0.05, headX: run ? -0.03 : -0.01, hairX: run ? 0.09 : 0.04, hairZ: Math.sin(t * freq) * 0.028
-      });
-    } else if (animState === 'jump') {
-      // Salto estilizado limpio con brazos ligeramente abiertos, nunca cruzados
-      Object.assign(p, {
-        bodyY: 0.04, bodyRotX: 0.035, headX: -0.05, lArmX: -0.18, rArmX: -0.18, lArmZ: baseZ + 0.22, rArmZ: -(baseZ + 0.22),
-        lForeX: -0.26, rForeX: -0.26, lForeZ: 0.10, rForeZ: -0.10, lLegX: -0.32, lShinX: 0.48, rLegX: 0.20, rShinX: 0.34, hairX: 0.13
-      });
-    } else if (animState === 'dance') {
-      const step = Math.sin(t * 4.8);
-      Object.assign(p, {
-        bodyY: Math.abs(Math.sin(t * 6.0)) * 0.06, bodyRotY: Math.sin(t * 3.0) * 0.14,
-        lArmZ: 0.78 + step * 0.22, rArmZ: -(0.78 + Math.cos(t * 4.8) * 0.22),
-        lArmX: -0.20 + Math.cos(t * 4.8) * 0.14, rArmX: -0.20 + step * 0.14,
-        lForeX: -0.36, rForeX: -0.36, lLegX: step * 0.24, rLegX: -step * 0.24,
-        lShinX: Math.max(0, -step * 0.26), rShinX: Math.max(0, step * 0.26),
-        headY: Math.sin(t * 3.0) * 0.15, headZ: Math.sin(t * 2.4) * 0.05, hairZ: Math.sin(t * 4.8) * 0.04
-      });
-    } else if (animState === 'pose') {
-      Object.assign(p, {
-        bodyY: 0.015, bodyRotY: 0.08, lArmZ: baseZ + 0.14, lArmX: -0.10, lForeX: -0.36,
-        rArmZ: this.#isMale ? -(baseZ + 0.14) : -0.96, rArmX: this.#isMale ? -0.16 : -0.30, rForeX: -0.32,
-        lLegX: 0.10, rLegX: -0.14, lShinX: 0.08, rShinX: 0.16, headY: Math.sin(t * 2.0) * 0.12 - 0.05, headZ: 0.04
-      });
-    } else {
-      const breath = Math.sin(t * 2.1);
-      p.bodyY = speed > 0.1 ? 0 : breath * 0.012;
-      p.lArmZ = baseZ + breath * 0.016; p.rArmZ = -(baseZ + breath * 0.016);
-      p.headY = Math.sin(t * 0.85) * 0.06; p.headX = breath * 0.015; p.hairZ = Math.sin(t * 1.4) * 0.014;
-    }
-
-    const a = Math.min(1, safeDt * 12), L = THREE.MathUtils.lerp, b = this.#bodyGroup, h = this.#headGroup;
-    b.position.y = L(b.position.y, p.bodyY, a);
-    b.rotation.set(L(b.rotation.x, p.bodyRotX, a), L(b.rotation.y, p.bodyRotY, a), 0);
-    h.rotation.set(L(h.rotation.x, p.headX, a), L(h.rotation.y, p.headY, a), L(h.rotation.z, p.headZ, a));
-    this.#hairGroup.rotation.set(L(this.#hairGroup.rotation.x, p.hairX, a), 0, L(this.#hairGroup.rotation.z, p.hairZ, a));
-    this.#leftShoulder.rotation.set(L(this.#leftShoulder.rotation.x, p.lArmX, a), 0, L(this.#leftShoulder.rotation.z, p.lArmZ, a));
-    this.#rightShoulder.rotation.set(L(this.#rightShoulder.rotation.x, p.rArmX, a), 0, L(this.#rightShoulder.rotation.z, p.rArmZ, a));
-    this.#leftForearm.rotation.set(L(this.#leftForearm.rotation.x, p.lForeX, a), 0, L(this.#leftForearm.rotation.z, p.lForeZ, a));
-    this.#rightForearm.rotation.set(L(this.#rightForearm.rotation.x, p.rForeX, a), 0, L(this.#rightForearm.rotation.z, p.rForeZ, a));
-    this.#leftLeg.rotation.x = L(this.#leftLeg.rotation.x, p.lLegX, a);
-    this.#rightLeg.rotation.x = L(this.#rightLeg.rotation.x, p.rLegX, a);
-    this.#leftShin.rotation.x = L(this.#leftShin.rotation.x, p.lShinX, a);
-    this.#rightShin.rotation.x = L(this.#rightShin.rotation.x, p.rShinX, a);
+    this.#animator?.update(dt, animState, speed);
   }
+
+  /** Emotes: 'wave' | 'spin' | 'curtsy' | 'star'. */
+  playEmote(id) { return this.#animator?.playEmote(id) ?? false; }
+  cancelEmote() { this.#animator?.cancelEmote(); }
+  getEmote() { return this.#animator?.getEmote() ?? null; }
+  setLookTarget(worldPos) { this.#animator?.setLookTarget(worldPos); }
+  resetMotion() { this.#animator?.resetMotion(); }
 
   dispose() {
     for (const g of this.#geometries) g.dispose();
     this.#geometries.length = 0;
     OutfitBuilder.clearGroup(this.#outfitGroup);
+    OutfitBuilder.clearGroup(this.#skirtInner);
+    OutfitBuilder.clearGroup(this.#hairSwingInner);
     OutfitBuilder.clearGroup(this.#hairGroup);
     for (const mat of Object.values(this.#materials)) mat.dispose();
     this.#materials = {};

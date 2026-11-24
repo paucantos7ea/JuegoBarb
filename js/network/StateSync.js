@@ -193,6 +193,8 @@ export class StateSync {
         ],
         yaw: Number(local.yaw.toFixed(2)),
         anim: local.anim,
+        // Emote activo {id, seq}: los compañeros lo reproducen al ver un seq nuevo
+        emote: local.emote ? { id: local.emote.id, seq: local.emote.seq } : null,
         appearance: local.appearance
       });
     }

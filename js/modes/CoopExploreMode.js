@@ -117,6 +117,7 @@ export class CoopExploreMode extends BaseGameMode {
       pos: this.#player.getPosition(),
       yaw: this.#player.getYaw(),
       anim: this.#player.getAnimState(),
+      emote: this.#player.getEmote(),
       appearance: this.#player.getAppearance(),
       worldId: this.#worldId,
       quests: this.#quests.getSnapshot()
@@ -137,11 +138,7 @@ export class CoopExploreMode extends BaseGameMode {
 
     this.#bindInputActions();
     // Con un diálogo/modal abierto, ni Tab ni un clic en el lienzo deben volver a capturar el ratón
-    context.input.setPointerLockGuard(() => Boolean(
-      this.#wardrobe?.isOpen()
-      || this.#hud?.isDialogueOpen()
-      || this.#hud?.isInviteModalOpen()
-    ));
+    context.input.setPointerLockGuard(() => this.#isUiBusy(false));
     context.input.setPointerLockEnabled(true);
     this.#applyWorldTheme(this.#worldId, false);
     this.#hud.show();
@@ -166,6 +163,8 @@ export class CoopExploreMode extends BaseGameMode {
         }
       }),
       input.onAction('interact', () => this.#handleInteract()),
+      // Emotes [1-4]: solo sin menús, diálogos ni minijuegos abiertos
+      input.onAction('emote', (id) => { if (!this.#isUiBusy()) this.#player.playEmote(id); }),
       input.onAction('escape', () => {
         if (this.#minigames.isActive()) this.#minigames.stop({ completed: false });
         else if (this.#wardrobe.isOpen()) this.#wardrobe.close();
@@ -220,15 +219,14 @@ export class CoopExploreMode extends BaseGameMode {
     this.#hud.updateParty(this.#playerName, this.#stateSync.getRemoteList());
   }
 
+  /** ¿Hay vestidor, diálogo, invitación (o minijuego) abiertos? */
+  #isUiBusy(includeMinigame = true) {
+    return Boolean(this.#wardrobe?.isOpen() || this.#hud?.isDialogueOpen() || this.#hud?.isInviteModalOpen()
+      || (includeMinigame && this.#minigames?.isActive()));
+  }
+
   #resumePointerLockIfFree() {
-    if (
-      !this.#wardrobe?.isOpen()
-      && !this.#hud?.isDialogueOpen()
-      && !this.#hud?.isInviteModalOpen()
-      && !this.#minigames?.isActive()
-    ) {
-      this.#ctx.input.requestPointerLock();
-    }
+    if (!this.#isUiBusy()) this.#ctx.input.requestPointerLock();
   }
 
   #syncControlLock(requestLockOnFree = false) {
@@ -267,11 +265,8 @@ export class CoopExploreMode extends BaseGameMode {
   }
 
   #handleDialogueAction(actionType) {
-    if (actionType === 'wardrobe') {
-      this.#toggleWardrobe();
-    } else if (actionType?.startsWith('minigame:')) {
-      this.#launchMinigame(actionType.split(':')[1]);
-    }
+    if (actionType === 'wardrobe') this.#toggleWardrobe();
+    else if (actionType?.startsWith('minigame:')) this.#launchMinigame(actionType.split(':')[1]);
   }
 
   async #launchMinigame(id) {
@@ -295,7 +290,7 @@ export class CoopExploreMode extends BaseGameMode {
     this.#player?.update(dt);
 
     const pos = this.#player.getPosition();
-    this.#npcs?.update(dt, pos);
+    this.#npcs?.update(dt, pos, Boolean(this.#hud?.isDialogueOpen()));
     this.#quests?.update(dt, pos);
     this.#stateSync?.update(dt);
 

@@ -161,6 +161,7 @@ export class FaceBuilder {
         eyeGroup.add(lid);
       }
 
+      eyeGroup.userData.isEye = true; // CharacterAnimator lo usa para el parpadeo
       headGroup.add(eyeGroup);
     }
   }

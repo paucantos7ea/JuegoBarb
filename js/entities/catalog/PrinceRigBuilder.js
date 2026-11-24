@@ -8,9 +8,10 @@ import { OutfitBuilder } from './OutfitBuilder.js';
  */
 export class PrinceRigBuilder {
   /**
-   * Construye el cuerpo masculino y la casaca real dentro de bodyGroup.
+   * Construye el cuerpo masculino: piernas en la cadera (bodyGroup) y torso, cuello,
+   * brazos y casaca en la columna (spineGroup) para que el torso pueda inclinarse.
    */
-  static buildBody(bodyGroup, materials, track) {
+  static buildBody(bodyGroup, spineGroup, materials, track) {
     const torsoPts = [
       [0.01, 0.86], [0.145, 0.88], [0.152, 1.02],
       [0.172, 1.18], [0.218, 1.34], [0.196, 1.42], [0.070, 1.45]
@@ -25,17 +26,17 @@ export class PrinceRigBuilder {
     const neck = new THREE.Mesh(track(new THREE.CylinderGeometry(0.056, 0.064, 0.135, 14)), materials.skin);
     neck.position.y = 1.445;
     neck.castShadow = true;
-    bodyGroup.add(torso, neck);
+    spineGroup.add(torso, neck);
 
-    const limbs = PrinceRigBuilder.#buildLimbs(bodyGroup, materials, track);
+    const limbs = PrinceRigBuilder.#buildLimbs(bodyGroup, spineGroup, materials, track);
     const outfitGroup = new THREE.Group();
-    bodyGroup.add(outfitGroup);
+    spineGroup.add(outfitGroup);
     PrinceRigBuilder.populatePrinceUniform(outfitGroup, materials);
 
-    return { ...limbs, outfitGroup };
+    return { ...limbs, outfitGroup, torso };
   }
 
-  static #buildLimbs(bodyGroup, materials, track) {
+  static #buildLimbs(bodyGroup, spineGroup, materials, track) {
     const leftLeg = new THREE.Group();
     const rightLeg = new THREE.Group();
     // Lateralidad anatómica (el modelo mira a +Z local): izquierda en +X
@@ -117,7 +118,7 @@ export class PrinceRigBuilder {
       forearm.add(lower, wrist, hand);
 
       arm.add(forearm);
-      bodyGroup.add(arm);
+      spineGroup.add(arm);
       if (i === 0) leftForearm = forearm;
       else rightForearm = forearm;
     });
