@@ -205,6 +205,7 @@
             <span>N</span><span>NE</span><span>E</span><span>SE</span><span>S</span><span>SO</span><span>O</span><span>NO</span>
           </div>
           <div class="compass-needle">▼</div>
+          <div id="compass-casino-pin" class="compass-casino-pin" aria-hidden="true">🎰</div>
         </div>
 
         <div class="hud-actions">
@@ -240,10 +241,22 @@
       <!-- Panel Derecho: Minimapa y Accesos a Minijuegos -->
       <aside class="hud-right">
         <div class="glass-card minimap-card">
-          <canvas id="minimap-canvas" width="168" height="168" aria-label="Minimapa del reino"></canvas>
+          <div class="minimap-ring">
+            <canvas id="minimap-canvas" width="184" height="184" aria-label="Minimapa circular del reino"></canvas>
+            <span class="minimap-cardinal cardinal-n" aria-hidden="true">N</span>
+            <span class="minimap-cardinal cardinal-e" aria-hidden="true">E</span>
+            <span class="minimap-cardinal cardinal-s" aria-hidden="true">S</span>
+            <span class="minimap-cardinal cardinal-o" aria-hidden="true">O</span>
+          </div>
+          <div id="casino-distance-pill" class="casino-distance-pill" aria-live="off">
+            <span class="casino-pill-icon">🎰</span>
+            <span id="casino-dist-text">Casino · 162 m</span>
+            <span id="casino-dir-arrow" class="casino-dir-arrow" aria-hidden="true">➤</span>
+          </div>
           <div class="minimap-legend">
             <span>● Tú</span>
-            <span class="legend-ally">● Grupo</span>
+            <span class="legend-casino">🎰 Casino</span>
+            <span class="legend-horse">🐴 Caballos</span>
             <span class="legend-gem">◆ Gemas</span>
           </div>
         </div>

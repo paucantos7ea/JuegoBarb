@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
+import { createHorseModel, animateHorseModel, HORSE_SEAT_OFFSET } from '../world/HorseSystem.js';
 
 /**
  * Valida los campos del catálogo 3D recibidos por red para sincronizar
@@ -17,7 +18,7 @@ function sanitizeAppearance(appearance) {
   return clean;
 }
 
-const ANIM_STATES = new Set(['idle', 'walk', 'run', 'jump', 'dance', 'pose']);
+const ANIM_STATES = new Set(['idle', 'walk', 'run', 'jump', 'dance', 'pose', 'riding']);
 
 export class RemotePlayer {
   #scene;
@@ -40,6 +41,9 @@ export class RemotePlayer {
   #hasNetState = false;
   #lastNetTime = 0;
   #timeSinceNet = 0;
+  #horseModel = null;
+  #mountVariant = null;
+  #mountAnim = 'idle';
 
   constructor(scene, peerId, profile = {}, textureFactory = null) {
     this.#scene = scene;
@@ -215,8 +219,8 @@ export class RemotePlayer {
           let vy = dy / dtNet;
           let vz = dz / dtNet;
           const speedSq = vx * vx + vy * vy + vz * vz;
-          if (speedSq > 196) {
-            const s = 14 / Math.sqrt(speedSq);
+          if (speedSq > 484) {
+            const s = 22 / Math.sqrt(speedSq);
             vx *= s;
             vy *= s;
             vz *= s;
@@ -239,6 +243,26 @@ export class RemotePlayer {
     }
     if ((state.name && state.name !== this.#name) || state.appearance) {
       this.setProfile(state.name, state.appearance);
+    }
+
+    if (state.mount && typeof state.mount.v === 'string') {
+      if (this.#mountVariant !== state.mount.v) {
+        if (this.#horseModel) {
+          this.#scene.remove(this.#horseModel.root);
+          this.#horseModel.dispose();
+          this.#horseModel = null;
+        }
+        this.#horseModel = createHorseModel(state.mount.v);
+        this.#scene.add(this.#horseModel.root);
+        this.#mountVariant = state.mount.v;
+      }
+      this.#mountAnim = state.mount.a || 'idle';
+    } else if (this.#horseModel) {
+      this.#scene.remove(this.#horseModel.root);
+      this.#horseModel.dispose();
+      this.#horseModel = null;
+      this.#mountVariant = null;
+      this.#mountAnim = 'idle';
     }
   }
 
@@ -274,7 +298,6 @@ export class RemotePlayer {
     this.#currentYaw += diff * alpha;
 
     const root = this.#rig.getRoot();
-    root.position.copy(this.#currentPos);
     root.rotation.y = this.#currentYaw;
 
     let lod = 0;
@@ -283,7 +306,26 @@ export class RemotePlayer {
       if (distSq > 2025) lod = 2;
       else if (distSq > 625) lod = 1;
     }
-    this.#rig.update(dt, this.#animState, 0, lod);
+
+    if (this.#horseModel) {
+      this.#horseModel.root.position.copy(this.#currentPos);
+      this.#horseModel.root.rotation.y = this.#currentYaw;
+      const horseSpeedRatio = this.#mountAnim === 'run' ? 1 : this.#mountAnim === 'walk' ? 0.55 : 0;
+      animateHorseModel(this.#horseModel, this.#mountAnim, dt, horseSpeedRatio);
+
+      const sinY = Math.sin(this.#currentYaw);
+      const cosY = Math.cos(this.#currentYaw);
+      root.position.set(
+        this.#currentPos.x + sinY * HORSE_SEAT_OFFSET.z,
+        this.#currentPos.y + HORSE_SEAT_OFFSET.y + this.#horseModel.bounceY,
+        this.#currentPos.z + cosY * HORSE_SEAT_OFFSET.z
+      );
+      const riderSpeed = this.#mountAnim === 'run' ? 18 : this.#mountAnim === 'walk' ? 11 : 0;
+      this.#rig.update(dt, 'riding', riderSpeed, lod);
+    } else {
+      root.position.copy(this.#currentPos);
+      this.#rig.update(dt, this.#animState, 0, lod);
+    }
 
     if (this.#chatTimer > 0) {
       this.#chatTimer -= dt;
@@ -306,6 +348,12 @@ export class RemotePlayer {
     if (this.#chatSprite) {
       this.#chatSprite.material.map?.dispose();
       this.#chatSprite.material.dispose();
+    }
+    if (this.#horseModel) {
+      this.#scene.remove(this.#horseModel.root);
+      this.#horseModel.dispose();
+      this.#horseModel = null;
+      this.#mountVariant = null;
     }
     if (this.#rig) {
       this.#scene.remove(this.#rig.getRoot());

@@ -83,6 +83,18 @@ body.pointer-locked .hud-layer * {
   color: var(--gold-deep);
 }
 
+.compass-casino-pin {
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.78rem;
+  line-height: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 0 5px rgba(245, 196, 81, 0.85));
+  transition: left 0.06s linear;
+}
+
 .hud-actions {
   display: flex;
   gap: 8px;
@@ -114,7 +126,7 @@ body.pointer-locked .hud-layer * {
   position: absolute;
   top: 72px;
   right: 16px;
-  width: 196px;
+  width: 204px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -211,29 +223,137 @@ body.pointer-locked .hud-layer * {
 }
 
 .minimap-card {
-  padding: 10px;
+  padding: 13px 10px 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.minimap-ring {
+  position: relative;
+  width: 176px;
+  height: 176px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 #minimap-canvas {
-  width: 168px;
-  height: 168px;
-  border-radius: 12px;
-  border: 1px solid rgba(229, 184, 105, 0.65);
-  background: rgba(45, 20, 42, 0.8);
+  width: 176px;
+  height: 176px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(229, 184, 105, 0.85);
+  box-shadow: 0 0 0 3px rgba(243, 116, 174, 0.25), 0 8px 20px rgba(45, 16, 40, 0.35);
+  background: rgba(34, 13, 34, 0.92);
+  display: block;
+}
+
+.minimap-cardinal {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #ffe29f;
+  background: rgba(45, 16, 40, 0.88);
+  border: 1px solid rgba(229, 184, 105, 0.72);
+  text-shadow: 0 1px 2px rgba(24, 6, 22, 0.9);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.minimap-cardinal.cardinal-n {
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.minimap-cardinal.cardinal-s {
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.minimap-cardinal.cardinal-e {
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.minimap-cardinal.cardinal-o {
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.casino-distance-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(62, 22, 52, 0.88), rgba(104, 34, 78, 0.82));
+  border: 1px solid rgba(229, 184, 105, 0.68);
+  box-shadow: 0 3px 10px rgba(34, 12, 30, 0.28);
+  color: #fff3d6;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.casino-distance-pill.at-casino {
+  background: linear-gradient(135deg, rgba(98, 34, 74, 0.92), rgba(154, 86, 42, 0.86));
+  border-color: rgba(245, 196, 81, 0.95);
+  box-shadow: 0 0 12px rgba(245, 196, 81, 0.35);
+  color: #ffe8a3;
+}
+
+.casino-pill-icon {
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.casino-dir-arrow {
+  display: inline-block;
+  color: #f5c451;
+  font-size: 0.78rem;
+  line-height: 1;
+  transition: transform 0.08s linear;
+}
+
+.casino-distance-pill.at-casino .casino-dir-arrow {
+  display: none;
 }
 
 .minimap-legend {
   display: flex;
-  gap: 8px;
-  font-size: 0.68rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 8px;
+  font-size: 0.67rem;
+  font-weight: 600;
   color: var(--ink-muted);
 }
 
 .legend-ally { color: #36a2eb; }
+.legend-casino {
+  color: #f5c451;
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgba(45, 16, 40, 0.65);
+}
+.legend-horse {
+  color: #f374ae;
+  font-weight: 700;
+}
 .legend-gem { color: #e25098; }
 
 .activity-buttons {
@@ -496,12 +616,16 @@ body.pointer-locked .hud-layer * {
 /* Vestidor Real en Tiempo Real (Panel lateral izquierdo + escenario 3D despejado) */
 body.wardrobe-open .hud-left,
 body.wardrobe-open .hud-right,
+body.wardrobe-open .minimap-card,
 body.wardrobe-open .hud-brand,
 body.wardrobe-open .hud-compass,
 body.wardrobe-open .chat-panel,
 body.wardrobe-open .interact-prompt,
 body.wardrobe-open .pointer-lock-hint,
-body.wardrobe-open .emote-hint {
+body.wardrobe-open .emote-hint,
+body.casino-open .hud-right,
+body.casino-open .minimap-card,
+body.casino-open .hud-compass {
   opacity: 0;
   pointer-events: none !important;
   transition: opacity 0.22s ease;

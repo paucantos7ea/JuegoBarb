@@ -182,13 +182,35 @@ export class HudUI {
     this.#el('hud-zone-name').textContent = zoneName;
   }
 
-  updateCompass(cameraYaw) {
+  updateCompass(cameraYaw, playerPos = null, casinoCenter = null) {
     const track = this.#el('compass-track');
-    if (!track) return;
-    const norm = (((-cameraYaw) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    const ratio = norm / (Math.PI * 2);
-    const shift = (ratio - 0.5) * 180;
-    track.style.transform = `translateX(${-shift.toFixed(1)}px)`;
+    if (track) {
+      const norm = (((-cameraYaw) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      const ratio = norm / (Math.PI * 2);
+      const shift = (ratio - 0.5) * 180;
+      track.style.transform = `translateX(${-shift.toFixed(1)}px)`;
+    }
+
+    const pin = this.#el('compass-casino-pin');
+    if (!pin) return;
+    if (!playerPos || !casinoCenter) {
+      pin.style.display = 'none';
+      return;
+    }
+    const rel = this.#computeRelativeBearing(cameraYaw, playerPos, casinoCenter);
+    const pct = Math.max(8, Math.min(92, 50 + (rel / (Math.PI * 0.65)) * 42));
+    pin.style.display = '';
+    pin.style.left = `${pct.toFixed(1)}%`;
+  }
+
+  #computeRelativeBearing(yaw, fromPos, targetPos) {
+    const fwdX = -Math.sin(yaw);
+    const fwdZ = -Math.cos(yaw);
+    const rightX = Math.cos(yaw);
+    const rightZ = -Math.sin(yaw);
+    const dx = targetPos.x - fromPos.x;
+    const dz = targetPos.z - fromPos.z;
+    return Math.atan2(dx * rightX + dz * rightZ, dx * fwdX + dz * fwdZ);
   }
 
   updateParty(localName, remoteList) {
@@ -286,103 +308,304 @@ export class HudUI {
     return this.#inviteModalOpen;
   }
 
-  drawMinimap(playerPos, playerYaw, remotes, gemPositions) {
+  drawMinimap(playerPos, playerYaw, remotes = [], gemPositions = [], options = {}) {
     const ctx = this.#minimapCtx;
-    if (!ctx) return;
-    const w = 168;
-    const h = 168;
-    const toX = (x) => ((x + 90) / 180) * w;
-    const toY = (z) => ((z + 84) / 154) * h;
+    if (!ctx || !playerPos) return;
 
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#2d152b';
-    ctx.fillRect(0, 0, w, h);
+    const SIZE = 184;
+    const CX = 92;
+    const CY = 92;
+    const CANVAS_R = 88;
+    const RADAR_RADIUS = 115;
+    const scale = CANVAS_R / RADAR_RADIUS;
 
-    // Gran Palacio (cuerpo principal + ábside del Trono)
-    ctx.fillStyle = 'rgba(255, 224, 240, 0.32)';
-    ctx.strokeStyle = '#e5b869';
-    ctx.lineWidth = 1.4;
-    ctx.fillRect(toX(-36), toY(-54), toX(36) - toX(-36), toY(-22) - toY(-54));
-    ctx.strokeRect(toX(-36), toY(-54), toX(36) - toX(-36), toY(-22) - toY(-54));
-    ctx.fillRect(toX(-20), toY(-76), toX(20) - toX(-20), toY(-54) - toY(-76));
-    ctx.strokeRect(toX(-20), toY(-76), toX(20) - toX(-20), toY(-54) - toY(-76));
+    const horses = Array.isArray(options?.horses) ? options.horses : [];
+    const casinoCenter = options?.casinoCenter || { x: 162, z: 0 };
+    const cameraYaw = Number.isFinite(options?.cameraYaw) ? options.cameraYaw : playerYaw;
 
-    // Gran Fuente Monumental
+    const toRadar = (wx, wz) => ({
+      x: CX + (wx - playerPos.x) * scale,
+      y: CY + (wz - playerPos.z) * scale
+    });
+
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(toX(0), toY(0), 6.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(130, 224, 255, 0.58)';
+    ctx.arc(CX, CY, CANVAS_R, 0, Math.PI * 2);
+    ctx.clip();
+
+    // Fondo radial pastel-oscuro real
+    const bgGrad = ctx.createRadialGradient(CX, CY, 6, CX, CY, CANVAS_R);
+    bgGrad.addColorStop(0, '#3b1a36');
+    bgGrad.addColorStop(1, '#220d22');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    // Anillos concéntricos y ejes suaves
+    ctx.strokeStyle = 'rgba(229, 184, 105, 0.16)';
+    ctx.lineWidth = 1;
+    for (const r of [28, 56, 84]) {
+      ctx.beginPath();
+      ctx.arc(CX, CY, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(255, 210, 232, 0.08)';
+    ctx.beginPath();
+    ctx.moveTo(CX - CANVAS_R, CY);
+    ctx.lineTo(CX + CANVAS_R, CY);
+    ctx.moveTo(CX, CY - CANVAS_R);
+    ctx.lineTo(CX, CY + CANVAS_R);
+    ctx.stroke();
+
+    // Lago Sur (z >= 55) y Mirador Real (0, 46)
+    const lakeTop = toRadar(0, 55).y;
+    if (lakeTop < SIZE) {
+      ctx.fillStyle = 'rgba(110, 210, 250, 0.30)';
+      const topY = Math.max(0, lakeTop);
+      ctx.fillRect(0, topY, SIZE, SIZE - topY);
+    }
+    const mirador = toRadar(0, 46);
+    ctx.beginPath();
+    ctx.arc(mirador.x, mirador.y, 8.5 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 214, 153, 0.42)';
     ctx.fill();
 
-    // Estanque Este de los Cisnes
+    // Estanque Este (46, 26)
+    const pond = toRadar(46, 26);
     ctx.beginPath();
-    ctx.ellipse(toX(46), toY(26), 10, 8, 0, 0, Math.PI * 2);
+    ctx.ellipse(pond.x, pond.y, 12 * scale, 9.5 * scale, 0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(110, 210, 250, 0.45)';
     ctx.fill();
 
-    // Gran Pasarela en T + Gradas
+    // Castillo (0, -45) + ábside del Trono
+    const castleMain = toRadar(-36, -54);
+    const castleApse = toRadar(-20, -76);
+    ctx.fillStyle = 'rgba(255, 224, 240, 0.28)';
+    ctx.strokeStyle = 'rgba(229, 184, 105, 0.72)';
+    ctx.lineWidth = 1.2;
+    ctx.fillRect(castleMain.x, castleMain.y, 72 * scale, 32 * scale);
+    ctx.strokeRect(castleMain.x, castleMain.y, 72 * scale, 32 * scale);
+    ctx.fillRect(castleApse.x, castleApse.y, 40 * scale, 22 * scale);
+    ctx.strokeRect(castleApse.x, castleApse.y, 40 * scale, 22 * scale);
+
+    // Pasarela en T (-46, 5)
+    const catStem = toRadar(-48.8, -13.5);
+    const catCross = toRadar(-54.5, 19);
     ctx.fillStyle = 'rgba(243, 116, 174, 0.46)';
-    ctx.fillRect(toX(-48.8), toY(-13.5), toX(-43.2) - toX(-48.8), toY(19) - toY(-13.5));
-    ctx.fillRect(toX(-54.5), toY(19), toX(-37.5) - toX(-54.5), toY(24) - toY(19));
+    ctx.fillRect(catStem.x, catStem.y, 5.6 * scale, 32.5 * scale);
+    ctx.fillRect(catCross.x, catCross.y, 17 * scale, 5 * scale);
 
-    // Mirador Real y Lago Sur
-    ctx.fillStyle = 'rgba(110, 210, 250, 0.32)';
-    ctx.fillRect(0, toY(55), w, h - toY(55));
+    // Gran Fuente (0, 0)
+    const fountain = toRadar(0, 0);
     ctx.beginPath();
-    ctx.arc(toX(0), toY(46), 7.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 214, 153, 0.45)';
+    ctx.arc(fountain.x, fountain.y, 8 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(130, 224, 255, 0.58)';
     ctx.fill();
 
-    // Cúpula Real del Casino (-18.6, 17.0)
-    const casinoX = toX(-18.6);
-    const casinoY = toY(17.0);
+    // Paseo Real del Casino (X: 42..127, Z: -4.4..4.4)
+    const walk = toRadar(42, -4.4);
+    ctx.fillStyle = 'rgba(245, 196, 81, 0.28)';
+    ctx.strokeStyle = 'rgba(243, 116, 174, 0.6)';
+    ctx.lineWidth = 1;
+    ctx.fillRect(walk.x, walk.y, 85 * scale, 8.8 * scale);
+    ctx.strokeRect(walk.x, walk.y, 85 * scale, 8.8 * scale);
+
+    // Gran Cúpula del Casino (r = 35)
+    const casPt = toRadar(casinoCenter.x, casinoCenter.z);
     ctx.beginPath();
-    ctx.arc(casinoX, casinoY, 8.8, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(72, 229, 194, 0.22)';
+    ctx.arc(casPt.x, casPt.y, 35 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(243, 116, 174, 0.22)';
     ctx.fill();
-    ctx.beginPath();
-    ctx.arc(casinoX, casinoY, 5.8, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(45, 212, 191, 0.56)';
     ctx.strokeStyle = '#f5c451';
     ctx.lineWidth = 1.6;
-    ctx.fill();
     ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(casinoX, casinoY, 1.8, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffe58f';
-    ctx.fill();
 
+    // Gemas (◆)
     ctx.fillStyle = '#ff6ec7';
     for (const gp of gemPositions) {
-      const gx = toX(gp.x);
-      const gy = toY(gp.z);
+      if (!gp) continue;
+      const g = toRadar(gp.x, gp.z);
+      if (Math.hypot(g.x - CX, g.y - CY) > CANVAS_R - 2) continue;
       ctx.beginPath();
-      ctx.moveTo(gx, gy - 4);
-      ctx.lineTo(gx + 3.5, gy);
-      ctx.lineTo(gx, gy + 4);
-      ctx.lineTo(gx - 3.5, gy);
+      ctx.moveTo(g.x, g.y - 3.8);
+      ctx.lineTo(g.x + 3.2, g.y);
+      ctx.lineTo(g.x, g.y + 3.8);
+      ctx.lineTo(g.x - 3.2, g.y);
       ctx.closePath();
       ctx.fill();
     }
 
+    // Caballos libres (🐴)
+    for (const h of horses) {
+      if (!h || h.mounted) continue;
+      const hx = h.pos?.x ?? h.x ?? h.position?.x;
+      const hz = h.pos?.z ?? h.z ?? h.position?.z;
+      if (!Number.isFinite(hx) || !Number.isFinite(hz)) continue;
+      const hp = toRadar(hx, hz);
+      if (Math.hypot(hp.x - CX, hp.y - CY) > CANVAS_R - 5) continue;
+      ctx.beginPath();
+      ctx.arc(hp.x, hp.y, 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff2c6';
+      ctx.strokeStyle = '#d99b56';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🐴', hp.x, hp.y - 6);
+    }
+
+    // Compañeros (●)
     ctx.fillStyle = '#5ac8fa';
     for (const r of remotes) {
+      if (!r?.pos) continue;
+      const rp = toRadar(r.pos.x, r.pos.z);
+      if (Math.hypot(rp.x - CX, rp.y - CY) > CANVAS_R - 3) continue;
       ctx.beginPath();
-      ctx.arc(toX(r.pos.x), toY(r.pos.z), 3.8, 0, Math.PI * 2);
+      ctx.arc(rp.x, rp.y, 3.6, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    const px = toX(playerPos.x);
-    const py = toY(playerPos.z);
-    ctx.fillStyle = '#fff5d6';
+    // Iconos clave discretos: Castillo (🏰) en (0, -45) y Pasarela (✨) en (-46, 5)
+    this.#drawDiscreteLandmark(ctx, CX, CY, toRadar(0, -45), '🏰', 'rgba(229, 184, 105, 0.72)');
+    this.#drawDiscreteLandmark(ctx, CX, CY, toRadar(-46, 5), '✨', 'rgba(243, 116, 174, 0.72)');
+
+    // Icono destacado del Casino (🎰 + diamante dorado + etiqueta "Casino")
+    const casDx = casPt.x - CX;
+    const casDy = casPt.y - CY;
+    const casDistPx = Math.hypot(casDx, casDy);
+    const casClamped = casDistPx > 74;
+    const casAngle = Math.atan2(casDy, casDx);
+    const casX = casClamped ? CX + Math.cos(casAngle) * 76 : casPt.x;
+    const casY = casClamped ? CY + Math.sin(casAngle) * 76 : casPt.y;
+
     ctx.beginPath();
-    ctx.arc(px, py, 4.4, 0, Math.PI * 2);
+    ctx.arc(casX, casY, 11.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(245, 196, 81, 0.28)';
     ctx.fill();
-    ctx.strokeStyle = '#ff68b2';
-    ctx.lineWidth = 2;
+
+    if (casClamped) {
+      const tipX = CX + Math.cos(casAngle) * 85;
+      const tipY = CY + Math.sin(casAngle) * 85;
+      const baseX = CX + Math.cos(casAngle) * 79;
+      const baseY = CY + Math.sin(casAngle) * 79;
+      const perpX = -Math.sin(casAngle) * 3.5;
+      const perpY = Math.cos(casAngle) * 3.5;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(baseX + perpX, baseY + perpY);
+      ctx.lineTo(baseX - perpX, baseY - perpY);
+      ctx.closePath();
+      ctx.fillStyle = '#ffe28a';
+      ctx.fill();
+    }
+
     ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(px + Math.sin(playerYaw) * 9, py + Math.cos(playerYaw) * 9);
+    ctx.moveTo(casX, casY - 7.5);
+    ctx.lineTo(casX + 7.5, casY);
+    ctx.lineTo(casX, casY + 7.5);
+    ctx.lineTo(casX - 7.5, casY);
+    ctx.closePath();
+    ctx.fillStyle = '#f5c451';
+    ctx.strokeStyle = '#fff6d6';
+    ctx.lineWidth = 1.2;
+    ctx.fill();
     ctx.stroke();
+
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🎰', casX, casY + 0.5);
+
+    const labelY = casClamped && casY > CY + 54 ? casY - 12 : casY + 12.5;
+    ctx.font = 'bold 9px sans-serif';
+    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = 'rgba(34, 13, 34, 0.92)';
+    ctx.strokeText('Casino', casX, labelY);
+    ctx.fillStyle = '#ffe58f';
+    ctx.fillText('Casino', casX, labelY);
+
+    // Flecha de posición y orientación del jugador en el centro (92, 92)
+    const dirX = Math.sin(playerYaw);
+    const dirY = Math.cos(playerYaw);
+    const perpX = -dirY;
+    const perpY = dirX;
+    ctx.beginPath();
+    ctx.arc(CX, CY, 6.8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 245, 214, 0.22)';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(CX + dirX * 9.5, CY + dirY * 9.5);
+    ctx.lineTo(CX - dirX * 5 + perpX * 5.2, CY - dirY * 5 + perpY * 5.2);
+    ctx.lineTo(CX - dirX * 2.4, CY - dirY * 2.4);
+    ctx.lineTo(CX - dirX * 5 - perpX * 5.2, CY - dirY * 5 - perpY * 5.2);
+    ctx.closePath();
+    ctx.fillStyle = '#fff8e2';
+    ctx.strokeStyle = '#f5c451';
+    ctx.lineWidth = 1.4;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Actualizar pill de distancia y dirección al Casino
+    this.#updateCasinoDistancePill(playerPos, casinoCenter, cameraYaw);
+  }
+
+  #drawDiscreteLandmark(ctx, cx, cy, pt, icon, ringColor) {
+    const dx = pt.x - cx;
+    const dy = pt.y - cy;
+    const d = Math.hypot(dx, dy);
+    const clamped = d > 74;
+    const ang = Math.atan2(dy, dx);
+    const x = clamped ? cx + Math.cos(ang) * 76 : pt.x;
+    const y = clamped ? cy + Math.sin(ang) * 76 : pt.y;
+
+    if (clamped) {
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(ang) * 84, cy + Math.sin(ang) * 84, 2, 0, Math.PI * 2);
+      ctx.fillStyle = ringColor;
+      ctx.fill();
+    }
+
+    ctx.beginPath();
+    ctx.arc(x, y, clamped ? 6.5 : 7.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(38, 15, 34, 0.72)';
+    ctx.strokeStyle = ringColor;
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = clamped ? '9px sans-serif' : '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(icon, x, y + 0.5);
+  }
+
+  #updateCasinoDistancePill(playerPos, casinoCenter, cameraYaw) {
+    const pill = this.#el('casino-distance-pill');
+    const distText = this.#el('casino-dist-text');
+    const arrow = this.#el('casino-dir-arrow');
+    if (!pill && !distText && !arrow) return;
+
+    const dist = Math.hypot(casinoCenter.x - playerPos.x, casinoCenter.z - playerPos.z);
+    if (dist <= 38) {
+      if (distText) distText.textContent = '¡En la Gran Cúpula!';
+      pill?.classList.add('at-casino');
+      if (arrow) arrow.style.display = 'none';
+      return;
+    }
+
+    if (distText) distText.textContent = `Casino · ${Math.round(dist)} m`;
+    pill?.classList.remove('at-casino');
+    if (arrow) {
+      arrow.style.display = '';
+      const rel = this.#computeRelativeBearing(cameraYaw, playerPos, casinoCenter);
+      const deg = (rel * 180 / Math.PI) - 90;
+      arrow.style.transform = `rotate(${deg.toFixed(1)}deg)`;
+    }
   }
 
   updateCoins(balance, delta = 0) {

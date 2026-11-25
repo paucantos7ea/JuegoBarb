@@ -27,7 +27,11 @@ export class CoopExploreMode {
   #decor = null;
   #arena = null;
   #fauna = null;
+  #horses = null;
   #casinoDome = null;
+  #casinoCenter = { x: 162.0, y: 0, z: 0.0 };
+  #minimapExtras = { horses: [], casinoCenter: null, cameraYaw: 0 };
+  #emptyHorses = [];
   #coins = null;
   #casinoGames = null;
   #player = null;
@@ -72,6 +76,7 @@ export class CoopExploreMode {
       { WorldDecor },
       { ArenaBuilder },
       { FaunaSystem },
+      { HorseSystem },
       { CasinoDomeBuilder },
       { CoinSystem },
       { CasinoGames }
@@ -80,6 +85,7 @@ export class CoopExploreMode {
       import('../world/WorldDecor.js'),
       import('../world/ArenaBuilder.js'),
       import('../world/FaunaSystem.js'),
+      import('../world/HorseSystem.js'),
       import('../world/CasinoDomeBuilder.js'),
       import('../world/CoinSystem.js'),
       import('../world/CasinoGames.js')
@@ -93,11 +99,15 @@ export class CoopExploreMode {
     this.#arena.init();
     this.#fauna = new FaunaSystem(scene);
     this.#fauna.init();
+    this.#casinoCenter = CasinoDomeBuilder.DOME_CENTER || { x: 162.0, y: 0, z: 0.0 };
     this.#casinoDome = new CasinoDomeBuilder(scene, context.textures, this.#collision);
     this.#casinoDome.init();
+    this.#horses = new HorseSystem(scene, this.#collision, context.audio);
+    this.#horses.init();
 
     this.#player = new PlayerController(scene, camera, context.input, this.#collision, context.audio, context.textures);
     this.#player.init(CatalogData.getDefaultAppearance(context.profile.avatarId));
+    this.#player.setHorseSystem(this.#horses);
 
     this.#npcs = new NPCManager(scene, context.textures);
     this.#npcs.init();
@@ -194,6 +204,7 @@ export class CoopExploreMode {
       yaw: this.#player.getYaw(),
       anim: this.#player.getAnimState(),
       emote: this.#player.getEmote(),
+      mount: this.#player.getMountInfo(),
       appearance: this.#player.getAppearance(),
       casinoStation: this.#casinoGames?.getActiveActivity() || null,
       worldId: this.#worldId,
@@ -284,6 +295,9 @@ export class CoopExploreMode {
   }
 
   #toggleWardrobe() {
+    if (this.#player?.isMounted?.()) {
+      this.#player.dismountHorse();
+    }
     if (this.#casinoGames?.isActive()) {
       this.#casinoGames.exitStation();
     }
@@ -381,6 +395,7 @@ export class CoopExploreMode {
     const pos = this.#player.getPosition();
     const npc = this.#npcs.getNearestNPC(pos, 4.2);
     if (npc) {
+      if (this.#player.isMounted()) this.#player.dismountHorse();
       this.#ctx.audio?.playClick();
       this.#ctx.input.exitPointerLock();
       this.#quests.recordNpcTalk(npc.id);
@@ -388,8 +403,9 @@ export class CoopExploreMode {
       return;
     }
 
-    const station = this.#casinoDome?.getNearestStation(pos, 2.35);
+    const station = this.#casinoDome?.getNearestStation(pos, 2.6);
     if (station) {
+      if (this.#player.isMounted()) this.#player.dismountHorse();
       this.#ctx.audio?.playClick();
       this.#hud.setInteractPrompt(null);
       this.#casinoGames.enterStation(station);
@@ -397,11 +413,26 @@ export class CoopExploreMode {
     }
 
     if (this.#currentHotspot) {
+      if (this.#player.isMounted()) this.#player.dismountHorse();
       if (this.#currentHotspot.id === 'wardrobe_room') {
         this.#toggleWardrobe();
       } else if (this.#currentHotspot.id.startsWith('minigame:')) {
         this.#launchMinigame(this.#currentHotspot.id.split(':')[1]);
       }
+      return;
+    }
+
+    if (this.#player.isMounted()) {
+      this.#player.dismountHorse();
+      this.#ctx.audio?.playClick?.();
+      return;
+    }
+
+    const horse = this.#horses?.getNearestFreeHorse(pos, 3.2);
+    if (horse) {
+      this.#player.mountHorse(horse);
+      this.#ctx.audio?.playSparkle?.();
+      return;
     }
   }
 
@@ -427,6 +458,9 @@ export class CoopExploreMode {
 
   async #launchMinigame(id) {
     if (this.#minigames.isActive()) return;
+    if (this.#player?.isMounted?.()) {
+      this.#player.dismountHorse();
+    }
     if (this.#casinoGames?.isActive()) {
       this.#casinoGames.exitStation();
     }
@@ -467,6 +501,7 @@ export class CoopExploreMode {
     this.#wardrobeFX?.update(dt);
 
     const pos = this.#player.getPosition();
+    this.#horses?.update(dt);
     this.#fauna?.update(dt, this.#ctx.engine.getElapsed(), pos, this.#ctx.input.isSprinting());
     this.#npcs?.update(dt, pos, Boolean(this.#dialogue?.isOpen()));
     this.#quests?.update(dt, pos);
@@ -485,7 +520,7 @@ export class CoopExploreMode {
       return;
     }
 
-    this.#hud.updateCompass(this.#player.getCameraYaw());
+    this.#hud.updateCompass(this.#player.getCameraYaw(), pos, this.#casinoCenter);
     this.#hudRefreshTimer += dt;
     if (this.#hudRefreshTimer >= 0.05) {
       this.#hudRefreshTimer = 0;
@@ -494,11 +529,15 @@ export class CoopExploreMode {
         this.#lastZoneName = zoneName;
         this.#hud.setZoneName(zoneName);
       }
+      this.#minimapExtras.horses = this.#horses?.getHorsePositions?.() || this.#emptyHorses;
+      this.#minimapExtras.casinoCenter = this.#casinoCenter;
+      this.#minimapExtras.cameraYaw = this.#player.getCameraYaw();
       this.#hud.drawMinimap(
         pos,
         this.#player.getYaw(),
         this.#stateSync.getRemoteList(),
-        this.#quests.getUncollectedGemPositions()
+        this.#quests.getUncollectedGemPositions(),
+        this.#minimapExtras
       );
     }
 
@@ -514,7 +553,7 @@ export class CoopExploreMode {
       return;
     }
 
-    const nearStation = this.#casinoDome?.getNearestStation(pos, 2.35);
+    const nearStation = this.#casinoDome?.getNearestStation(pos, 2.6);
     if (nearStation) {
       this.#currentHotspot = null;
       this.#hud.setInteractPrompt(nearStation.label);
@@ -529,7 +568,18 @@ export class CoopExploreMode {
       }
     }
     this.#currentHotspot = found;
-    this.#hud.setInteractPrompt(found ? found.label : null);
+    if (found) {
+      this.#hud.setInteractPrompt(found.label);
+      return;
+    }
+
+    if (this.#player.isMounted()) {
+      this.#hud.setInteractPrompt('Desmontar Caballo');
+      return;
+    }
+
+    const nearHorse = this.#horses?.getNearestFreeHorse(pos, 3.2);
+    this.#hud.setInteractPrompt(nearHorse ? `Montar Caballo (${nearHorse.name})` : null);
   }
 
   dispose() {
@@ -552,6 +602,7 @@ export class CoopExploreMode {
     this.#quests?.dispose();
     this.#npcs?.dispose();
     this.#player?.dispose();
+    this.#horses?.dispose();
     this.#casinoDome?.dispose();
     this.#arena?.dispose();
     this.#fauna?.dispose();

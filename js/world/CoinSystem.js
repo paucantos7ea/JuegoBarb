@@ -42,16 +42,14 @@ function buildCoinSpawns() {
     push(x, 0, z);
   }
 
-  // 3. Alrededores y entrada de la Cúpula Real del Casino (-18.6, 17.0)
-  // Arco Este (X ∈ [-10, -5], Z ∈ [15, 19])
-  push(-5.8, 0, 17.0);
-  push(-7.6, 0, 15.6);
-  push(-9.4, 0, 18.4);
-  // Perímetro exterior (r ≈ 10.5)
-  for (let i = 0; i < 7; i++) {
-    const angle = 0.55 + (i / 7) * (Math.PI * 2 - 0.85);
-    push(-18.6 + Math.cos(angle) * 10.5, 0, 17.0 + Math.sin(angle) * 10.5);
+  // 3. Paseo Real del Casino y Escalinata/Explanada Oeste de la Gran Cúpula
+  const casinoPaseoX = [50, 62, 74, 86, 98, 110, 118];
+  for (let i = 0; i < casinoPaseoX.length; i++) {
+    push(casinoPaseoX[i], 0, i % 2 === 0 ? -2.4 : 2.4);
   }
+  push(122.0, 0, -2.5);
+  push(122.0, 0, 2.5);
+  push(128.5, 0.6, 0);
 
   // 4. Explanada del Palacio (Y = 1.0 en Z = -25..-32)
   const palaceCoords = [

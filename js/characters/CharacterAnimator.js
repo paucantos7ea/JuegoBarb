@@ -4,7 +4,7 @@ const TAU = Math.PI * 2;
 const THIGH = 0.44;
 const SHIN = 0.45;
 const LEG = THIGH + SHIN;
-const LOCO = new Set(['walk', 'run', 'jump']);
+const LOCO = new Set(['walk', 'run', 'jump', 'riding']);
 const MAX_SPRING_STEP = 1 / 120;
 
 const clamp = THREE.MathUtils.clamp;
@@ -45,7 +45,7 @@ export class PoseLibrary {
     p.headX = 0; p.headY = 0; p.headZ = 0;
     p.lArmX = 0; p.lArmZ = baseZ; p.rArmX = 0; p.rArmZ = -baseZ;
     p.lForeX = -0.22; p.lForeZ = 0.08; p.rForeX = -0.22; p.rForeZ = -0.08;
-    p.lLegX = 0; p.rLegX = 0; p.lShinX = 0; p.rShinX = 0;
+    p.lLegX = 0; p.rLegX = 0; p.lLegZ = 0; p.rLegZ = 0; p.lShinX = 0; p.rShinX = 0;
     p.breath = 0; p.flare = 0;
     return p;
   }
@@ -116,6 +116,36 @@ export class PoseLibrary {
       lForeX: -0.35, rForeX: -0.35, lForeZ: 0.32, rForeZ: -0.32,
       lLegX: -0.38, lShinX: 0.72, rLegX: 0.12, rShinX: 0.5, flare: 0.05
     });
+  }
+
+  /** Monta a caballo: piernas abiertas en la silla, rodillas flexionadas a los estribos y manos en las riendas. */
+  static riding(p, t, baseZ, speed = 0) {
+    const isRunning = speed > 13.0;
+    const isMoving = speed > 0.5;
+    const freq = isRunning ? 12.5 : (isMoving ? 7.8 : 2.0);
+    const bob = isMoving ? Math.sin(t * freq) * (isRunning ? 0.032 : 0.016) : Math.sin(t * 2.0) * 0.008;
+
+    p.lLegZ = 0.44;
+    p.rLegZ = -0.44;
+    p.lLegX = -0.62;
+    p.rLegX = -0.62;
+    p.lShinX = 0.92;
+    p.rShinX = 0.92;
+    p.flare = 0.14;
+
+    p.bodyY = bob;
+    p.spineX = isRunning ? 0.16 : (isMoving ? 0.06 : 0.02);
+    p.headX = -p.spineX * 0.6;
+    p.headY = isMoving ? 0 : Math.sin(t * 0.45) * 0.1;
+
+    p.lArmX = -0.62;
+    p.rArmX = -0.62;
+    p.lArmZ = baseZ * 0.55;
+    p.rArmZ = -baseZ * 0.55;
+    p.lForeX = -0.58 + bob * 1.2;
+    p.rForeX = -0.58 + bob * 1.2;
+    p.lForeZ = -0.14;
+    p.rForeZ = 0.14;
   }
 
   /** Limpia un objeto de pose parcial reutilizable sin reasignar. */
@@ -341,7 +371,7 @@ export class CharacterAnimator {
   /** Punto del mundo al que mira la cabeza (o null para mirada libre). */
   setLookTarget(worldPos) { this.#lookTarget = worldPos || null; }
 
-  update(dt, state = 'idle', _speed = 0, lod = 0) {
+  update(dt, state = 'idle', speed = 0, lod = 0) {
     dt = Math.max(0, Math.min(dt, 0.1));
     if (dt <= 0) return;
     this.#t += dt;
@@ -357,6 +387,7 @@ export class CharacterAnimator {
     switch (state) {
       case 'walk': case 'run': sway = PoseLibrary.locomotion(p, t, this.#baseZ, state === 'run'); break;
       case 'jump': PoseLibrary.jump(p, this.#baseZ); break;
+      case 'riding': PoseLibrary.riding(p, t, this.#baseZ, speed); break;
       case 'dance': PoseLibrary.dance(p, t); break;
       case 'pose': PoseLibrary.pose(p, t, this.#baseZ, this.#isMale); break;
       case 'talk': PoseLibrary.idle(p, t, this.#baseZ); PoseLibrary.talk(p, t, this.#baseZ); break;
@@ -382,7 +413,7 @@ export class CharacterAnimator {
     if (state === 'walk' || state === 'run') {
       p.bodyRotZ += clamp(-this.#yawRate * (state === 'run' ? 0.055 : 0.04), -0.17, 0.17);
     }
-    if (state !== 'jump' && runFar) this.#plantFeet(p);
+    if (state !== 'jump' && state !== 'riding' && runFar) this.#plantFeet(p);
 
     this.#applyPose(dt, p, runFar);
     if (runMid) this.#updateBlink(dt);
@@ -503,6 +534,8 @@ export class CharacterAnimator {
     b.rFore.rotation.set(L(b.rFore.rotation.x, p.rForeX), 0, L(b.rFore.rotation.z, p.rForeZ));
     b.lLeg.rotation.x = L(b.lLeg.rotation.x, p.lLegX);
     b.rLeg.rotation.x = L(b.rLeg.rotation.x, p.rLegX);
+    b.lLeg.rotation.z = L(b.lLeg.rotation.z, p.lLegZ);
+    b.rLeg.rotation.z = L(b.rLeg.rotation.z, p.rLegZ);
     b.lShin.rotation.x = L(b.lShin.rotation.x, p.lShinX);
     b.rShin.rotation.x = L(b.rShin.rotation.x, p.rShinX);
 

@@ -438,6 +438,10 @@ export class CasinoGames {
     this.#input?.exitPointerLock?.();
     this.#input?.setControlsLocked?.(true);
 
+    if (this.#player?.isMounted?.()) {
+      this.#player.dismountHorse?.();
+    }
+
     const stand = toVec3(station.playerStandPos, this.#tmpVec);
     this.#player?.teleport?.(stand.x, stand.y, stand.z, station.playerYaw);
     this.#player?.setExternalControl?.(true);
@@ -1467,6 +1471,7 @@ export class CasinoGames {
   #spawnCoinRain(count = 28) {
     if (!this.#coinRainMesh) return;
     const center = this.#camTargetLookAt;
+    const floorBase = this.#station?.tableSurfaceY ?? (this.#camTargetLookAt.y - 0.25);
     const dummy = this.#coinDummy;
     const spawnCount = Math.min(count, COIN_RAIN_POOL_SIZE);
 
@@ -1500,7 +1505,7 @@ export class CasinoGames {
       slot.vz = (Math.random() - 0.5) * 1.1;
       slot.vrx = 4 + Math.random() * 7;
       slot.vry = 3 + Math.random() * 6;
-      slot.floorY = center.y - 0.25;
+      slot.floorY = floorBase;
       slot.life = 0;
       slot.maxLife = 1.9 + Math.random() * 0.7;
 

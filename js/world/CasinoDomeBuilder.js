@@ -1,29 +1,45 @@
 import * as THREE from 'three';
 
-const CX = -18.6;
-const CZ = 17.0;
-const PLATFORM_Y = 0.36;
-const R_OUTER = 9.0;
-const R_INNER = 8.3;
-const R_WALL = 8.55;
-const WALL_TOP_Y = 1.35;
-const DOME_APEX_Y = 15.1;
-const LANTERN_TOP_Y = 16.5;
-const ENTRANCE_HALF_ANG = 0.31;
+const CX = 162.0;
+const CZ = 0.0;
+const PLATFORM_Y = 0.60;
+const R_OUTER = 35.0;
+const R_INNER = 33.4;
+const R_WALL = 33.8;
+const WALL_TOP_Y = 3.2;
+const DOME_APEX_Y = 36.0;
+const CROWN_TOP_Y = 42.5;
+const ENTRANCE_HALF_ANG = 0.24;
+const VIP_Y = 0.92;
 
 const SLOT_SYMBOLS = Object.freeze(['crown', 'diamond', 'rose', 'star', 'seven']);
 
-const SLOT_SPECS = Object.freeze([
-  { id: 'slot_1', x: -22.2, z: 12.2, rotY: 0.28 },
-  { id: 'slot_2', x: -19.8, z: 11.4, rotY: 0.10 },
-  { id: 'slot_3', x: -17.4, z: 11.4, rotY: -0.10 },
-  { id: 'slot_4', x: -15.0, z: 12.2, rotY: -0.28 }
-]);
+const SLOT_SPECS = Object.freeze(
+  Array.from({ length: 8 }, (_, i) => {
+    const ang = (-0.78 + (i / 7) * 0.56) * Math.PI;
+    const r = 22.0;
+    const x = CX + Math.cos(ang) * r;
+    const z = CZ + Math.sin(ang) * r;
+    return {
+      id: `slot_${i + 1}`,
+      x,
+      z,
+      rotY: Math.atan2(CX - x, CZ - z)
+    };
+  })
+);
 
-const BLACKJACK_SPECS = Object.freeze([
-  { id: 'blackjack_1', x: -21.2, z: 22.0, rotY: Math.PI - 0.25 },
-  { id: 'blackjack_2', x: -16.0, z: 22.0, rotY: Math.PI + 0.25 }
-]);
+const BLACKJACK_SPECS = Object.freeze(
+  [
+    { id: 'blackjack_1', x: 151.5, z: 19.5 },
+    { id: 'blackjack_2', x: 158.5, z: 21.2 },
+    { id: 'blackjack_3', x: 165.5, z: 21.2 },
+    { id: 'blackjack_4', x: 172.5, z: 19.5 }
+  ].map((t) => ({
+    ...t,
+    rotY: Math.atan2(CX - t.x, CZ - t.z)
+  }))
+);
 
 const FIREWORK_PALETTE = [0xffe066, 0xff6eb4, 0xc47aff, 0x5cf2ff];
 const REST_LIGHT_COLOR = new THREE.Color(0xffdcb8);
@@ -120,10 +136,12 @@ function mergeGeometries(pieces) {
 }
 
 /**
- * Constructor arquitectónico de la Cúpula de Cristal del Casino Real y su sistema de fuegos artificiales.
+ * Constructor arquitectónico de la Gran Cúpula Gigante del Casino Real,
+ * Paseo Real del Casino y sistema de fuegos artificiales.
  */
 export class CasinoDomeBuilder {
   static DOME_CENTER = Object.freeze({ x: CX, y: 0, z: CZ });
+  static DOME_RADIUS = R_OUTER;
 
   #scene = null;
   #collision = null;
@@ -135,6 +153,9 @@ export class CasinoDomeBuilder {
   #markerRingInst = null;
   #markerRingPositions = [];
   #chandelierSpinners = [];
+  #animatedCrystals = [];
+  #crownStar = null;
+  #waterMat = null;
   #elapsed = 0;
 
   #geometries = new Set();
@@ -147,6 +168,8 @@ export class CasinoDomeBuilder {
 
   #sharedRoseGoldMat = null;
   #sharedMarbleMat = null;
+  #sharedDarkMarbleMat = null;
+  #sharedCarpetMat = null;
 
   // Estado del sistema VFX de fuegos artificiales
   #fwGroup = new THREE.Group();
@@ -157,7 +180,7 @@ export class CasinoDomeBuilder {
   #fwTimer = 0;
   #fwSchedule = [];
   #fwRockets = [];
-  #fwSparkMax = 1800;
+  #fwSparkMax = 2800;
   #fwSparkCount = 0;
   #fwSparkPos = null;
   #fwSparkVel = null;
@@ -166,7 +189,7 @@ export class CasinoDomeBuilder {
   #fwSparkAge = null;
   #fwSparkLife = null;
   #fwSparkGeo = null;
-  #fwTrailMax = 420;
+  #fwTrailMax = 700;
   #fwTrailCount = 0;
   #fwTrailPos = null;
   #fwTrailVel = null;
@@ -207,11 +230,41 @@ export class CasinoDomeBuilder {
 
     this.#sharedRoseGoldMat = this.#createRoseGoldMat(0.2, 0.9);
     this.#sharedMarbleMat = this.#createMarbleMat('marble', 4, 4, 0xfff8fb);
+    this.#sharedDarkMarbleMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0x2a1424,
+        roughness: 0.28,
+        metalness: 0.14
+      })
+    );
+    this.#sharedCarpetMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xb8225d,
+        map: this.#getSharedTexture('carpet', 2, 8),
+        roughness: 0.84,
+        metalness: 0.04
+      })
+    );
+    this.#waterMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        map: this.#getSharedTexture('water', 3, 3),
+        color: 0x7fd8f5,
+        emissive: 0x246b82,
+        emissiveIntensity: 0.24,
+        roughness: 0.15,
+        metalness: 0.25,
+        transparent: true,
+        opacity: 0.82
+      })
+    );
+    this.#waterMat.userData.preserveRoughness = true;
 
+    this.#buildRoyalPromenade();
     this.#buildPlatformAndStairs();
     this.#buildPerimeterWalls();
     this.#buildCrystalDomeAndArch();
-    this.#buildChandelierAndCarpet();
+    this.#buildLuxuryInterior();
+    this.#buildPalmPlanters();
     this.#buildSlotMachines();
     this.#buildBlackjackTables();
     this.#flushBuckets(this.#staticBuckets, this.#root);
@@ -243,7 +296,7 @@ export class CasinoDomeBuilder {
     return this.#stations;
   }
 
-  getNearestStation(playerPos, maxDist = 2.35) {
+  getNearestStation(playerPos, maxDist = 2.6) {
     if (!playerPos) return null;
     let best = null;
     let bestDist = maxDist;
@@ -268,20 +321,22 @@ export class CasinoDomeBuilder {
     this.#fwRockets.length = 0;
     this.#fwFlashEnergy = 0;
 
-    const totalRockets = 14;
+    const totalRockets = 22;
     for (let i = 0; i < totalRockets; i++) {
       const isInterior = i % 2 === 0;
-      const delay = (i / (totalRockets - 1)) * 4.75 + (Math.random() - 0.5) * 0.12;
-      const angle = (i * 2.39996) + (Math.random() - 0.5) * 0.4;
+      const delay = (i / (totalRockets - 1)) * 5.4 + (Math.random() - 0.5) * 0.14;
+      const angle = i * 2.39996 + (Math.random() - 0.5) * 0.45;
       const radius = isInterior
-        ? 1.5 + Math.random() * 4.2
-        : 2.2 + Math.random() * 7.8;
+        ? 6.0 + Math.random() * 18.0
+        : 10.0 + Math.random() * 28.0;
       const targetY = isInterior
-        ? 6.5 + Math.random() * 5.7
-        : 14.5 + Math.random() * 11.0;
+        ? 14.0 + Math.random() * 16.0
+        : 42.0 + Math.random() * 26.0;
 
-      const startR = isInterior ? Math.min(radius * 0.45, 2.8) : 3.0 + Math.random() * 4.8;
-      const startY = isInterior ? 1.1 : 1.4;
+      const startR = isInterior
+        ? Math.min(radius * 0.45, 11.0)
+        : 14.0 + Math.random() * 16.0;
+      const startY = isInterior ? PLATFORM_Y + 1.2 : 3.5;
       const startX = CX + Math.cos(angle) * startR;
       const startZ = CZ + Math.sin(angle) * startR;
 
@@ -308,9 +363,24 @@ export class CasinoDomeBuilder {
     const safeDt = Math.min(Math.max(dt, 0), 0.05);
     this.#elapsed += safeDt;
 
+    if (this.#waterMat?.map) {
+      this.#waterMat.map.offset.x = (this.#elapsed * 0.045) % 1;
+      this.#waterMat.map.offset.y = (this.#elapsed * 0.03) % 1;
+    }
+
     for (let i = 0; i < this.#chandelierSpinners.length; i++) {
       const sp = this.#chandelierSpinners[i];
       sp.rotation.y += safeDt * (i % 2 === 0 ? 0.35 : -0.28);
+    }
+
+    for (let i = 0; i < this.#animatedCrystals.length; i++) {
+      const item = this.#animatedCrystals[i];
+      item.mesh.rotation.y += safeDt * item.speed;
+      item.mesh.position.y = item.baseY + Math.sin(this.#elapsed * 2.2 + i * 1.4) * 0.1;
+    }
+
+    if (this.#crownStar) {
+      this.#crownStar.rotation.y += safeDt * 0.65;
     }
 
     if (this.#markerRingInst && this.#markerRingPositions.length > 0) {
@@ -364,6 +434,9 @@ export class CasinoDomeBuilder {
     this.#markerRingInst = null;
     this.#markerRingPositions.length = 0;
     this.#chandelierSpinners.length = 0;
+    this.#animatedCrystals.length = 0;
+    this.#crownStar = null;
+    this.#waterMat = null;
     this.#fwSchedule.length = 0;
     this.#fwRockets.length = 0;
     this.#fwSparkPoints = null;
@@ -371,6 +444,8 @@ export class CasinoDomeBuilder {
     this.#fwLight = null;
     this.#sharedRoseGoldMat = null;
     this.#sharedMarbleMat = null;
+    this.#sharedDarkMarbleMat = null;
+    this.#sharedCarpetMat = null;
     this.#fwActive = false;
     this.#built = false;
   }
@@ -486,7 +561,193 @@ export class CasinoDomeBuilder {
   }
 
   // ---------------------------------------------------------------------------
-  // 1. Plataforma circular, escalinata y alfombra exterior
+  // 0. Paseo Real del Casino (X = 42..127), Explanada, 14 Farolas y 2 Fuentes
+  // ---------------------------------------------------------------------------
+
+  #buildRoyalPromenade() {
+    const group = new THREE.Group();
+    group.name = 'RoyalCasinoPromenade';
+
+    const marbleMat = this.#sharedMarbleMat;
+    const roadMat = this.#createMarbleMat('marbleFloor', 14, 3, 0xfff6fa);
+    const plazaMat = this.#createMarbleMat('marbleFloor', 5, 6, 0xfff8fb);
+    const roseGoldMat = this.#sharedRoseGoldMat;
+    const carpetMat = this.#sharedCarpetMat;
+    const buckets = this.#staticBuckets;
+
+    // Calzada de mármol desde X = 42 hasta X = 127 (Z ∈ [-4.4, 4.4], Y = 0.015)
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(85.0, 0.06, 8.8), roadMat, 84.5, 0.015, 0, false, true);
+
+    // Bordillos oro rosa en Z = ±4.45 a lo largo del paseo (X = 42..112)
+    for (const sz of [-4.45, 4.45]) {
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(70.0, 0.08, 0.16), roseGoldMat, 77.0, 0.02, sz, false, true);
+    }
+
+    // Alfombra real central rosa/burdeos en Z ∈ [-1.6, 1.6] a Y = 0.05 (X = 42..121.6)
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(79.6, 0.018, 3.2), carpetMat, 81.8, 0.05, 0, false, true);
+    for (const tz of [-1.63, 1.63]) {
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(79.6, 0.02, 0.08), roseGoldMat, 81.8, 0.052, tz, false, true);
+    }
+
+    // Explanada de llegada X ∈ [112, 130], Z ∈ [-15, 15] (recibe al jugador y deja sitio a los caballos)
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(18.0, 0.06, 30.0), plazaMat, 121.0, 0.014, 0, false, true);
+    // Molduras oro-rosa de la explanada
+    for (const sz of [-15.0, 15.0]) {
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(18.2, 0.08, 0.18), roseGoldMat, 121.0, 0.02, sz, false, true);
+    }
+    for (const sz of [-9.75, 9.75]) {
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(0.18, 0.08, 10.6), roseGoldMat, 112.0, 0.02, sz, false, true);
+    }
+    // Medallón ornamental en la explanada ante la escalinata (X = 118.5, Z = 0)
+    this.#addBucketMesh(buckets, new THREE.RingGeometry(3.4, 3.65, 48), roseGoldMat, 117.5, 0.048, 0, false, true, -Math.PI / 2);
+
+    // 14 farolas emisivas de cristal y oro (7 pares en Z = ±5.3 desde X = 48 hasta X = 114)
+    const lampCount = 14;
+    const baseGeo = this.#trackGeo(new THREE.CylinderGeometry(0.26, 0.34, 0.42, 12));
+    const postGeo = this.#trackGeo(new THREE.CylinderGeometry(0.1, 0.16, 3.6, 12));
+    const collarGeo = this.#trackGeo(new THREE.CylinderGeometry(0.24, 0.14, 0.22, 10));
+    const bulbGeo = this.#trackGeo(new THREE.OctahedronGeometry(0.28, 1));
+    const capGeo = this.#trackGeo(new THREE.ConeGeometry(0.36, 0.38, 8));
+    const haloGeo = this.#trackGeo(new THREE.OctahedronGeometry(0.82, 1));
+
+    const lanternBulbMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xfff3d8,
+        emissive: 0xffc878,
+        emissiveIntensity: 0.92,
+        roughness: 0.18
+      })
+    );
+    const lanternHaloMat = this.#trackMat(
+      new THREE.MeshBasicMaterial({
+        color: 0xffdca8,
+        transparent: true,
+        opacity: 0.24,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false
+      })
+    );
+    lanternHaloMat.userData.isVfx = true;
+
+    const baseInst = this.#trackInstanced(new THREE.InstancedMesh(baseGeo, marbleMat, lampCount));
+    const postInst = this.#trackInstanced(new THREE.InstancedMesh(postGeo, roseGoldMat, lampCount));
+    const collarInst = this.#trackInstanced(new THREE.InstancedMesh(collarGeo, roseGoldMat, lampCount));
+    const bulbInst = this.#trackInstanced(new THREE.InstancedMesh(bulbGeo, lanternBulbMat, lampCount));
+    const capInst = this.#trackInstanced(new THREE.InstancedMesh(capGeo, roseGoldMat, lampCount));
+    const haloInst = this.#trackInstanced(new THREE.InstancedMesh(haloGeo, lanternHaloMat, lampCount));
+
+    const dummy = this.#dummy;
+    let idx = 0;
+    for (let p = 0; p < 7; p++) {
+      const lx = 48 + p * 11;
+      for (const lz of [-5.3, 5.3]) {
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(1, 1, 1);
+
+        dummy.position.set(lx, 0.21, lz);
+        dummy.updateMatrix();
+        baseInst.setMatrixAt(idx, dummy.matrix);
+
+        dummy.position.set(lx, 2.2, lz);
+        dummy.updateMatrix();
+        postInst.setMatrixAt(idx, dummy.matrix);
+
+        dummy.position.set(lx, 4.05, lz);
+        dummy.updateMatrix();
+        collarInst.setMatrixAt(idx, dummy.matrix);
+
+        dummy.position.set(lx, 4.4, lz);
+        dummy.updateMatrix();
+        bulbInst.setMatrixAt(idx, dummy.matrix);
+
+        dummy.position.set(lx, 4.78, lz);
+        dummy.updateMatrix();
+        capInst.setMatrixAt(idx, dummy.matrix);
+
+        dummy.position.set(lx, 4.4, lz);
+        dummy.scale.setScalar(1.1);
+        dummy.updateMatrix();
+        haloInst.setMatrixAt(idx, dummy.matrix);
+
+        if (this.#collision) {
+          this.#collision.addCylinderCollider(lx, lz, 0.28, 0, 4.4);
+        }
+        idx++;
+      }
+    }
+
+    this.#finalizeStaticInstanced(baseInst, false, true);
+    this.#finalizeStaticInstanced(postInst, false, false);
+    this.#finalizeStaticInstanced(collarInst, false, false);
+    this.#finalizeStaticInstanced(bulbInst, false, false);
+    this.#finalizeStaticInstanced(capInst, false, false);
+    this.#finalizeStaticInstanced(haloInst, false, false);
+    group.add(baseInst, postInst, collarInst, bulbInst, capInst, haloInst);
+
+    // 2 fuentes ornamentales flanqueando el paseo en (80, 0, -10.5) y (80, 0, 10.5)
+    for (const fz of [-10.5, 10.5]) {
+      this.#buildOrnamentalFountain(group, buckets, 80.0, 0.0, fz, 2.75, 2.8);
+    }
+
+    group.matrixAutoUpdate = false;
+    group.updateMatrix();
+    this.#root.add(group);
+  }
+
+  #buildOrnamentalFountain(parent, buckets, fx, fy, fz, outerRadius, colliderRadius) {
+    const marbleMat = this.#sharedMarbleMat;
+    const roseGoldMat = this.#sharedRoseGoldMat;
+    const pondBedMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0x1e4c5c,
+        roughness: 0.9,
+        metalness: 0.02
+      })
+    );
+    const crystalMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xffe4f5,
+        emissive: 0xe87cc4,
+        emissiveIntensity: 0.72,
+        roughness: 0.16,
+        metalness: 0.3,
+        transparent: true,
+        opacity: 0.88
+      })
+    );
+    crystalMat.userData.preserveRoughness = true;
+
+    const rInner = outerRadius - 0.22;
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(outerRadius, outerRadius + 0.18, 0.56, 32), marbleMat, fx, fy + 0.28, fz, true, true);
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(rInner, rInner, 0.1, 28), pondBedMat, fx, fy + 0.18, fz, false, true);
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(outerRadius, 0.11, 10, 40), roseGoldMat, fx, fy + 0.58, fz, false, true, Math.PI / 2);
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(rInner, rInner, 0.08, 30), this.#waterMat, fx, fy + 0.48, fz, false, false);
+
+    // Pedestal central y copa superior
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(0.45, 0.62, 1.35, 18), marbleMat, fx, fy + 1.05, fz, true, true);
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(1.25, 0.52, 0.36, 24), marbleMat, fx, fy + 1.78, fz, true, true);
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(1.25, 0.08, 8, 32), roseGoldMat, fx, fy + 1.96, fz, false, true, Math.PI / 2);
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(1.12, 1.12, 0.06, 24), this.#waterMat, fx, fy + 1.93, fz, false, false);
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(0.18, 0.26, 0.85, 14), roseGoldMat, fx, fy + 2.38, fz, false, true);
+
+    // Cristal central emisivo animado
+    const crystalGeo = this.#trackGeo(new THREE.OctahedronGeometry(0.44, 0));
+    const crystal = new THREE.Mesh(crystalGeo, crystalMat);
+    crystal.position.set(fx, fy + 3.15, fz);
+    crystal.castShadow = false;
+    parent.add(crystal);
+    this.#animatedCrystals.push({ mesh: crystal, baseY: fy + 3.15, speed: 1.1 });
+
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(0.68, 0.04, 8, 28), roseGoldMat, fx, fy + 3.15, fz, false, false, Math.PI / 3);
+
+    if (this.#collision) {
+      this.#collision.addCylinderCollider(fx, fz, colliderRadius, fy, fy + 4.0);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 1. Plataforma circular gigante, zócalo y escalinata monumental Oeste
   // ---------------------------------------------------------------------------
 
   #buildPlatformAndStairs() {
@@ -494,88 +755,109 @@ export class CasinoDomeBuilder {
     group.name = 'DomePlatformAndStairs';
 
     const marbleMat = this.#sharedMarbleMat;
-    const floorMat = this.#createMarbleMat('marbleFloor', 7, 7, 0xfff7fa);
+    const floorMat = this.#createMarbleMat('marbleFloor', 14, 14, 0xfff7fa);
     const roseGoldMat = this.#sharedRoseGoldMat;
-    const carpetMat = this.#trackMat(
-      new THREE.MeshStandardMaterial({
-        color: 0xd9387f,
-        map: this.#getSharedTexture('carpet', 1, 3),
-        roughness: 0.82,
-        metalness: 0.04
-      })
-    );
-
+    const carpetMat = this.#sharedCarpetMat;
     const buckets = this.#staticBuckets;
 
-    // Zócalo inferior escalonado (radio 9.0 m)
-    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(R_OUTER, R_OUTER + 0.14, 0.18, 64), marbleMat, CX, 0.09, CZ, false, true);
+    // Zócalo imperial escalonado (R_OUTER = 35.0) hasta PLATFORM_Y = 0.60
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(R_OUTER, R_OUTER + 0.32, 0.20, 72), marbleMat, CX, 0.10, CZ, false, true);
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(R_OUTER - 0.12, R_OUTER, 0.20, 72), marbleMat, CX, 0.30, CZ, false, true);
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(R_OUTER - 0.20, R_OUTER - 0.12, 0.20, 72), floorMat, CX, 0.50, CZ, false, true);
 
-    // Plataforma principal de mármol blanco y rosa (Y = 0.36)
-    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(R_OUTER - 0.1, R_OUTER - 0.05, 0.18, 64), floorMat, CX, 0.27, CZ, false, true);
+    // Moldura oro-rosa perimetral interior en R_INNER = 33.4 m
+    this.#addBucketMesh(buckets, new THREE.RingGeometry(R_INNER - 0.14, R_INNER + 0.14, 80), roseGoldMat, CX, PLATFORM_Y + 0.004, CZ, false, true, -Math.PI / 2);
 
-    // Moldura oro-rosa perimetral interior en R_INNER = 8.3 m
-    this.#addBucketMesh(buckets, new THREE.RingGeometry(R_INNER - 0.08, R_INNER + 0.08, 72), roseGoldMat, CX, PLATFORM_Y + 0.004, CZ, false, true, -Math.PI / 2);
-
-    // Escalinata monumental al Este (+X): X in [-9.8, -6.2], Z in [14.8, 19.2]
-    const stepCount = 5;
-    const xStart = -6.2;
-    const xEnd = -9.8;
-    const stepRun = (xStart - xEnd) / stepCount;
+    // Escalinata monumental al Oeste (-X, X ∈ [121.5, 128.5], Z ∈ [-6.5, 6.5])
+    const stepCount = 6;
+    const xStart = 121.5;
+    const xEnd = 128.5;
+    const stepRun = (xEnd - xStart) / stepCount;
     const stepRise = PLATFORM_Y / stepCount;
 
     for (let i = 0; i < stepCount; i++) {
       const h = (i + 1) * stepRise;
-      const minX = xStart - (i + 1) * stepRun;
-      const stepW = stepRun + 0.06;
-      this.#addBucketMesh(buckets, new THREE.BoxGeometry(stepW, h, 4.42), marbleMat, minX + stepW * 0.5, h * 0.5, CZ, true, true);
-      // Ribete oro-rosa en el borde frontal de cada peldaño
-      this.#addBucketMesh(buckets, new THREE.BoxGeometry(0.05, 0.035, 4.44), roseGoldMat, minX + stepW - 0.02, h - 0.015, CZ, false, true);
+      const minX = xStart + i * stepRun;
+      const stepW = stepRun + 0.08;
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(stepW, h, 13.0), marbleMat, minX + stepW * 0.5, h * 0.5, CZ, true, true);
+      // Ribete oro-rosa en el borde Oeste de cada peldaño
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(0.06, 0.04, 13.04), roseGoldMat, minX + 0.02, h - 0.015, CZ, false, true);
     }
 
-    // Alfombra imperial exterior sobre la escalinata
-    const rampLen = Math.hypot(xStart - xEnd, PLATFORM_Y);
-    const rampSlope = Math.atan2(PLATFORM_Y, xStart - xEnd);
+    // Alfombra imperial de entrada sobre la escalinata (Z ∈ [-3.2, 3.2])
+    const rampLen = Math.hypot(xEnd - xStart, PLATFORM_Y);
+    const rampSlope = Math.atan2(PLATFORM_Y, xEnd - xStart);
     this.#addBucketMesh(
       buckets,
-      new THREE.BoxGeometry(rampLen + 0.25, 0.022, 2.5),
+      new THREE.BoxGeometry(rampLen + 0.3, 0.024, 6.4),
       carpetMat,
       (xStart + xEnd) * 0.5,
-      PLATFORM_Y * 0.5 + 0.025,
+      PLATFORM_Y * 0.5 + 0.026,
       CZ,
       false,
       true,
       0,
       0,
-      -rampSlope
+      rampSlope
     );
+    for (const bz of [-3.24, 3.24]) {
+      this.#addBucketMesh(
+        buckets,
+        new THREE.BoxGeometry(rampLen + 0.3, 0.026, 0.1),
+        roseGoldMat,
+        (xStart + xEnd) * 0.5,
+        PLATFORM_Y * 0.5 + 0.028,
+        CZ + bz,
+        false,
+        true,
+        0,
+        0,
+        rampSlope
+      );
+    }
 
-    // Balaustradas laterales de la escalinata (fuera de Z in [14.8, 19.2])
-    const cheekGeo = new THREE.BoxGeometry(3.85, 0.52, 0.34);
-    const postGeo = new THREE.CylinderGeometry(0.18, 0.21, 0.88, 16);
-    const finialGeo = new THREE.SphereGeometry(0.16, 16, 12);
+    // Balaustradas laterales de la escalinata con pilares y remates oro-rosa
+    const cheekGeo = new THREE.BoxGeometry(7.2, 0.72, 0.45);
+    const postGeo = new THREE.CylinderGeometry(0.28, 0.34, 1.35, 16);
+    const finialGeo = new THREE.OctahedronGeometry(0.26, 0);
+    const finialMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xffd6ec,
+        emissive: 0xff8dc7,
+        emissiveIntensity: 0.65,
+        roughness: 0.16,
+        metalness: 0.35
+      })
+    );
     this.#tempGeos.push(cheekGeo, postGeo, finialGeo);
 
     for (const side of [-1, 1]) {
-      const zSide = CZ + side * 2.39;
-      this.#addBucketMesh(buckets, cheekGeo, marbleMat, -8.0, 0.26, zSide, true, true, 0, 0, 0, 1, 1, 1, true);
-      this.#addBucketMesh(buckets, postGeo, marbleMat, -6.15, 0.44, zSide, true, true, 0, 0, 0, 1, 1, 1, true);
-      this.#addBucketMesh(buckets, finialGeo, roseGoldMat, -6.15, 0.96, zSide, false, true, 0, 0, 0, 1, 1, 1, true);
+      const zSide = CZ + side * 6.72;
+      this.#addBucketMesh(buckets, cheekGeo, marbleMat, 125.0, 0.36, zSide, true, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addBucketMesh(buckets, postGeo, marbleMat, 121.55, 0.68, zSide, true, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addBucketMesh(buckets, finialGeo, finialMat, 121.55, 1.56, zSide, false, false, 0, 0, 0, 1, 1, 1, true);
+      this.#addBucketMesh(buckets, postGeo, marbleMat, 128.45, 0.98, zSide, true, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addBucketMesh(buckets, finialGeo, finialMat, 128.45, 1.86, zSide, false, false, 0, 0, 0, 1, 1, 1, true);
+
+      if (this.#collision) {
+        this.#collision.addBox(121.3, 128.6, 0, 2.5, zSide - 0.28, zSide + 0.28);
+      }
     }
 
     group.matrixAutoUpdate = false;
     group.updateMatrix();
     this.#root.add(group);
 
-    // Colisiones exactas especificadas
+    // Colisiones exactas especificadas para plataforma y escalinata
     if (this.#collision) {
-      this.#collision.addDiscSurface(CX, CZ, 8.9, PLATFORM_Y);
-      this.#collision.addCylinderCollider(CX, CZ, 8.95, 0, 0.25);
-      this.#collision.addRampSurface(-10.2, -6.0, 14.8, 19.2, 'x', -6.2, -9.8, 0.0, PLATFORM_Y);
+      this.#collision.addDiscSurface(CX, CZ, 34.8, PLATFORM_Y);
+      this.#collision.addCylinderCollider(CX, CZ, 34.9, 0, 0.45);
+      this.#collision.addRampSurface(120.5, 129.0, -6.5, 6.5, 'x', 121.2, 128.2, 0.0, PLATFORM_Y);
     }
   }
 
   // ---------------------------------------------------------------------------
-  // 2. Muretes perimetrales curvos y pilares oro-rosa
+  // 2. Muro perimetral bajo + barandillas doradas en R_WALL = 33.8
   // ---------------------------------------------------------------------------
 
   #buildPerimeterWalls() {
@@ -585,16 +867,17 @@ export class CasinoDomeBuilder {
     const marbleMat = this.#sharedMarbleMat;
     const roseGoldMat = this.#sharedRoseGoldMat;
 
-    const startAng = ENTRANCE_HALF_ANG;
-    const endAng = Math.PI * 2 - ENTRANCE_HALF_ANG;
-    const segments = 22;
+    const startAng = Math.PI + ENTRANCE_HALF_ANG;
+    const endAng = Math.PI * 3 - ENTRANCE_HALF_ANG;
+    const segments = 48;
     const stepAng = (endAng - startAng) / segments;
-    const wallHeight = WALL_TOP_Y - PLATFORM_Y;
+    const totalWallH = WALL_TOP_Y - PLATFORM_Y; // 2.60 m
+    const lowWallH = 1.05;                      // y = 0.60..1.65
 
-    // Pilares oro-rosa instanciados en las juntas
-    const pillarGeo = this.#trackGeo(new THREE.CylinderGeometry(0.14, 0.16, wallHeight + 0.08, 14));
-    const capGeo = this.#trackGeo(new THREE.CylinderGeometry(0.19, 0.15, 0.09, 14));
-    const pillarInst = this.#trackInstanced(new THREE.InstancedMesh(pillarGeo, roseGoldMat, segments + 1));
+    // Pilares de mármol y capiteles oro-rosa instanciados en las 49 juntas
+    const pillarGeo = this.#trackGeo(new THREE.CylinderGeometry(0.22, 0.26, totalWallH + 0.08, 14));
+    const capGeo = this.#trackGeo(new THREE.CylinderGeometry(0.32, 0.24, 0.14, 14));
+    const pillarInst = this.#trackInstanced(new THREE.InstancedMesh(pillarGeo, marbleMat, segments + 1));
     const capInst = this.#trackInstanced(new THREE.InstancedMesh(capGeo, roseGoldMat, segments + 1));
     const dummy = this.#dummy;
 
@@ -603,13 +886,13 @@ export class CasinoDomeBuilder {
       const px = CX + Math.cos(ang) * R_WALL;
       const pz = CZ + Math.sin(ang) * R_WALL;
 
-      dummy.position.set(px, PLATFORM_Y + (wallHeight + 0.08) * 0.5, pz);
+      dummy.position.set(px, PLATFORM_Y + (totalWallH + 0.08) * 0.5, pz);
       dummy.rotation.set(0, -ang, 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       pillarInst.setMatrixAt(i, dummy.matrix);
 
-      dummy.position.set(px, WALL_TOP_Y + 0.04, pz);
+      dummy.position.set(px, WALL_TOP_Y + 0.05, pz);
       dummy.updateMatrix();
       capInst.setMatrixAt(i, dummy.matrix);
     }
@@ -617,12 +900,20 @@ export class CasinoDomeBuilder {
     this.#finalizeStaticInstanced(capInst, false, true);
     group.add(pillarInst, capInst);
 
-    // Paños curvos de murete bajo entre pilares + remate superior oro-rosa
-    const chordLen = 2 * R_WALL * Math.sin(stepAng * 0.5) + 0.06;
-    const wallGeo = this.#trackGeo(new THREE.BoxGeometry(0.26, wallHeight, chordLen));
-    const railGeo = this.#trackGeo(new THREE.BoxGeometry(0.32, 0.07, chordLen + 0.04));
+    // Paños bajos de mármol, pasamanos intermedios/superiores y balaustres dorados
+    const chordLen = 2 * R_WALL * Math.sin(stepAng * 0.5) + 0.08;
+    const wallGeo = this.#trackGeo(new THREE.BoxGeometry(0.42, lowWallH, chordLen));
+    const midRailGeo = this.#trackGeo(new THREE.BoxGeometry(0.48, 0.11, chordLen + 0.04));
+    const topRailGeo = this.#trackGeo(new THREE.BoxGeometry(0.54, 0.14, chordLen + 0.06));
+    const spindleGeo = this.#trackGeo(new THREE.CylinderGeometry(0.055, 0.065, totalWallH - lowWallH - 0.1, 10));
+
     const wallInst = this.#trackInstanced(new THREE.InstancedMesh(wallGeo, marbleMat, segments));
-    const railInst = this.#trackInstanced(new THREE.InstancedMesh(railGeo, roseGoldMat, segments));
+    const midRailInst = this.#trackInstanced(new THREE.InstancedMesh(midRailGeo, roseGoldMat, segments));
+    const topRailInst = this.#trackInstanced(new THREE.InstancedMesh(topRailGeo, roseGoldMat, segments));
+    const spindleInst = this.#trackInstanced(new THREE.InstancedMesh(spindleGeo, roseGoldMat, segments * 3));
+
+    const spindleCenterY = PLATFORM_Y + lowWallH + (totalWallH - lowWallH) * 0.5;
+    let spindleIdx = 0;
 
     for (let i = 0; i < segments; i++) {
       const midAng = startAng + (i + 0.5) * stepAng;
@@ -630,40 +921,57 @@ export class CasinoDomeBuilder {
       const wx = CX + Math.cos(midAng) * rMid;
       const wz = CZ + Math.sin(midAng) * rMid;
 
-      dummy.position.set(wx, PLATFORM_Y + wallHeight * 0.5, wz);
+      dummy.position.set(wx, PLATFORM_Y + lowWallH * 0.5, wz);
       dummy.rotation.set(0, -midAng, 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       wallInst.setMatrixAt(i, dummy.matrix);
 
-      dummy.position.set(wx, WALL_TOP_Y + 0.02, wz);
+      dummy.position.set(wx, PLATFORM_Y + lowWallH + 0.04, wz);
       dummy.updateMatrix();
-      railInst.setMatrixAt(i, dummy.matrix);
+      midRailInst.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(wx, WALL_TOP_Y - 0.02, wz);
+      dummy.updateMatrix();
+      topRailInst.setMatrixAt(i, dummy.matrix);
+
+      for (let s = -1; s <= 1; s++) {
+        const subAng = midAng + s * (stepAng * 0.25);
+        const sx = CX + Math.cos(subAng) * rMid;
+        const sz = CZ + Math.sin(subAng) * rMid;
+        dummy.position.set(sx, spindleCenterY, sz);
+        dummy.rotation.set(0, -subAng, 0);
+        dummy.updateMatrix();
+        spindleInst.setMatrixAt(spindleIdx++, dummy.matrix);
+      }
     }
+
     this.#finalizeStaticInstanced(wallInst, false, true);
-    this.#finalizeStaticInstanced(railInst, false, true);
-    group.add(wallInst, railInst);
+    this.#finalizeStaticInstanced(midRailInst, false, true);
+    this.#finalizeStaticInstanced(topRailInst, false, true);
+    this.#finalizeStaticInstanced(spindleInst, false, false);
+    group.add(wallInst, midRailInst, topRailInst, spindleInst);
 
     group.matrixAutoUpdate = false;
     group.updateMatrix();
     this.#root.add(group);
 
-    // Colisionadores perimetrales continuos (dejan libre |ang| < 0.31 rad)
+    // Colisionadores perimetrales continuos desde minY = 0 hasta maxY = 6.0 (dejan libre |ang - Math.PI| < ENTRANCE_HALF_ANG)
     if (this.#collision) {
-      const colSteps = 48;
-      const colStart = ENTRANCE_HALF_ANG + 0.02;
-      const colEnd = Math.PI * 2 - ENTRANCE_HALF_ANG - 0.02;
+      const colSteps = 140;
+      const colStart = startAng + 0.015;
+      const colEnd = endAng - 0.015;
       for (let i = 0; i <= colSteps; i++) {
         const ang = colStart + (i / colSteps) * (colEnd - colStart);
         const cx = CX + Math.cos(ang) * R_WALL;
         const cz = CZ + Math.sin(ang) * R_WALL;
-        this.#collision.addCylinderCollider(cx, cz, 0.32, PLATFORM_Y, 3.2);
+        this.#collision.addCylinderCollider(cx, cz, 0.55, 0, 6.0);
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // 3. Cúpula de cristal geodésica/nervada, linterna y Arco Monumental
+  // 3. Doble anillo de cristal, 24 costillas, Corona Imperial y Pórtico Oeste
   // ---------------------------------------------------------------------------
 
   #buildCrystalDomeAndArch() {
@@ -672,131 +980,184 @@ export class CasinoDomeBuilder {
 
     const roseGoldMat = this.#sharedRoseGoldMat;
     const marbleMat = this.#sharedMarbleMat;
+    const buckets = this.#staticBuckets;
 
-    const domeHeight = DOME_APEX_Y - WALL_TOP_Y; // 13.75 m
-    const scaleY = domeHeight / R_WALL;          // ~1.608
-    const oculusPhi = 0.14;
-
-    // Casquete principal de cristal translúcido ligero (MeshStandardMaterial)
-    const crystalTex = this.#getSharedTexture('stainedCrystal', 8, 3);
-    const glassMat = this.#trackMat(
+    // Doble material cristalino ligero (MeshStandardMaterial, NUNCA MeshPhysicalMaterial)
+    const crystalTex = this.#getSharedTexture('stainedCrystal', 14, 4);
+    const roseGlassMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
-        color: 0xffedf7,
+        color: 0xffdff2,
         map: crystalTex,
-        emissive: 0xffb2d8,
-        emissiveIntensity: 0.22,
+        emissive: 0xff8ec8,
+        emissiveIntensity: 0.24,
         transparent: true,
         opacity: 0.28,
-        roughness: 0.15,
-        metalness: 0.25,
+        roughness: 0.16,
+        metalness: 0.24,
         side: THREE.DoubleSide,
         depthWrite: false
       })
     );
-    glassMat.userData.preserveRoughness = true;
+    roseGlassMat.userData.preserveRoughness = true;
 
-    const buckets = this.#staticBuckets;
-
-    const domeGeo = new THREE.SphereGeometry(R_WALL, 36, 18, 0, Math.PI * 2, oculusPhi, Math.PI * 0.5 - oculusPhi);
-    this.#addBucketMesh(buckets, domeGeo, glassMat, CX, WALL_TOP_Y, CZ, false, false, 0, 0, 0, 1, scaleY, 1);
-
-    // 12 costillas meridionales doradas: i=0 sobre el arco Este, i=1..11 instanciadas
-    const ribCount = 12;
-    const ribRadius = R_WALL + 0.04;
-    const steps = 16;
-
-    // Costilla i = 0 (arranca sobre el frontón del pórtico)
-    {
-      const startPhi = Math.PI * 0.5 - 0.34;
-      const pts = [];
-      for (let s = 0; s <= steps; s++) {
-        const phi = startPhi + (oculusPhi - startPhi) * (s / steps);
-        const rHoriz = ribRadius * Math.sin(phi);
-        const y = WALL_TOP_Y + domeHeight * Math.cos(phi);
-        pts.push(new THREE.Vector3(CX + rHoriz, y, CZ));
-      }
-      const curve = new THREE.CatmullRomCurve3(pts);
-      this.#addBucketMesh(buckets, new THREE.TubeGeometry(curve, 20, 0.075, 8, false), roseGoldMat, 0, 0, 0, false, true);
-    }
-
-    // 11 costillas idénticas (i = 1..11) en 1 InstancedMesh rotando alrededor de (CX, 0, CZ)
-    {
-      const startPhi = Math.PI * 0.5;
-      const pts = [];
-      for (let s = 0; s <= steps; s++) {
-        const phi = startPhi + (oculusPhi - startPhi) * (s / steps);
-        const rHoriz = ribRadius * Math.sin(phi);
-        const y = WALL_TOP_Y + domeHeight * Math.cos(phi);
-        pts.push(new THREE.Vector3(rHoriz, y, 0));
-      }
-      const curve = new THREE.CatmullRomCurve3(pts);
-      const ribTemplateGeo = this.#trackGeo(new THREE.TubeGeometry(curve, 20, 0.075, 8, false));
-      const ribInst = this.#trackInstanced(new THREE.InstancedMesh(ribTemplateGeo, roseGoldMat, ribCount - 1));
-      const dummy = this.#dummy;
-      for (let i = 1; i < ribCount; i++) {
-        const ang = (i / ribCount) * Math.PI * 2;
-        dummy.position.set(CX, 0, CZ);
-        dummy.rotation.set(0, -ang, 0);
-        dummy.scale.set(1, 1, 1);
-        dummy.updateMatrix();
-        ribInst.setMatrixAt(i - 1, dummy.matrix);
-      }
-      this.#finalizeStaticInstanced(ribInst, false, true);
-      group.add(ribInst);
-    }
-
-    // 3 anillos horizontales oro-rosa
-    const ringPhis = [0.42, 0.78, 1.14];
-    for (let rIdx = 0; rIdx < ringPhis.length; rIdx++) {
-      const phi = ringPhis[rIdx];
-      const ringR = (R_WALL + 0.04) * Math.sin(phi);
-      const ringY = WALL_TOP_Y + domeHeight * Math.cos(phi);
-      const isLowest = rIdx === ringPhis.length - 1;
-      const arcStart = isLowest ? ENTRANCE_HALF_ANG : 0;
-      const arcLen = isLowest ? Math.PI * 2 - ENTRANCE_HALF_ANG * 2 : Math.PI * 2;
-
-      const ringGeo = new THREE.TorusGeometry(ringR, 0.065, 10, 64, arcLen);
-      this.#addBucketMesh(
-        buckets,
-        ringGeo,
-        roseGoldMat,
-        CX,
-        ringY,
-        CZ,
-        false,
-        true,
-        Math.PI / 2,
-        0,
-        isLowest ? -arcStart : 0
-      );
-    }
-
-    // Óculo superior, linterna de cristal y corona/aguja de oro rosa hasta Y = 16.5 m
-    const oculusR = R_WALL * Math.sin(oculusPhi);
-    const oculusY = WALL_TOP_Y + domeHeight * Math.cos(oculusPhi);
-    this.#addBucketMesh(buckets, new THREE.TorusGeometry(oculusR + 0.04, 0.1, 12, 32), roseGoldMat, CX, oculusY, CZ, false, true, Math.PI / 2);
-
-    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(oculusR * 0.85, oculusR * 0.96, 0.72, 16, 1, true), glassMat, CX, oculusY + 0.34, CZ, false, false);
-    this.#addBucketMesh(buckets, new THREE.ConeGeometry(oculusR * 0.98, 0.56, 16), roseGoldMat, CX, oculusY + 0.96, CZ, false, true);
-
-    const spireHeight = LANTERN_TOP_Y - (oculusY + 1.12);
-    if (spireHeight > 0.1) {
-      this.#addBucketMesh(buckets, new THREE.ConeGeometry(0.11, spireHeight, 12), roseGoldMat, CX, oculusY + 1.12 + spireHeight * 0.5, CZ, false, true);
-    }
-
-    const crownOrbGeo = new THREE.OctahedronGeometry(0.16, 0);
-    const crownOrbMat = this.#trackMat(
+    const goldGlassMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
-        color: 0xffd6ec,
-        emissive: 0xff8dc7,
-        emissiveIntensity: 0.65,
+        color: 0xfff0dc,
+        map: crystalTex,
+        emissive: 0xffc688,
+        emissiveIntensity: 0.22,
+        transparent: true,
+        opacity: 0.25,
         roughness: 0.15,
-        metalness: 0.5
+        metalness: 0.28,
+        side: THREE.DoubleSide,
+        depthWrite: false
       })
     );
-    this.#addBucketMesh(buckets, crownOrbGeo, crownOrbMat, CX, LANTERN_TOP_Y - 0.04, CZ, false, false);
+    goldGlassMat.userData.preserveRoughness = true;
 
-    // Arco de Entrada Monumental al Este (+X)
+    const emissiveRingMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xffe4b8,
+        emissive: 0xffb86c,
+        emissiveIntensity: 0.72,
+        roughness: 0.2,
+        metalness: 0.6
+      })
+    );
+
+    // Anillo / Tambor inferior cristal rosado (y = 3.2..7.8), dejando libre la entrada Oeste (-X)
+    const lowerDrumH = 7.8 - WALL_TOP_Y;
+    const lowerDrumGeo = new THREE.CylinderGeometry(
+      R_WALL,
+      R_WALL,
+      lowerDrumH,
+      56,
+      1,
+      true,
+      ENTRANCE_HALF_ANG,
+      Math.PI * 2 - ENTRANCE_HALF_ANG * 2
+    );
+    this.#addBucketMesh(
+      buckets,
+      lowerDrumGeo,
+      roseGlassMat,
+      CX,
+      WALL_TOP_Y + lowerDrumH * 0.5,
+      CZ,
+      false,
+      false,
+      0,
+      -Math.PI / 2,
+      0
+    );
+
+    // Anillo / Tambor superior cristal rosado-dorado (y = 7.8..11.5) por encima del dintel (y > 7.8)
+    const upperDrumH = 11.5 - 7.8;
+    const upperDrumR = R_WALL * 0.965;
+    this.#addBucketMesh(
+      buckets,
+      new THREE.CylinderGeometry(upperDrumR, R_WALL, upperDrumH, 56, 1, true),
+      roseGlassMat,
+      CX,
+      7.8 + upperDrumH * 0.5,
+      CZ,
+      false,
+      false
+    );
+
+    // Bóveda principal abovedada de cristal dorado/rosado (y = 11.5..36.0 hasta el óculo)
+    const domeBaseY = 11.5;
+    const domeHeight = DOME_APEX_Y - domeBaseY; // 24.5 m
+    const oculusPhi = 0.155;
+    const scaleY = domeHeight / upperDrumR;
+    const vaultGeo = new THREE.SphereGeometry(upperDrumR, 48, 22, 0, Math.PI * 2, oculusPhi, Math.PI * 0.5 - oculusPhi);
+    this.#addBucketMesh(buckets, vaultGeo, goldGlassMat, CX, domeBaseY, CZ, false, false, 0, 0, 0, 1, scaleY, 1);
+
+    // 24 costillas meridionales doradas ornamentadas (InstancedMesh)
+    const ribCount = 24;
+    const vaultSteps = 18;
+    const vaultPts = [];
+    for (let s = 0; s <= vaultSteps; s++) {
+      const phi = Math.PI * 0.5 + (oculusPhi - Math.PI * 0.5) * (s / vaultSteps);
+      const rHoriz = (upperDrumR + 0.08) * Math.sin(phi);
+      const y = domeBaseY + domeHeight * Math.cos(phi);
+      vaultPts.push(new THREE.Vector3(rHoriz, y, 0));
+    }
+    const vaultCurve = new THREE.CatmullRomCurve3(vaultPts);
+    const vaultRibGeo = this.#trackGeo(new THREE.TubeGeometry(vaultCurve, 24, 0.16, 8, false));
+    const vaultRibInst = this.#trackInstanced(new THREE.InstancedMesh(vaultRibGeo, roseGoldMat, ribCount));
+
+    const dummy = this.#dummy;
+    const lowerRibAngles = [];
+    for (let i = 0; i < ribCount; i++) {
+      const ang = (i / ribCount) * Math.PI * 2;
+      dummy.position.set(CX, 0, CZ);
+      dummy.rotation.set(0, -ang, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      vaultRibInst.setMatrixAt(i, dummy.matrix);
+
+      // En el tambor inferior evitamos la zona abierta del pórtico Oeste
+      const distFromWest = Math.abs(Math.atan2(Math.sin(ang - Math.PI), Math.cos(ang - Math.PI)));
+      if (distFromWest > ENTRANCE_HALF_ANG + 0.02) {
+        lowerRibAngles.push(ang);
+      }
+    }
+    this.#finalizeStaticInstanced(vaultRibInst, false, true);
+    group.add(vaultRibInst);
+
+    if (lowerRibAngles.length > 0) {
+      const drumPts = [
+        new THREE.Vector3(R_WALL + 0.08, WALL_TOP_Y, 0),
+        new THREE.Vector3(R_WALL + 0.08, 7.8, 0),
+        new THREE.Vector3(upperDrumR + 0.08, domeBaseY, 0)
+      ];
+      const drumCurve = new THREE.CatmullRomCurve3(drumPts);
+      const drumRibGeo = this.#trackGeo(new THREE.TubeGeometry(drumCurve, 10, 0.18, 8, false));
+      const drumRibInst = this.#trackInstanced(new THREE.InstancedMesh(drumRibGeo, roseGoldMat, lowerRibAngles.length));
+      for (let i = 0; i < lowerRibAngles.length; i++) {
+        dummy.position.set(CX, 0, CZ);
+        dummy.rotation.set(0, -lowerRibAngles[i], 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        drumRibInst.setMatrixAt(i, dummy.matrix);
+      }
+      this.#finalizeStaticInstanced(drumRibInst, false, true);
+      group.add(drumRibInst);
+    }
+
+    // 4 anillos horizontales dorados / emisivos
+    // Anillo 1 (y = 7.8): arco libre en la entrada Oeste
+    this.#addBucketMesh(
+      buckets,
+      new THREE.TorusGeometry(R_WALL + 0.08, 0.16, 10, 72, Math.PI * 2 - ENTRANCE_HALF_ANG * 2),
+      roseGoldMat,
+      CX,
+      7.8,
+      CZ,
+      false,
+      true,
+      Math.PI / 2,
+      0,
+      -(Math.PI + ENTRANCE_HALF_ANG)
+    );
+    // Anillo 2 (y = 11.5): gran cornisa del tambor con banda luminosa
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(upperDrumR + 0.1, 0.22, 12, 80), roseGoldMat, CX, 11.5, CZ, false, true, Math.PI / 2);
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(upperDrumR + 0.28, 0.08, 8, 80), emissiveRingMat, CX, 11.5, CZ, false, false, Math.PI / 2);
+
+    // Anillos 3 y 4 en la bóveda superior
+    for (const phi of [0.96, 0.52]) {
+      const ringR = (upperDrumR + 0.08) * Math.sin(phi);
+      const ringY = domeBaseY + domeHeight * Math.cos(phi);
+      this.#addBucketMesh(buckets, new THREE.TorusGeometry(ringR, 0.15, 10, 64), roseGoldMat, CX, ringY, CZ, false, true, Math.PI / 2);
+      this.#addBucketMesh(buckets, new THREE.TorusGeometry(ringR + 0.12, 0.06, 8, 64), emissiveRingMat, CX, ringY, CZ, false, false, Math.PI / 2);
+    }
+
+    // Corona Imperial gigante iluminada en la cúspide (y = 36.0..42.5)
+    this.#buildImperialCrown(group, buckets, upperDrumR, domeBaseY, domeHeight, oculusPhi, roseGoldMat, roseGlassMat, emissiveRingMat);
+
+    // Pórtico Monumental en la entrada Oeste (-X, mirando hacia -X)
     this.#buildEntranceArch(group, buckets, marbleMat, roseGoldMat);
 
     group.matrixAutoUpdate = false;
@@ -804,134 +1165,309 @@ export class CasinoDomeBuilder {
     this.#root.add(group);
   }
 
-  #buildEntranceArch(archParent, buckets, marbleMat, roseGoldMat) {
-    const colHeight = 4.65;
-    const colGeo = new THREE.CylinderGeometry(0.24, 0.29, colHeight, 18);
-    const baseGeo = new THREE.BoxGeometry(0.72, 0.28, 0.72);
-    const capGeo = new THREE.CylinderGeometry(0.36, 0.24, 0.28, 18);
-    this.#tempGeos.push(colGeo, baseGeo, capGeo);
+  #buildImperialCrown(group, buckets, upperDrumR, domeBaseY, domeHeight, oculusPhi, roseGoldMat, glassMat, emissiveRingMat) {
+    const oculusR = upperDrumR * Math.sin(oculusPhi); // ~5.04 m
+    const oculusY = domeBaseY + domeHeight * Math.cos(oculusPhi); // ~35.7 m
 
-    for (const side of [-1, 1]) {
-      const ang = side * ENTRANCE_HALF_ANG;
-      const cx = CX + Math.cos(ang) * R_WALL;
-      const cz = CZ + Math.sin(ang) * R_WALL;
+    const rubyMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xff4b96,
+        emissive: 0xff2a82,
+        emissiveIntensity: 0.92,
+        roughness: 0.14,
+        metalness: 0.35
+      })
+    );
+    rubyMat.userData.preserveRoughness = true;
 
-      this.#addBucketMesh(buckets, baseGeo, roseGoldMat, cx, PLATFORM_Y + 0.14, cz, false, true, 0, 0, 0, 1, 1, 1, true);
-      this.#addBucketMesh(buckets, colGeo, marbleMat, cx, PLATFORM_Y + 0.28 + colHeight * 0.5, cz, true, true, 0, 0, 0, 1, 1, 1, true);
-      this.#addBucketMesh(buckets, capGeo, roseGoldMat, cx, PLATFORM_Y + 0.28 + colHeight + 0.14, cz, false, true, 0, 0, 0, 1, 1, 1, true);
+    const starMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xffeeb0,
+        emissive: 0xffcc58,
+        emissiveIntensity: 0.95,
+        roughness: 0.14,
+        metalness: 0.55
+      })
+    );
+    starMat.userData.preserveRoughness = true;
+
+    // Aro del óculo y tambor de linterna de cristal (y = 35.7..38.0)
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(oculusR + 0.1, 0.24, 12, 48), roseGoldMat, CX, oculusY, CZ, false, true, Math.PI / 2);
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(oculusR * 0.92, oculusR * 0.98, 2.2, 24, 1, true), glassMat, CX, oculusY + 1.1, CZ, false, false);
+
+    // Doble aro dorado de la Corona Real (y = 38.0..39.2)
+    const crownBaseY = 38.0;
+    const crownR = oculusR * 0.95; // ~4.78 m
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(crownR, 0.22, 12, 48), roseGoldMat, CX, crownBaseY, CZ, false, true, Math.PI / 2);
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(crownR + 0.35, 0.16, 10, 48), emissiveRingMat, CX, crownBaseY + 0.65, CZ, false, false, Math.PI / 2);
+
+    // 12 puntas reales y 12 gemas rubí emisivas instanciadas
+    const spikeCount = 12;
+    const spikeGeo = this.#trackGeo(new THREE.ConeGeometry(0.42, 2.2, 8));
+    const gemGeo = this.#trackGeo(new THREE.OctahedronGeometry(0.32, 0));
+    const spikeInst = this.#trackInstanced(new THREE.InstancedMesh(spikeGeo, roseGoldMat, spikeCount));
+    const gemInst = this.#trackInstanced(new THREE.InstancedMesh(gemGeo, rubyMat, spikeCount * 2));
+    const dummy = this.#dummy;
+
+    for (let i = 0; i < spikeCount; i++) {
+      const ang = (i / spikeCount) * Math.PI * 2;
+      const sx = CX + Math.cos(ang) * (crownR + 0.18);
+      const sz = CZ + Math.sin(ang) * (crownR + 0.18);
+
+      dummy.position.set(sx, crownBaseY + 1.35, sz);
+      dummy.rotation.set(0, -ang, -0.14);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      spikeInst.setMatrixAt(i, dummy.matrix);
+
+      // Gema en la punta de cada almena
+      dummy.position.set(CX + Math.cos(ang) * (crownR + 0.35), crownBaseY + 2.48, CZ + Math.sin(ang) * (crownR + 0.35));
+      dummy.rotation.set(0, ang, 0);
+      dummy.scale.set(0.85, 1.15, 0.85);
+      dummy.updateMatrix();
+      gemInst.setMatrixAt(i * 2, dummy.matrix);
+
+      // Gema en la banda frontal de la corona
+      dummy.position.set(CX + Math.cos(ang) * (crownR + 0.45), crownBaseY + 0.32, CZ + Math.sin(ang) * (crownR + 0.45));
+      dummy.scale.set(1.0, 0.8, 0.55);
+      dummy.updateMatrix();
+      gemInst.setMatrixAt(i * 2 + 1, dummy.matrix);
+    }
+    this.#finalizeStaticInstanced(spikeInst, false, false);
+    this.#finalizeStaticInstanced(gemInst, false, false);
+    group.add(spikeInst, gemInst);
+
+    // 6 arcos imperiales que convergen en la cúspide (y = 40.9)
+    for (let a = 0; a < 6; a++) {
+      const ang = (a / 6) * Math.PI * 2;
+      const archPts = [
+        new THREE.Vector3(CX + Math.cos(ang) * crownR, crownBaseY + 0.4, CZ + Math.sin(ang) * crownR),
+        new THREE.Vector3(CX + Math.cos(ang) * (crownR * 0.62), crownBaseY + 2.3, CZ + Math.sin(ang) * (crownR * 0.62)),
+        new THREE.Vector3(CX, crownBaseY + 2.95, CZ)
+      ];
+      const curve = new THREE.CatmullRomCurve3(archPts);
+      this.#addBucketMesh(buckets, new THREE.TubeGeometry(curve, 12, 0.14, 8, false), roseGoldMat, 0, 0, 0, false, false);
     }
 
-    // Dintel curvo / entablamento mirando al Este (+X)
-    const archCenterX = CX + Math.cos(ENTRANCE_HALF_ANG) * R_WALL;
-    const archSpan = 2 * Math.sin(ENTRANCE_HALF_ANG) * R_WALL;
-    this.#addBucketMesh(buckets, new THREE.BoxGeometry(0.68, 0.92, archSpan + 0.68), marbleMat, archCenterX, 5.65, CZ, false, true);
+    // Estrella / Octaedro gigante superior en CROWN_TOP_Y = 42.5 (visible desde todo el reino)
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(0.18, 0.3, 1.3, 12), roseGoldMat, CX, 41.3, CZ, false, false);
+    const starGeo = this.#trackGeo(new THREE.OctahedronGeometry(1.45, 0));
+    const starMesh = new THREE.Mesh(starGeo, starMat);
+    starMesh.position.set(CX, CROWN_TOP_Y - 0.15, CZ);
+    group.add(starMesh);
+    this.#crownStar = starMesh;
 
-    const trimGeo = new THREE.BoxGeometry(0.76, 0.12, archSpan + 0.8);
-    this.#tempGeos.push(trimGeo);
-    this.#addBucketMesh(buckets, trimGeo, roseGoldMat, archCenterX, 5.18, CZ, false, true, 0, 0, 0, 1, 1, 1, true);
-    this.#addBucketMesh(buckets, trimGeo, roseGoldMat, archCenterX, 6.12, CZ, false, true, 0, 0, 0, 1, 1, 1, true);
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(1.95, 0.09, 10, 40), emissiveRingMat, CX, CROWN_TOP_Y - 0.15, CZ, false, false, Math.PI / 3);
+  }
 
-    // Cartel iluminado pintado en CanvasTexture: "♛ CÚPULA REAL · CASINO ♛"
+  #buildEntranceArch(archParent, buckets, marbleMat, roseGoldMat) {
+    const xCols = 128.8;
+    const colHeight = 6.4;
+    const colBaseY = PLATFORM_Y;
+    const colGeo = new THREE.CylinderGeometry(0.44, 0.52, colHeight, 16);
+    const plinthGeo = new THREE.BoxGeometry(1.35, 0.48, 1.35);
+    const capGeo = new THREE.CylinderGeometry(0.72, 0.46, 0.48, 16);
+    this.#tempGeos.push(colGeo, plinthGeo, capGeo);
+
+    // 4 columnas estriadas monumentales en la entrada Oeste (-X)
+    const colZOffsets = [-7.9, -4.3, 4.3, 7.9];
+    for (const czOff of colZOffsets) {
+      const zPos = CZ + czOff;
+      this.#addBucketMesh(buckets, plinthGeo, roseGoldMat, xCols, colBaseY + 0.24, zPos, false, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addBucketMesh(buckets, colGeo, marbleMat, xCols, colBaseY + 0.48 + colHeight * 0.5, zPos, true, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addBucketMesh(buckets, capGeo, roseGoldMat, xCols, colBaseY + 0.48 + colHeight + 0.24, zPos, false, true, 0, 0, 0, 1, 1, 1, true);
+
+      if (this.#collision) {
+        this.#collision.addCylinderCollider(xCols, zPos, 0.62, 0, 8.5);
+      }
+    }
+
+    // Entablamento monumental (y = 7.96..9.45)
+    const entY = colBaseY + 0.48 + colHeight + 0.48; // 7.96
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(1.65, 1.45, 17.6), marbleMat, xCols - 0.12, entY + 0.72, CZ, false, true);
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(1.85, 0.22, 18.0), roseGoldMat, xCols - 0.12, entY + 0.08, CZ, false, true);
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(1.92, 0.26, 18.3), roseGoldMat, xCols - 0.12, entY + 1.48, CZ, false, true);
+
+    // Frontón curvo imperial coronando el pórtico (y = 9.5..12.2)
+    this.#addBucketMesh(
+      buckets,
+      new THREE.CylinderGeometry(7.2, 7.2, 1.35, 32, 1, false, 0, Math.PI),
+      marbleMat,
+      xCols - 0.12,
+      entY + 1.5,
+      CZ,
+      false,
+      true,
+      0,
+      0,
+      Math.PI / 2
+    );
+    this.#addBucketMesh(
+      buckets,
+      new THREE.TorusGeometry(7.3, 0.22, 10, 40, Math.PI),
+      roseGoldMat,
+      xCols - 0.9,
+      entY + 1.5,
+      CZ,
+      false,
+      true,
+      0,
+      Math.PI / 2,
+      0
+    );
+
+    const crestMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xffd6ec,
+        emissive: 0xff66b3,
+        emissiveIntensity: 0.85,
+        roughness: 0.18,
+        metalness: 0.35
+      })
+    );
+    this.#addBucketMesh(buckets, new THREE.OctahedronGeometry(0.68, 0), crestMat, xCols - 0.85, entY + 3.25, CZ, false, false);
+
+    // Cartel luminoso mirando hacia -X (ry = -Math.PI / 2): "♛ GRAN CÚPULA REAL · CASINO ♛"
     const signTex = this.#createSignTexture();
     const signMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
         map: signTex,
         emissiveMap: signTex,
         emissive: 0xffd2ec,
-        emissiveIntensity: 0.72,
-        roughness: 0.26,
+        emissiveIntensity: 0.78,
+        roughness: 0.24,
         metalness: 0.15
       })
     );
-    this.#addBucketMesh(buckets, new THREE.PlaneGeometry(4.35, 0.78), signMat, archCenterX + 0.36, 5.65, CZ, false, false, 0, Math.PI / 2, 0);
+    const signX = xCols - 0.98;
+    const signY = entY + 0.74;
+    this.#addBucketMesh(buckets, new THREE.PlaneGeometry(10.6, 1.32), signMat, signX, signY, CZ, false, false, 0, -Math.PI / 2, 0);
 
-    // Bombillas doradas decorativas alrededor del cartel
-    const bulbGeo = this.#trackGeo(new THREE.SphereGeometry(0.045, 10, 8));
+    // Bombillas doradas emisivas instanciadas rodeando el cartel
+    const bulbGeo = this.#trackGeo(new THREE.SphereGeometry(0.08, 10, 8));
     const bulbMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
         color: 0xfff0c8,
         emissive: 0xffd175,
-        emissiveIntensity: 0.82,
+        emissiveIntensity: 0.88,
         roughness: 0.2
       })
     );
-    const bulbCount = 22;
+    const colsPerEdge = 21;
+    const bulbCount = colsPerEdge * 2 + 4;
     const bulbInst = this.#trackInstanced(new THREE.InstancedMesh(bulbGeo, bulbMat, bulbCount));
     const dummy = this.#dummy;
     let idx = 0;
-    for (let i = 0; i < 11; i++) {
-      const zPos = CZ - 2.1 + (i / 10) * 4.2;
-      for (const yOff of [-0.42, 0.42]) {
-        dummy.position.set(archCenterX + 0.37, 5.65 + yOff, zPos);
+
+    for (let i = 0; i < colsPerEdge; i++) {
+      const zPos = CZ - 5.2 + (i / (colsPerEdge - 1)) * 10.4;
+      for (const yOff of [-0.70, 0.70]) {
+        dummy.position.set(signX - 0.03, signY + yOff, zPos);
         dummy.rotation.set(0, 0, 0);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
         bulbInst.setMatrixAt(idx++, dummy.matrix);
       }
     }
+    for (const zSide of [-5.28, 5.28]) {
+      for (const yOff of [-0.25, 0.25]) {
+        dummy.position.set(signX - 0.03, signY + yOff, CZ + zSide);
+        dummy.updateMatrix();
+        bulbInst.setMatrixAt(idx++, dummy.matrix);
+      }
+    }
+
     this.#finalizeStaticInstanced(bulbInst, false, false);
     archParent.add(bulbInst);
   }
 
   // ---------------------------------------------------------------------------
-  // 4. Lámpara de araña central, alfombra imperial y luz interior
+  // 4. Interior de Lujo: Suelo Estrella 8 Puntas, Araña Colosal y 2 Fuentes
   // ---------------------------------------------------------------------------
 
-  #buildChandelierAndCarpet() {
+  #buildLuxuryInterior() {
     const group = new THREE.Group();
-    group.name = 'ChandelierAndCarpet';
+    group.name = 'LuxuryDomeInterior';
 
     const roseGoldMat = this.#sharedRoseGoldMat;
+    const carpetMat = this.#sharedCarpetMat;
+    const buckets = this.#staticBuckets;
 
-    // Alfombra circular central (Y = 0.375)
-    const carpetTex = this.#getSharedTexture('carpet', 4, 4);
-    const carpetMat = this.#trackMat(
+    // Suelo de mármol blanco, negro y dorado con estrella central gigante de 8 puntas (1024x1024)
+    const luxuryFloorTex = this.#createLuxuryFloorTexture();
+    const luxuryFloorMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
-        color: 0xc82b6e,
-        map: carpetTex,
-        roughness: 0.86,
-        metalness: 0.04
+        color: 0xffffff,
+        map: luxuryFloorTex,
+        roughness: 0.28,
+        metalness: 0.1
       })
     );
+    this.#addBucketMesh(
+      buckets,
+      new THREE.CircleGeometry(R_INNER, 72),
+      luxuryFloorMat,
+      CX,
+      PLATFORM_Y + 0.005,
+      CZ,
+      false,
+      true,
+      -Math.PI / 2
+    );
 
-    const buckets = this.#staticBuckets;
-    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(4.2, 4.24, 0.025, 48), carpetMat, CX, 0.375, CZ, false, true);
-    this.#addBucketMesh(buckets, new THREE.RingGeometry(4.12, 4.26, 56), roseGoldMat, CX, 0.389, CZ, false, true, -Math.PI / 2);
+    // Pasillo de alfombra burdeos/rosa desde la entrada Oeste (X = 128.5) hacia el centro
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(20.0, 0.018, 6.2), carpetMat, 138.5, PLATFORM_Y + 0.012, CZ, false, true);
+    for (const tz of [-3.15, 3.15]) {
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(20.0, 0.02, 0.14), roseGoldMat, 138.5, PLATFORM_Y + 0.014, CZ + tz, false, true);
+    }
 
-    // Pasillo de alfombra hacia la escalinata Este
-    this.#addBucketMesh(buckets, new THREE.BoxGeometry(4.65, 0.022, 2.5), carpetMat, CX + 6.45, 0.374, CZ, false, true);
-
-    // Disco sutil de brillo cálido en el suelo (reemplaza floorFill PointLight)
+    // Halo cálido sutil en el suelo bajo la araña
     const floorGlowTex = this.#createSparkTexture();
     const floorGlowMat = this.#trackMat(
       new THREE.MeshBasicMaterial({
         map: floorGlowTex,
-        color: 0xffb8d8,
+        color: 0xffc6e2,
         transparent: true,
-        opacity: 0.22,
+        opacity: 0.18,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         toneMapped: false
       })
     );
     floorGlowMat.userData.isVfx = true;
-    this.#addBucketMesh(buckets, new THREE.CircleGeometry(4.2, 32), floorGlowMat, CX, 0.391, CZ, false, false, -Math.PI / 2);
+    this.#addBucketMesh(buckets, new THREE.CircleGeometry(14.0, 48), floorGlowMat, CX, PLATFORM_Y + 0.016, CZ, false, false, -Math.PI / 2);
 
-    // Lámpara de araña suspendida del óculo superior (Y = 14.9 -> Y = 9.4)
+    // Lámpara de araña colosal colgante (Y = 34.5 a Y = 16.8)
+    this.#buildColossalChandelier(group, buckets, roseGoldMat);
+
+    // 2 fuentes interiores ornamentales en (145, PLATFORM_Y, -13) y (145, PLATFORM_Y, 13)
+    for (const fz of [-13.0, 13.0]) {
+      this.#buildOrnamentalFountain(group, buckets, 145.0, PLATFORM_Y, fz, 2.55, 2.6);
+    }
+
+    group.matrixAutoUpdate = false;
+    group.updateMatrix();
+    this.#root.add(group);
+  }
+
+  #buildColossalChandelier(group, buckets, roseGoldMat) {
     const chanGroup = new THREE.Group();
-    chanGroup.position.set(CX, 10.6, CZ);
+    chanGroup.position.set(CX, 22.0, CZ);
 
-    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(0.05, 0.05, 4.5, 10), roseGoldMat, CX, 10.6 + 2.25, CZ, false, true);
+    // Cadena/mástil y dosel superior hasta Y = 34.5
+    this.#addBucketMesh(buckets, new THREE.CylinderGeometry(0.16, 0.24, 13.2, 12), roseGoldMat, CX, 28.6, CZ, false, false);
+    this.#addBucketMesh(buckets, new THREE.ConeGeometry(2.6, 1.4, 24), roseGoldMat, CX, 34.5, CZ, false, false);
+    this.#addBucketMesh(buckets, new THREE.TorusGeometry(2.6, 0.14, 10, 32), roseGoldMat, CX, 33.8, CZ, false, false, Math.PI / 2);
 
     const crystalMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
         color: 0xfff0fa,
         emissive: 0xffcae6,
-        emissiveIntensity: 0.58,
+        emissiveIntensity: 0.65,
         transparent: true,
-        opacity: 0.82,
-        roughness: 0.15,
-        metalness: 0.25
+        opacity: 0.85,
+        roughness: 0.14,
+        metalness: 0.28
       })
     );
     crystalMat.userData.preserveRoughness = true;
@@ -940,24 +1476,29 @@ export class CasinoDomeBuilder {
       new THREE.MeshStandardMaterial({
         color: 0xfff5d6,
         emissive: 0xffd584,
-        emissiveIntensity: 0.82,
-        roughness: 0.2
+        emissiveIntensity: 0.88,
+        roughness: 0.18
       })
     );
 
-    const tierRadii = [1.55, 1.05, 0.55];
-    const tierY = [0.25, -0.35, -0.85];
-    const crystalGeo = new THREE.OctahedronGeometry(0.09, 0);
-    const bulbGeo = new THREE.SphereGeometry(0.055, 10, 8);
+    // 4 aros concéntricos giratorios desde Y = 22.0 hasta Y = 17.0 (puntas hasta 16.8)
+    const tiers = [
+      { r: 5.4, y: 0.0, count: 20, tube: 0.14 },
+      { r: 3.9, y: -1.65, count: 16, tube: 0.12 },
+      { r: 2.5, y: -3.15, count: 12, tube: 0.10 },
+      { r: 1.25, y: -4.45, count: 8, tube: 0.08 }
+    ];
+
+    const crystalGeo = new THREE.OctahedronGeometry(0.24, 0);
+    const bulbGeo = new THREE.SphereGeometry(0.14, 10, 8);
     const dummy = this.#dummy;
 
-    for (let t = 0; t < tierRadii.length; t++) {
-      const r = tierRadii[t];
-      const y = tierY[t];
+    for (let t = 0; t < tiers.length; t++) {
+      const { r, y, count, tube } = tiers[t];
       const spinner = new THREE.Group();
       spinner.position.y = y;
 
-      const hoopGeo = new THREE.TorusGeometry(r, 0.04, 10, 32);
+      const hoopGeo = new THREE.TorusGeometry(r, tube, 10, 40);
       const goldPieces = [];
       const crystalPieces = [];
       const flamePieces = [];
@@ -968,25 +1509,30 @@ export class CasinoDomeBuilder {
       dummy.updateMatrix();
       goldPieces.push({ geometry: hoopGeo, matrix: dummy.matrix.clone() });
 
-      const count = 12 - t * 3;
       for (let c = 0; c < count; c++) {
         const a = (c / count) * Math.PI * 2;
         const px = Math.cos(a) * r;
         const pz = Math.sin(a) * r;
 
-        dummy.position.set(px, -0.18, pz);
+        dummy.position.set(px, -0.45, pz);
         dummy.rotation.set(0, 0, 0);
-        dummy.scale.set(0.75, 1.9, 0.75);
+        dummy.scale.set(0.8, 2.0, 0.8);
         dummy.updateMatrix();
         crystalPieces.push({ geometry: crystalGeo, matrix: dummy.matrix.clone() });
 
-        if (t < 2) {
-          dummy.position.set(px, 0.11, pz);
-          dummy.rotation.set(0, 0, 0);
-          dummy.scale.set(1, 1, 1);
-          dummy.updateMatrix();
-          flamePieces.push({ geometry: bulbGeo, matrix: dummy.matrix.clone() });
-        }
+        dummy.position.set(px, 0.28, pz);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        flamePieces.push({ geometry: bulbGeo, matrix: dummy.matrix.clone() });
+      }
+
+      if (t === tiers.length - 1) {
+        // Cristal colgante central inferior (llega a Y ≈ 16.8)
+        dummy.position.set(0, -0.75, 0);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(1.6, 2.6, 1.6);
+        dummy.updateMatrix();
+        crystalPieces.push({ geometry: crystalGeo, matrix: dummy.matrix.clone() });
       }
 
       for (const [pieces, mat] of [
@@ -1014,6 +1560,100 @@ export class CasinoDomeBuilder {
     chanGroup.matrixAutoUpdate = false;
     chanGroup.updateMatrix();
     group.add(chanGroup);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 4b. 12 Palmeras / Jardineras de Lujo (InstancedMesh en r = 30.2)
+  // ---------------------------------------------------------------------------
+
+  #buildPalmPlanters() {
+    const group = new THREE.Group();
+    group.name = 'LuxuryPalmPlanters';
+
+    const marbleMat = this.#sharedMarbleMat;
+    const roseGoldMat = this.#sharedRoseGoldMat;
+    const trunkMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0x7c5742,
+        roughness: 0.86,
+        metalness: 0.04
+      })
+    );
+    const frondMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0x3f9653,
+        roughness: 0.68,
+        metalness: 0.04
+      })
+    );
+
+    const count = 12;
+    const radius = 30.2;
+    const startAng = Math.PI + 0.42;
+    const endAng = Math.PI * 3 - 0.42;
+    const positions = [];
+    for (let i = 0; i < count; i++) {
+      const ang = startAng + (i / (count - 1)) * (endAng - startAng);
+      positions.push({
+        x: CX + Math.cos(ang) * radius,
+        z: CZ + Math.sin(ang) * radius,
+        ang
+      });
+    }
+
+    const potGeo = this.#trackGeo(new THREE.CylinderGeometry(0.84, 0.66, 0.92, 12));
+    const potTrimGeo = this.#trackGeo(new THREE.TorusGeometry(0.84, 0.08, 8, 24));
+    const trunkGeo = this.#trackGeo(new THREE.CylinderGeometry(0.16, 0.26, 3.8, 10));
+    const frondGeo = this.#trackGeo(new THREE.ConeGeometry(0.32, 2.35, 6));
+    frondGeo.translate(0, 1.17, 0);
+
+    const potInst = this.#trackInstanced(new THREE.InstancedMesh(potGeo, marbleMat, count));
+    const trimInst = this.#trackInstanced(new THREE.InstancedMesh(potTrimGeo, roseGoldMat, count));
+    const trunkInst = this.#trackInstanced(new THREE.InstancedMesh(trunkGeo, trunkMat, count));
+    const frondsPerPalm = 7;
+    const frondInst = this.#trackInstanced(new THREE.InstancedMesh(frondGeo, frondMat, count * frondsPerPalm));
+
+    const dummy = this.#dummy;
+    let frondIdx = 0;
+
+    for (let i = 0; i < count; i++) {
+      const { x, z, ang } = positions[i];
+      dummy.position.set(x, PLATFORM_Y + 0.46, z);
+      dummy.rotation.set(0, ang, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      potInst.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(x, PLATFORM_Y + 0.92, z);
+      dummy.rotation.set(Math.PI / 2, 0, 0);
+      dummy.updateMatrix();
+      trimInst.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(x, PLATFORM_Y + 2.75, z);
+      dummy.rotation.set(0.05, ang, 0);
+      dummy.updateMatrix();
+      trunkInst.setMatrixAt(i, dummy.matrix);
+
+      for (let f = 0; f < frondsPerPalm; f++) {
+        const fa = ang + (f / frondsPerPalm) * Math.PI * 2;
+        dummy.position.set(x, PLATFORM_Y + 4.55, z);
+        dummy.rotation.set(0, fa, 0);
+        dummy.rotateX(1.08 + (f % 2) * 0.18);
+        dummy.scale.set(1.0, 1.0, 0.35);
+        dummy.updateMatrix();
+        frondInst.setMatrixAt(frondIdx++, dummy.matrix);
+      }
+
+      if (this.#collision) {
+        this.#collision.addCylinderCollider(x, z, 0.85, PLATFORM_Y, PLATFORM_Y + 4.5);
+      }
+    }
+
+    this.#finalizeStaticInstanced(potInst, false, true);
+    this.#finalizeStaticInstanced(trimInst, false, false);
+    this.#finalizeStaticInstanced(trunkInst, false, true);
+    this.#finalizeStaticInstanced(frondInst, false, false);
+    group.add(potInst, trimInst, trunkInst, frondInst);
 
     group.matrixAutoUpdate = false;
     group.updateMatrix();
@@ -1021,7 +1661,7 @@ export class CasinoDomeBuilder {
   }
 
   // ---------------------------------------------------------------------------
-  // 5. 4 Máquinas Tragaperras de Lujo (Arco Norte)
+  // 5. Gran Ala de Tragaperras (8 Máquinas en Arco Norte r = 22.0)
   // ---------------------------------------------------------------------------
 
   #buildSlotMachines() {
@@ -1111,7 +1751,6 @@ export class CasinoDomeBuilder {
       })
     );
 
-    // Geometrías compartidas
     const pedestalGeo = new THREE.BoxGeometry(0.94, 0.94, 0.64);
     const baseTrimGeo = new THREE.BoxGeometry(0.98, 0.08, 0.68);
     const cabinetGeo = new THREE.BoxGeometry(0.90, 0.70, 0.56);
@@ -1132,13 +1771,11 @@ export class CasinoDomeBuilder {
       marqueeBoxGeo, marqueeFaceGeo, topperGeo, trayGeo, consoleGeo, winPaneGeo, hubGeo
     );
 
-    // Instanced geometries for coins (24) & buttons (12)
     const coinGeo = this.#trackGeo(new THREE.CylinderGeometry(0.032, 0.032, 0.012, 12));
     const btnGeo = this.#trackGeo(new THREE.CylinderGeometry(0.036, 0.04, 0.035, 14));
     const coinInst = this.#trackInstanced(new THREE.InstancedMesh(coinGeo, btnMat, SLOT_SPECS.length * 6));
     const btnInst = this.#trackInstanced(new THREE.InstancedMesh(btnGeo, btnMat, SLOT_SPECS.length * 3));
 
-    // Rodillo y palanca animados (se mantienen por máquina)
     const reelGeo = this.#trackGeo(new THREE.CylinderGeometry(0.165, 0.165, 0.155, 40, 1, false));
     reelGeo.rotateZ(Math.PI / 2);
     const shaftGeo = this.#trackGeo(new THREE.CylinderGeometry(0.02, 0.024, 0.45, 12));
@@ -1174,12 +1811,10 @@ export class CasinoDomeBuilder {
         this.#addBucketPiece(buckets, geo, mat, worldMat, castShadow, receiveShadow, true);
       };
 
-      // Pedestal inferior y zócalo
       pushMachineStatic(pedestalGeo, bodyPinkMat, 0, 0.47, 0, true, true);
       pushMachineStatic(baseTrimGeo, roseGoldMat, 0, 0.04, 0, false, true);
-
-      // Bandeja de monedas y 6 monedas instanciadas
       pushMachineStatic(trayGeo, roseGoldMat, 0, 0.62, 0.36, false, true);
+
       for (let c = 0; c < 6; c++) {
         localObj.position.set(-0.2 + c * 0.08, 0.675, 0.36 + (c % 2 === 0 ? 0.02 : -0.02));
         localObj.rotation.set(0, 0, 0);
@@ -1189,7 +1824,6 @@ export class CasinoDomeBuilder {
         coinInst.setMatrixAt(coinIdx++, worldMat);
       }
 
-      // Consola frontal inclinada con 3 botones instanciados
       pushMachineStatic(consoleGeo, darkVelvetMat, 0, 0.96, 0.32, false, true, 0.25);
       for (let b = -1; b <= 1; b++) {
         localObj.position.set(b * 0.16, 1.03, 0.34);
@@ -1200,7 +1834,6 @@ export class CasinoDomeBuilder {
         btnInst.setMatrixAt(btnIdx++, worldMat);
       }
 
-      // Cuerpo superior, hueco y marco oro-rosa
       pushMachineStatic(cabinetGeo, bodyPinkMat, 0, 1.32, -0.02, true, true);
       pushMachineStatic(recessGeo, darkVelvetMat, 0, 1.38, 0.21, false, true);
       pushMachineStatic(frameHGeo, roseGoldMat, 0, 1.55, 0.28, false, true);
@@ -1209,7 +1842,6 @@ export class CasinoDomeBuilder {
         pushMachineStatic(frameVGeo, roseGoldMat, side * 0.355, 1.38, 0.28, false, true);
       }
 
-      // 3 rodillos cilíndricos giratorios centrados en local Y = 1.38 (matrixAutoUpdate = true!)
       const reels = [];
       const initSymbols = [0, 4, (sIdx + 1) % 5];
       for (let r = 0; r < 3; r++) {
@@ -1220,14 +1852,12 @@ export class CasinoDomeBuilder {
         reels.push(reel);
       }
 
-      // Cristal protector, marquesina y corona
       pushMachineStatic(winPaneGeo, glassWindowMat, 0, 1.38, 0.295, false, false);
       pushMachineStatic(marqueeBoxGeo, roseGoldMat, 0, 1.84, 0.02, false, true);
       pushMachineStatic(marqueeFaceGeo, marqueeMat, 0, 1.84, 0.256, false, false);
       pushMachineStatic(topperGeo, btnMat, 0, 2.10, 0.02, false, false, 0, 0, 0, 1.2, 0.85, 0.7);
       pushMachineStatic(hubGeo, roseGoldMat, 0.46, 1.24, 0.04, false, true);
 
-      // Palanca lateral derecha articulada (+X local, matrixAutoUpdate = true!)
       const leverPivot = new THREE.Group();
       leverPivot.name = `LeverPivot_${spec.id}`;
       leverPivot.position.set(0.50, 1.24, 0.04);
@@ -1250,7 +1880,7 @@ export class CasinoDomeBuilder {
       group.add(machine);
 
       if (this.#collision) {
-        this.#collision.addCylinderCollider(spec.x, spec.z, 0.65, PLATFORM_Y, 2.5);
+        this.#collision.addCylinderCollider(spec.x, spec.z, 0.65, PLATFORM_Y, PLATFORM_Y + 2.5);
       }
 
       const playerStandPos = this.#localToWorld(spec.x, PLATFORM_Y, spec.z, spec.rotY, 0, 0, 1.15);
@@ -1285,7 +1915,7 @@ export class CasinoDomeBuilder {
   }
 
   // ---------------------------------------------------------------------------
-  // 6. 2 Mesas Semicirculares de Blackjack de Lujo (Arco Sur)
+  // 6. Salón VIP de Blackjack (Plataforma VIP_Y = 0.92, Escalinata y 4 Mesas)
   // ---------------------------------------------------------------------------
 
   #buildBlackjackTables() {
@@ -1294,6 +1924,98 @@ export class CasinoDomeBuilder {
 
     const roseGoldMat = this.#sharedRoseGoldMat;
     const marbleMat = this.#sharedMarbleMat;
+    const carpetMat = this.#sharedCarpetMat;
+    const buckets = this.#staticBuckets;
+
+    // Plataforma elevada VIP en el Sur: X ∈ [147, 177], Z ∈ [12.5, 26.5], VIP_Y = 0.92
+    const vipH = VIP_Y - PLATFORM_Y; // 0.32 m
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(30.0, vipH, 14.0), marbleMat, 162.0, PLATFORM_Y + vipH * 0.5, 19.5, true, true);
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(29.4, 0.018, 13.4), carpetMat, 162.0, VIP_Y + 0.008, 19.5, false, true);
+    // Ribete oro-rosa superior de la plataforma VIP
+    for (const wz of [12.54, 26.46]) {
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(30.1, 0.06, 0.14), roseGoldMat, 162.0, VIP_Y - 0.01, wz, false, true);
+    }
+    for (const wx of [147.04, 176.96]) {
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(0.14, 0.06, 14.0), roseGoldMat, wx, VIP_Y - 0.01, 19.5, false, true);
+    }
+
+    // Escalinata ancha de terciopelo burdeos y oro en el borde Norte: X ∈ [154, 170], Z ∈ [10.0, 12.8]
+    const vipStepCount = 3;
+    const vipZStart = 10.1;
+    const vipZEnd = 12.6;
+    const vipStepRun = (vipZEnd - vipZStart) / vipStepCount;
+    const vipStepRise = vipH / vipStepCount;
+
+    for (let i = 0; i < vipStepCount; i++) {
+      const h = (i + 1) * vipStepRise;
+      const minZ = vipZStart + i * vipStepRun;
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(16.0, h, vipStepRun + 0.08), marbleMat, 162.0, PLATFORM_Y + h * 0.5, minZ + vipStepRun * 0.5, true, true);
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(16.04, 0.03, 0.05), roseGoldMat, 162.0, PLATFORM_Y + h - 0.01, minZ + 0.02, false, true);
+    }
+    const vipRampLen = Math.hypot(vipZEnd - vipZStart, vipH);
+    const vipRampSlope = Math.atan2(vipH, vipZEnd - vipZStart);
+    this.#addBucketMesh(
+      buckets,
+      new THREE.BoxGeometry(14.8, 0.022, vipRampLen + 0.2),
+      carpetMat,
+      162.0,
+      PLATFORM_Y + vipH * 0.5 + 0.022,
+      (vipZStart + vipZEnd) * 0.5,
+      false,
+      true,
+      -vipRampSlope,
+      0,
+      0
+    );
+
+    // Barandillas doradas en laterales y borde de la plataforma VIP (dejando libre X ∈ [154, 170])
+    const railPostGeo = new THREE.CylinderGeometry(0.09, 0.11, 0.96, 10);
+    const railOrbGeo = new THREE.SphereGeometry(0.13, 10, 8);
+    this.#tempGeos.push(railPostGeo, railOrbGeo);
+
+    const addVipRailRun = (x0, z0, x1, z1, posts) => {
+      const len = Math.hypot(x1 - x0, z1 - z0);
+      const yaw = Math.atan2(x1 - x0, z1 - z0);
+      this.#addBucketMesh(
+        buckets,
+        new THREE.BoxGeometry(0.1, 0.08, len),
+        roseGoldMat,
+        (x0 + x1) * 0.5,
+        VIP_Y + 0.92,
+        (z0 + z1) * 0.5,
+        false,
+        true,
+        0,
+        yaw,
+        0
+      );
+      for (let i = 0; i <= posts; i++) {
+        const t = i / posts;
+        const px = x0 + (x1 - x0) * t;
+        const pz = z0 + (z1 - z0) * t;
+        this.#addBucketMesh(buckets, railPostGeo, roseGoldMat, px, VIP_Y + 0.48, pz, false, true, 0, 0, 0, 1, 1, 1, true);
+        this.#addBucketMesh(buckets, railOrbGeo, roseGoldMat, px, VIP_Y + 1.0, pz, false, false, 0, 0, 0, 1, 1, 1, true);
+      }
+    };
+
+    addVipRailRun(147.2, 12.7, 154.0, 12.7, 3);
+    addVipRailRun(170.0, 12.7, 176.8, 12.7, 3);
+    addVipRailRun(147.2, 12.7, 147.2, 26.3, 6);
+    addVipRailRun(176.8, 12.7, 176.8, 26.3, 6);
+    addVipRailRun(147.2, 26.3, 176.8, 26.3, 12);
+
+    if (this.#collision) {
+      this.#collision.addFlatSurface(147, 177, 12.5, 26.5, VIP_Y);
+      this.#collision.addRampSurface(154, 170, 10.0, 12.8, 'z', 10.2, 12.6, PLATFORM_Y, VIP_Y);
+      // Colisionadores en tramos de barandilla VIP
+      this.#collision.addBox(147.0, 154.05, VIP_Y - 0.1, VIP_Y + 2.0, 12.5, 12.9);
+      this.#collision.addBox(169.95, 177.0, VIP_Y - 0.1, VIP_Y + 2.0, 12.5, 12.9);
+      this.#collision.addBox(147.0, 147.4, VIP_Y - 0.1, VIP_Y + 2.0, 12.5, 26.5);
+      this.#collision.addBox(176.6, 177.0, VIP_Y - 0.1, VIP_Y + 2.0, 12.5, 26.5);
+      this.#collision.addBox(147.0, 177.0, VIP_Y - 0.1, VIP_Y + 2.0, 26.1, 26.5);
+    }
+
+    // 4 Mesas reales de Blackjack sobre VIP_Y = 0.92
     const feltTex = this.#createBlackjackFeltTexture();
     const feltMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
@@ -1339,7 +2061,6 @@ export class CasinoDomeBuilder {
     const chipColors = [0xffd25a, 0xe83b7a, 0x45c8ff, 0xa86bff, 0xfff2f8];
     const chipMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.28, metalness: 0.25 }));
 
-    // Forma semicircular del tablero (lado plano crupier en Z = -0.38, arco jugador hasta Z = +0.68)
     const tableRadius = 1.06;
     const flatZ = -0.36;
     const feltShape = new THREE.Shape();
@@ -1392,8 +2113,8 @@ export class CasinoDomeBuilder {
     const chipGeo = this.#trackGeo(new THREE.CylinderGeometry(0.032, 0.032, 0.012, 16));
     const chipInst = this.#trackInstanced(new THREE.InstancedMesh(chipGeo, chipMat, BLACKJACK_SPECS.length * chipsPerTable));
 
-    const tableSurfaceY = 0.86;
-    const buckets = this.#staticBuckets;
+    const tableLocalY = 0.86;
+    const tableSurfaceY = VIP_Y + tableLocalY;
     const localObj = new THREE.Object3D();
     const subObj = new THREE.Object3D();
     const subMat = new THREE.Matrix4();
@@ -1404,7 +2125,7 @@ export class CasinoDomeBuilder {
     for (const spec of BLACKJACK_SPECS) {
       const table = new THREE.Group();
       table.name = `BlackjackTable_${spec.id}`;
-      table.position.set(spec.x, PLATFORM_Y, spec.z);
+      table.position.set(spec.x, VIP_Y, spec.z);
       table.rotation.y = spec.rotY;
       table.matrixAutoUpdate = false;
       table.updateMatrix();
@@ -1418,16 +2139,14 @@ export class CasinoDomeBuilder {
         this.#addBucketPiece(buckets, geo, mat, worldMat, castShadow, receiveShadow, true);
       };
 
-      // Pedestal, tablero, tapete, borde y trim trasero
       pushTableStatic(pedBaseGeo, roseGoldMat, 0, 0.07, 0.05, false, true);
       pushTableStatic(pedColGeo, marbleMat, 0, 0.48, 0.05, true, true);
-      pushTableStatic(tableBaseGeo, roseGoldMat, 0, tableSurfaceY - 0.096, flatZ, true, true);
-      pushTableStatic(feltTopGeo, feltMat, 0, tableSurfaceY - 0.0005, flatZ, false, true);
-      pushTableStatic(railGeo, railMat, 0, tableSurfaceY - 0.02, flatZ, false, true);
-      pushTableStatic(backTrimGeo, roseGoldMat, 0, tableSurfaceY - 0.046, flatZ - 0.05, false, true);
+      pushTableStatic(tableBaseGeo, roseGoldMat, 0, tableLocalY - 0.096, flatZ, true, true);
+      pushTableStatic(feltTopGeo, feltMat, 0, tableLocalY - 0.0005, flatZ, false, true);
+      pushTableStatic(railGeo, railMat, 0, tableLocalY - 0.02, flatZ, false, true);
+      pushTableStatic(backTrimGeo, roseGoldMat, 0, tableLocalY - 0.046, flatZ - 0.05, false, true);
 
-      // Zapato dispensador de cartas en shoeLocalPos = (-0.68, 0.86, -0.25)
-      const shoePos = new THREE.Vector3(-0.68, tableSurfaceY, -0.25);
+      const shoePos = new THREE.Vector3(-0.68, tableLocalY, -0.25);
       localObj.position.copy(shoePos);
       localObj.rotation.set(0, 0.42, 0);
       localObj.scale.set(1, 1, 1);
@@ -1447,11 +2166,10 @@ export class CasinoDomeBuilder {
         this.#addBucketPiece(buckets, geo, mat, worldMat, false, true, true);
       }
 
-      // Pilas de fichas 3D instanciadas (60 total)
       for (const st of stackSpecs) {
         chipColor.setHex(chipColors[st.matIdx]);
         for (let k = 0; k < st.count; k++) {
-          localObj.position.set(st.x, tableSurfaceY + 0.008 + k * 0.013, st.z);
+          localObj.position.set(st.x, tableLocalY + 0.008 + k * 0.013, st.z);
           localObj.rotation.set(0, 0, 0);
           localObj.scale.set(1, 1, 1);
           localObj.updateMatrix();
@@ -1462,7 +2180,6 @@ export class CasinoDomeBuilder {
         }
       }
 
-      // Silla tapizada elegante situada detrás de playerStandPos
       pushTableStatic(chairStemGeo, roseGoldMat, 0, 0.24, 1.82, false, true);
       pushTableStatic(chairFootGeo, roseGoldMat, 0, 0.02, 1.82, false, true);
       pushTableStatic(seatGeo, velvetChairMat, 0, 0.52, 1.82, false, true);
@@ -1472,13 +2189,13 @@ export class CasinoDomeBuilder {
       group.add(table);
 
       if (this.#collision) {
-        this.#collision.addCylinderCollider(spec.x, spec.z, 1.15, PLATFORM_Y, 1.4);
+        this.#collision.addCylinderCollider(spec.x, spec.z, 1.15, VIP_Y, VIP_Y + 1.4);
       }
 
-      const playerStandPos = this.#localToWorld(spec.x, PLATFORM_Y, spec.z, spec.rotY, 0, 0, 1.32);
-      const interactPos = this.#localToWorld(spec.x, PLATFORM_Y, spec.z, spec.rotY, 0, 0, 1.45);
-      const cameraPos = this.#localToWorld(spec.x, PLATFORM_Y, spec.z, spec.rotY, 0, 1.48, 1.12);
-      const cameraLookAt = this.#localToWorld(spec.x, PLATFORM_Y, spec.z, spec.rotY, 0, 0.86, 0.05);
+      const playerStandPos = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, 0, 1.32);
+      const interactPos = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, 0, 1.45);
+      const cameraPos = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, 1.48, 1.12);
+      const cameraLookAt = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, tableLocalY, 0.05);
 
       this.#stations.push({
         id: spec.id,
@@ -1492,9 +2209,9 @@ export class CasinoDomeBuilder {
         cameraLookAt,
         tableSurfaceY,
         shoeLocalPos: shoePos.clone(),
-        playerCardOriginLocal: new THREE.Vector3(0.0, tableSurfaceY, 0.32),
-        dealerCardOriginLocal: new THREE.Vector3(0.0, tableSurfaceY, -0.22),
-        betSpotLocal: new THREE.Vector3(0.0, tableSurfaceY, 0.52)
+        playerCardOriginLocal: new THREE.Vector3(0.0, tableLocalY, 0.32),
+        dealerCardOriginLocal: new THREE.Vector3(0.0, tableLocalY, -0.22),
+        betSpotLocal: new THREE.Vector3(0.0, tableLocalY, 0.52)
       });
     }
 
@@ -1507,7 +2224,7 @@ export class CasinoDomeBuilder {
   }
 
   // ---------------------------------------------------------------------------
-  // 7. Marcadores discretos de interacción en el suelo
+  // 7. Marcadores discretos de interacción en el suelo (PLATFORM_Y y VIP_Y)
   // ---------------------------------------------------------------------------
 
   #buildInteractionMarkers() {
@@ -1541,7 +2258,7 @@ export class CasinoDomeBuilder {
     for (let i = 0; i < this.#stations.length; i++) {
       const station = this.#stations[i];
       const rx = station.interactPos.x;
-      const ry = PLATFORM_Y + 0.015;
+      const ry = station.interactPos.y + 0.015;
       const rz = station.interactPos.z;
       this.#markerRingPositions.push({ x: rx, y: ry, z: rz });
 
@@ -1551,7 +2268,7 @@ export class CasinoDomeBuilder {
       dummy.updateMatrix();
       ringInst.setMatrixAt(i, dummy.matrix);
 
-      dummy.position.set(rx, PLATFORM_Y + 0.016, rz);
+      dummy.position.set(rx, ry + 0.001, rz);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
@@ -1569,7 +2286,7 @@ export class CasinoDomeBuilder {
   }
 
   // ---------------------------------------------------------------------------
-  // 8. Sistema de Fuegos Artificiales de la Cúpula (PointsMaterial + PointLight único)
+  // 8. Sistema de Fuegos Artificiales a Gran Escala (PointsMaterial + PointLight único)
   // ---------------------------------------------------------------------------
 
   #initFireworksSystem() {
@@ -1578,7 +2295,6 @@ export class CasinoDomeBuilder {
     this.#fwGroup.updateMatrix();
     const sparkTex = this.#createSparkTexture();
 
-    // Buffer de chispas de explosión
     this.#fwSparkPos = new Float32Array(this.#fwSparkMax * 3);
     this.#fwSparkVel = new Float32Array(this.#fwSparkMax * 3);
     this.#fwSparkCol = new Float32Array(this.#fwSparkMax * 3);
@@ -1597,7 +2313,7 @@ export class CasinoDomeBuilder {
 
     const sparkMat = this.#trackMat(
       new THREE.PointsMaterial({
-        size: 0.30,
+        size: 0.58,
         map: sparkTex,
         vertexColors: true,
         transparent: true,
@@ -1616,7 +2332,6 @@ export class CasinoDomeBuilder {
     this.#fwSparkPoints = sparkPoints;
     this.#fwGroup.add(sparkPoints);
 
-    // Buffer de estelas y cabezas de cohetes
     this.#fwTrailPos = new Float32Array(this.#fwTrailMax * 3);
     this.#fwTrailVel = new Float32Array(this.#fwTrailMax * 3);
     this.#fwTrailCol = new Float32Array(this.#fwTrailMax * 3);
@@ -1635,7 +2350,7 @@ export class CasinoDomeBuilder {
 
     const trailMat = this.#trackMat(
       new THREE.PointsMaterial({
-        size: 0.22,
+        size: 0.38,
         map: sparkTex,
         vertexColors: true,
         transparent: true,
@@ -1654,9 +2369,9 @@ export class CasinoDomeBuilder {
     this.#fwTrailPoints = trailPoints;
     this.#fwGroup.add(trailPoints);
 
-    // 1 único PointLight local dentro de la cúpula, siempre visible (reposo: 1.35 cálido, fuegos: hasta 10.0)
-    this.#fwLight = new THREE.PointLight(0xffdcb8, REST_LIGHT_INTENSITY, 24, 1.5);
-    this.#fwLight.position.set(CX, 9.2, CZ);
+    // Único PointLight interior de la cúpula (ajustado a gran escala)
+    this.#fwLight = new THREE.PointLight(0xffdcb8, REST_LIGHT_INTENSITY, 68, 1.4);
+    this.#fwLight.position.set(CX, 18.0, CZ);
     this.#fwLight.visible = true;
     this.#fwLight.matrixAutoUpdate = false;
     this.#fwLight.updateMatrix();
@@ -1691,8 +2406,8 @@ export class CasinoDomeBuilder {
     const secondaryHex = FIREWORK_PALETTE[Math.floor(Math.random() * FIREWORK_PALETTE.length)];
     const c1 = _tmpFwColor1.setHex(primaryHex);
     const c2 = _tmpFwColor2.setHex(secondaryHex);
-    const count = isInterior ? 76 : 96;
-    const baseSpeed = isInterior ? 3.8 : 6.2;
+    const count = isInterior ? 88 : 114;
+    const baseSpeed = isInterior ? 7.5 : 13.5;
 
     for (let i = 0; i < count; i++) {
       const idx = this.#fwSparkCount;
@@ -1708,7 +2423,7 @@ export class CasinoDomeBuilder {
       this.#fwSparkPos[i3 + 1] = y;
       this.#fwSparkPos[i3 + 2] = z;
       this.#fwSparkVel[i3] = rHoriz * Math.cos(theta) * speed;
-      this.#fwSparkVel[i3 + 1] = u * speed + 0.8;
+      this.#fwSparkVel[i3 + 1] = u * speed + 1.2;
       this.#fwSparkVel[i3 + 2] = rHoriz * Math.sin(theta) * speed;
 
       const col = i % 3 === 0 ? c2 : c1;
@@ -1719,11 +2434,10 @@ export class CasinoDomeBuilder {
       this.#fwSparkCol[i3 + 1] = col.g;
       this.#fwSparkCol[i3 + 2] = col.b;
       this.#fwSparkAge[idx] = 0;
-      this.#fwSparkLife[idx] = 1.45 + Math.random() * 0.95;
+      this.#fwSparkLife[idx] = 1.65 + Math.random() * 1.1;
       this.#fwSparkCount++;
     }
 
-    // Pulso de luz festiva (tope <= 10.0)
     this.#fwFlashColor.copy(c1);
     this.#fwFlashEnergy = Math.min(8.65, this.#fwFlashEnergy + (isInterior ? 6.0 : 4.2));
   }
@@ -1745,14 +2459,13 @@ export class CasinoDomeBuilder {
 
     this.#fwTimer += dt;
 
-    // Lanzar cohetes programados
     let pendingCount = 0;
     for (let i = 0; i < this.#fwSchedule.length; i++) {
       const item = this.#fwSchedule[i];
       if (!item.launched) {
         if (this.#fwTimer >= item.delay) {
           item.launched = true;
-          const flightDuration = item.isInterior ? 0.62 : 0.88;
+          const flightDuration = item.isInterior ? 0.72 : 1.05;
           this.#fwRockets.push({
             x: item.startX,
             y: item.startY,
@@ -1778,7 +2491,6 @@ export class CasinoDomeBuilder {
       this.#fwActive = false;
     }
 
-    // Actualizar cohetes ascendentes
     for (let i = this.#fwRockets.length - 1; i >= 0; i--) {
       const r = this.#fwRockets[i];
       r.age += dt;
@@ -1789,17 +2501,17 @@ export class CasinoDomeBuilder {
       r.z = r.sz + (r.tz - r.sz) * ease;
 
       r.trailAcc += dt;
-      while (r.trailAcc >= 0.025) {
-        r.trailAcc -= 0.025;
+      while (r.trailAcc >= 0.024) {
+        r.trailAcc -= 0.024;
         this.#spawnTrailParticle(
-          r.x + (Math.random() - 0.5) * 0.08,
+          r.x + (Math.random() - 0.5) * 0.14,
           r.y,
-          r.z + (Math.random() - 0.5) * 0.08,
-          (Math.random() - 0.5) * 0.35,
-          -0.8 - Math.random() * 0.6,
-          (Math.random() - 0.5) * 0.35,
+          r.z + (Math.random() - 0.5) * 0.14,
+          (Math.random() - 0.5) * 0.55,
+          -1.2 - Math.random() * 0.8,
+          (Math.random() - 0.5) * 0.55,
           r.colorHex,
-          0.42
+          0.48
         );
       }
 
@@ -1809,10 +2521,9 @@ export class CasinoDomeBuilder {
       }
     }
 
-    // Actualizar partículas de estela
     this.#stepParticlePool(
       dt,
-      -1.2,
+      -1.4,
       0.92,
       this.#fwTrailPos,
       this.#fwTrailVel,
@@ -1832,11 +2543,10 @@ export class CasinoDomeBuilder {
       this.#fwTrailGeo.attributes.color.needsUpdate = true;
     }
 
-    // Actualizar partículas de explosión (gravedad suave + cascada)
     this.#stepParticlePool(
       dt,
-      -3.4,
-      Math.exp(-1.55 * dt),
+      -3.8,
+      Math.exp(-1.45 * dt),
       this.#fwSparkPos,
       this.#fwSparkVel,
       this.#fwSparkCol,
@@ -1855,7 +2565,6 @@ export class CasinoDomeBuilder {
       this.#fwSparkGeo.attributes.color.needsUpdate = true;
     }
 
-    // Luz interior única: decae suavemente hasta el reposo (1.35, 0xffdcb8) sin apagar visible
     this.#fwFlashEnergy = Math.max(0, this.#fwFlashEnergy - dt * 7.5);
     if (this.#fwLight) {
       if (this.#fwFlashEnergy > 0.05) {
@@ -1919,6 +2628,107 @@ export class CasinoDomeBuilder {
   // 9. Texturas procedurales de alta nitidez (CanvasTexture)
   // ---------------------------------------------------------------------------
 
+  #createLuxuryFloorTexture() {
+    const S = 1024;
+    const canvas = document.createElement('canvas');
+    canvas.width = S;
+    canvas.height = S;
+    const ctx = canvas.getContext('2d');
+    const c = S * 0.5;
+
+    // Mármol blanco/crema base con vetas suaves
+    const bg = ctx.createRadialGradient(c, c, 40, c, c, c);
+    bg.addColorStop(0, '#fff9fc');
+    bg.addColorStop(0.65, '#f6ecf2');
+    bg.addColorStop(0.88, '#ead7e4');
+    bg.addColorStop(1, '#2a1322');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, S, S);
+
+    // Anillo exterior negro imperial con filetes dorados
+    ctx.strokeStyle = '#24101e';
+    ctx.lineWidth = 46;
+    ctx.beginPath();
+    ctx.arc(c, c, 456, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#e5b868';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.arc(c, c, 480, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(c, c, 432, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Medallones intermedios en oro y negro
+    ctx.strokeStyle = '#2d1526';
+    ctx.lineWidth = 14;
+    ctx.beginPath();
+    ctx.arc(c, c, 320, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#dfb060';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(c, c, 306, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(c, c, 334, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Estrella central gigante de 8 puntas (oro + negro imperial)
+    const drawStar = (outerR, innerR, rotOffset, fillStyle, strokeStyle, lineWidth) => {
+      ctx.save();
+      ctx.translate(c, c);
+      ctx.rotate(rotOffset);
+      ctx.beginPath();
+      for (let i = 0; i < 16; i++) {
+        const r = i % 2 === 0 ? outerR : innerR;
+        const a = (i * Math.PI) / 8;
+        const px = Math.cos(a) * r;
+        const py = Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fillStyle = fillStyle;
+      ctx.fill();
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    drawStar(275, 108, Math.PI / 8, '#281220', '#e6ba6a', 6);
+
+    const goldGrad = ctx.createRadialGradient(c, c, 20, c, c, 240);
+    goldGrad.addColorStop(0, '#fff2c4');
+    goldGrad.addColorStop(0.55, '#e8bc66');
+    goldGrad.addColorStop(1, '#b57b28');
+    drawStar(242, 86, 0, goldGrad, '#3c182d', 5);
+
+    // Roseta central en mármol blanco y corona dorada
+    ctx.fillStyle = '#fff8fb';
+    ctx.beginPath();
+    ctx.arc(c, c, 64, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#d9a44e';
+    ctx.lineWidth = 6;
+    ctx.stroke();
+
+    ctx.fillStyle = '#a8225a';
+    ctx.beginPath();
+    ctx.arc(c, c, 36, 0, Math.PI * 2);
+    ctx.fill();
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return this.#trackTex(tex);
+  }
+
   #createSignTexture() {
     const canvas = document.createElement('canvas');
     canvas.width = 1024;
@@ -1940,12 +2750,12 @@ export class CasinoDomeBuilder {
     ctx.strokeRect(22, 22, 980, 148);
 
     ctx.fillStyle = '#ffe9a8';
-    ctx.font = 'bold 58px Georgia, serif';
+    ctx.font = 'bold 50px Georgia, serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.shadowColor = 'rgba(255, 160, 210, 0.75)';
     ctx.shadowBlur = 12;
-    ctx.fillText('♛ CÚPULA REAL · CASINO ♛', 512, 98);
+    ctx.fillText('♛ GRAN CÚPULA REAL · CASINO ♛', 512, 98);
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -1996,9 +2806,8 @@ export class CasinoDomeBuilder {
     canvas.height = H;
     const ctx = canvas.getContext('2d');
 
-    const cellW = W / SLOT_SYMBOLS.length; // 204.8 px por símbolo
+    const cellW = W / SLOT_SYMBOLS.length;
 
-    // Fondo satinado crema-rosado del tambor
     const bg = ctx.createLinearGradient(0, 0, 0, H);
     bg.addColorStop(0, '#f5e7ef');
     bg.addColorStop(0.5, '#fffbfd');
@@ -2010,14 +2819,11 @@ export class CasinoDomeBuilder {
       const cx = (i + 0.5) * cellW;
       const cy = H * 0.5;
 
-      // Banda divisoria dorada entre símbolos
       ctx.fillStyle = '#d9a452';
       ctx.fillRect(i * cellW - 3, 0, 6, H);
 
-      // Medallón sutil tras el símbolo
       ctx.save();
       ctx.translate(cx, cy);
-      // Rotación +90° para alinear ejes UV del cilindro rotado Z=PI/2 mirando a +Z local
       ctx.rotate(Math.PI / 2);
 
       ctx.beginPath();
@@ -2043,7 +2849,6 @@ export class CasinoDomeBuilder {
 
   #drawSlotSymbol(ctx, symbol) {
     if (symbol === 'crown') {
-      // Corona Real dorada con rubíes
       ctx.beginPath();
       ctx.moveTo(-44, 28);
       ctx.lineTo(-48, -18);
@@ -2072,7 +2877,6 @@ export class CasinoDomeBuilder {
     }
 
     if (symbol === 'diamond') {
-      // Diamante Azul facetado
       ctx.beginPath();
       ctx.moveTo(-28, -34);
       ctx.lineTo(28, -34);
@@ -2106,7 +2910,6 @@ export class CasinoDomeBuilder {
     }
 
     if (symbol === 'rose') {
-      // Rosa Imperial con hojas
       ctx.fillStyle = '#2e8b57';
       ctx.beginPath();
       ctx.ellipse(-26, 26, 20, 10, -0.5, 0, Math.PI * 2);
@@ -2136,7 +2939,6 @@ export class CasinoDomeBuilder {
     }
 
     if (symbol === 'star') {
-      // Estrella Dorada
       ctx.beginPath();
       for (let p = 0; p < 10; p++) {
         const rad = p % 2 === 0 ? 48 : 20;
@@ -2159,7 +2961,6 @@ export class CasinoDomeBuilder {
       return;
     }
 
-    // 'seven': 7 Imperial carmesí y oro
     ctx.font = 'bold 104px Georgia, serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -2183,7 +2984,6 @@ export class CasinoDomeBuilder {
     ctx.fillStyle = '#5c1438';
     ctx.fillRect(0, 0, S, S);
 
-    // Arco dorado del tapete (en UV de CircleGeometry rotado hacia +Z)
     ctx.save();
     ctx.translate(S * 0.5, S * 0.5);
     ctx.rotate(Math.PI);
@@ -2200,7 +3000,6 @@ export class CasinoDomeBuilder {
     ctx.arc(0, 0, S * 0.30, 0, Math.PI, false);
     ctx.stroke();
 
-    // Inscripción real
     ctx.fillStyle = '#f5d284';
     ctx.font = 'bold 20px Georgia, serif';
     ctx.textAlign = 'center';
@@ -2209,7 +3008,6 @@ export class CasinoDomeBuilder {
     ctx.fillStyle = '#ffbde0';
     ctx.fillText('DEALER STANDS ON ALL 17', 0, 78);
 
-    // Círculo de apuesta (betSpot en Z = +0.52 -> sy ≈ +214)
     ctx.beginPath();
     ctx.arc(0, 214, 24, 0, Math.PI * 2);
     ctx.strokeStyle = '#ffd578';

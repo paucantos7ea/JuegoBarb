@@ -118,7 +118,7 @@ export class WorldDecor {
   }
 
   init() {
-    this.#collision.setWorldBounds(-88, 88, -84, 64);
+    this.#collision.setWorldBounds(-88, 215, -84, 64);
 
     this.#root = new THREE.Group();
     this.#root.name = 'RoyalGardens';
@@ -219,7 +219,7 @@ export class WorldDecor {
 
   #createMaterials() {
     const grass = this.#trackMat(new THREE.MeshStandardMaterial({
-      map: this.#textures.getTexture('grass', 30, 30),
+      map: this.#textures.getTexture('grass', 48, 32),
       color: 0xd8f0cf,
       roughness: 0.92,
       metalness: 0.0
@@ -358,8 +358,8 @@ export class WorldDecor {
   }
 
   #buildGroundAndAvenues(mats) {
-    // Césped amplio 240 x 240 cubriendo todo el valle real
-    this.#addStaticMesh(new THREE.PlaneGeometry(240, 240), mats.grass, 0, 0, -6, false, true, -Math.PI / 2);
+    // Césped amplio 380 x 250 cubriendo todo el valle real hasta la Gran Cúpula del Casino
+    this.#addStaticMesh(new THREE.PlaneGeometry(380, 250), mats.grass, 60, 0, -6, false, true, -Math.PI / 2);
 
     // Avenida Norte-Sur: X ∈ [-5.5, 5.5], Z ∈ [-17, 36]
     this.#addStaticMesh(new THREE.BoxGeometry(11.0, 0.06, 53.0), mats.plazaFloor, 0, 0.015, 9.5, false, true);
@@ -872,9 +872,12 @@ export class WorldDecor {
     if (x >= 14 - margin && x <= 42 + margin && z >= -3.2 - margin && z <= 3.2 + margin) return true;
     // Plaza de la Fuente (0, 0), r = 14.5
     if (Math.hypot(x, z) < 14.5 + margin) return true;
-    // Cúpula Real del Casino: centro (-18.6, 17.0), radio 9.0 + entrada Este X ∈ [-11.0, -5.0], Z ∈ [14.2, 19.8]
-    if (Math.hypot(x + 18.6, z - 17.0) < 9.6 + margin) return true;
-    if (x >= -11.0 - margin && x <= -5.0 + margin && z >= 14.2 - margin && z <= 19.8 + margin) return true;
+    // Paseo Real del Casino: X ∈ [40, 128], Z ∈ [-8.5, 8.5]
+    if (x >= 40 - margin && x <= 128 + margin && Math.abs(z) <= 8.5 + margin) return true;
+    // Fuentes del Paseo del Casino: (80, ±10.5)
+    if (Math.hypot(x - 80, z + 10.5) < 4.5 + margin || Math.hypot(x - 80, z - 10.5) < 4.5 + margin) return true;
+    // Gran Cúpula del Casino Real: centro (162, 0), radio exterior + explanada
+    if (Math.hypot(x - 162, z) < 40.5 + margin) return true;
     // Mirador Real Sur (0, 46), r = 7.5 + escalinata Z ∈ [35.5, 46]
     if (Math.hypot(x, z - 46) < 7.8 + margin) return true;
     if (x >= -4.2 - margin && x <= 4.2 + margin && z >= 35.5 - margin && z <= 46) return true;

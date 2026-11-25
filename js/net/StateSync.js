@@ -26,6 +26,7 @@ export class StateSync {
   #lastSentEmoteSeq = -1;
   #lastSentCasino = null;
   #lastSentName = '';
+  #lastSentMountKey = '';
   #unsubs = [];
   #callbacks = {};
   #getLocalState = null;
@@ -225,6 +226,8 @@ export class StateSync {
       const needsAppearanceSync = apChanged || this.#appearanceSyncTimer >= 3.0;
       const emoteSeq = local.emote ? local.emote.seq : -1;
       const casino = local.casinoStation || null;
+      const mount = local.mount || null;
+      const mountKey = mount ? `${mount.v}|${mount.a}` : '';
 
       const changed =
         Number.isNaN(this.#lastSentX) ||
@@ -235,6 +238,7 @@ export class StateSync {
         local.anim !== this.#lastSentAnim ||
         emoteSeq !== this.#lastSentEmoteSeq ||
         casino !== this.#lastSentCasino ||
+        mountKey !== this.#lastSentMountKey ||
         local.name !== this.#lastSentName ||
         apChanged;
 
@@ -252,7 +256,8 @@ export class StateSync {
         anim: local.anim,
         // Emote activo {id, seq}: los compañeros lo reproducen al ver un seq nuevo
         emote: local.emote ? { id: local.emote.id, seq: local.emote.seq } : null,
-        casinoStation: casino
+        casinoStation: casino,
+        mount: mount ? { v: mount.v, a: mount.a } : null
       };
       if (needsAppearanceSync) {
         packet.appearance = local.appearance;
@@ -268,6 +273,7 @@ export class StateSync {
       this.#lastSentAnim = local.anim;
       this.#lastSentEmoteSeq = emoteSeq;
       this.#lastSentCasino = casino;
+      this.#lastSentMountKey = mountKey;
       this.#lastSentName = local.name;
       this.#keepaliveTimer = 0;
     }

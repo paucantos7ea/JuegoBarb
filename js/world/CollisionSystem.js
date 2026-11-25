@@ -6,7 +6,7 @@ export class CollisionSystem {
   #boxGrid = new Map();
   #surfaceGrid = new Map();
   #queryStamp = 0;
-  #worldBounds = { minX: -88, maxX: 88, minZ: -84, maxZ: 64 };
+  #worldBounds = { minX: -88, maxX: 215, minZ: -84, maxZ: 64 };
 
   init() {
     this.clear();
@@ -307,7 +307,8 @@ export class CollisionSystem {
     if (pos.x > 13 && pos.x < 28 && pos.z > 8 && pos.z < 22) return 'Arena de Carrera Real';
     if (pos.x > 36 && pos.z < -28 && pos.z > -44) return 'Terraza Real de Baile';
     if (pos.z > 36 && Math.abs(pos.x) < 12) return 'Mirador del Lago Imperial';
-    if (Math.hypot(pos.x + 18.6, pos.z - 17.0) <= 9.2) return 'Cúpula Real del Casino';
+    if (Math.hypot(pos.x - 162, pos.z) <= 36.5) return 'Gran Cúpula del Casino Real';
+    if (pos.x >= 42 && pos.x <= 128 && Math.abs(pos.z) <= 10) return 'Paseo Real del Casino';
     if (Math.hypot(pos.x, pos.z) < 15) return 'Plaza de la Gran Fuente';
     return 'Jardines y Bosques Reales';
   }

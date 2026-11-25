@@ -19,7 +19,7 @@ const QUALITY_PROFILES = {
     bloom: false,
     bloomScale: 0.5,
     autoDisableBloomBelowFps: 0,
-    far: 145,
+    far: 245,
     fogBoost: 1.32,
     moteDrawCount: 80
   },
@@ -33,7 +33,7 @@ const QUALITY_PROFILES = {
     bloom: true,
     bloomScale: 0.5,
     autoDisableBloomBelowFps: 35,
-    far: 225,
+    far: 300,
     fogBoost: 1.0,
     moteDrawCount: 150
   },
@@ -47,7 +47,7 @@ const QUALITY_PROFILES = {
     bloom: true,
     bloomScale: 0.75,
     autoDisableBloomBelowFps: 0,
-    far: 330,
+    far: 390,
     fogBoost: 1.0,
     moteDrawCount: 240
   }
@@ -247,7 +247,7 @@ export class Engine {
     const motePos = new Float32Array(moteCount * 3);
     this.#moteVelocities = new Float32Array(moteCount * 3);
     for (let i = 0; i < moteCount; i++) {
-      motePos[i * 3] = (Math.random() - 0.5) * 170;
+      motePos[i * 3] = Math.random() * 280 - 85;
       motePos[i * 3 + 1] = 1 + Math.random() * 20;
       motePos[i * 3 + 2] = (Math.random() - 0.5) * 160 - 8;
       this.#moteVelocities[i * 3] = (Math.random() - 0.5) * 0.45;
@@ -539,8 +539,8 @@ export class Engine {
         let y = pos.getY(i) + this.#moteVelocities[i * 3 + 1] * dt;
         let z = pos.getZ(i) + this.#moteVelocities[i * 3 + 2] * dt;
         if (y > 22) y = 0.8;
-        if (x > 85) x = -85;
-        if (x < -85) x = 85;
+        if (x > 195) x = -85;
+        if (x < -85) x = 195;
         if (z > 72) z = -88;
         if (z < -88) z = 72;
         pos.setXYZ(i, x, y, z);
