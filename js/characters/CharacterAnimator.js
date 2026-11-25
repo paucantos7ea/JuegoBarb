@@ -28,6 +28,9 @@ export const GESTURE_DEFS = Object.freeze({
   heel: 2.0
 });
 
+const GESTURE_KEYS_ALL = Object.keys(GESTURE_DEFS);
+const GESTURE_KEYS_NO_LOOK = GESTURE_KEYS_ALL.filter((id) => id !== 'look');
+
 /**
  * Biblioteca de poses absolutas para el rig estilizado.
  * Convención anatómica (el modelo mira a +Z local):
@@ -115,12 +118,20 @@ export class PoseLibrary {
     });
   }
 
+  /** Limpia un objeto de pose parcial reutilizable sin reasignar. */
+  static #clearOut(out) {
+    for (const key in out) delete out[key];
+    return out;
+  }
+
   /** Aterrizaje amortiguado (se mezcla con una envolvente corta). */
-  static landing(baseZ) {
-    return {
-      lLegX: -0.32, lShinX: 0.58, rLegX: -0.12, rShinX: 0.52, spineX: 0.1, headX: 0.05,
-      lArmZ: baseZ + 0.28, rArmZ: -(baseZ + 0.28), lArmX: -0.12, rArmX: -0.12
-    };
+  static landing(baseZ, out = {}) {
+    PoseLibrary.#clearOut(out);
+    out.lLegX = -0.32; out.lShinX = 0.58; out.rLegX = -0.12; out.rShinX = 0.52;
+    out.spineX = 0.1; out.headX = 0.05;
+    out.lArmZ = baseZ + 0.28; out.rArmZ = -(baseZ + 0.28);
+    out.lArmX = -0.12; out.rArmX = -0.12;
+    return out;
   }
 
   static dance(p, t) {
@@ -160,50 +171,55 @@ export class PoseLibrary {
   }
 
   /** Pose parcial de cada emote en el progreso k (0..1) y tiempo local te (s). */
-  static emote(id, k, te, baseZ) {
+  static emote(id, k, te, baseZ, out = {}) {
+    PoseLibrary.#clearOut(out);
     switch (id) {
       case 'wave':
-        return {
-          rArmZ: -2.25, rArmX: -0.35, rForeX: -0.3, rForeZ: -0.15 + Math.sin(te * 11) * 0.42,
-          lArmZ: baseZ + 0.06, headZ: 0.09, headY: -0.15, spineZ: 0.05
-        };
+        out.rArmZ = -2.25; out.rArmX = -0.35; out.rForeX = -0.3;
+        out.rForeZ = -0.15 + Math.sin(te * 11) * 0.42;
+        out.lArmZ = baseZ + 0.06; out.headZ = 0.09; out.headY = -0.15; out.spineZ = 0.05;
+        return out;
       case 'spin':
-        return {
-          lArmZ: 1.15, rArmZ: -1.15, lArmX: -0.12, rArmX: -0.12, lForeX: -0.2, rForeX: -0.2,
-          lForeZ: 0.25, rForeZ: -0.25, headX: -0.06, lShinX: 0.12, rLegX: 0.1, rShinX: 0.32,
-          bodyY: Math.sin(Math.PI * k) * 0.03, flare: Math.sin(Math.PI * k) * 0.17
-        };
+        out.lArmZ = 1.15; out.rArmZ = -1.15; out.lArmX = -0.12; out.rArmX = -0.12;
+        out.lForeX = -0.2; out.rForeX = -0.2; out.lForeZ = 0.25; out.rForeZ = -0.25;
+        out.headX = -0.06; out.lShinX = 0.12; out.rLegX = 0.1; out.rShinX = 0.32;
+        out.bodyY = Math.sin(Math.PI * k) * 0.03; out.flare = Math.sin(Math.PI * k) * 0.17;
+        return out;
       case 'curtsy':
-        return {
-          spineX: 0.24, headX: 0.26, headY: 0, lLegX: -0.28, lShinX: 0.3, rLegX: 0.18, rShinX: 0.2,
-          lArmZ: baseZ + 0.5, rArmZ: -(baseZ + 0.5), lArmX: -0.12, rArmX: -0.12,
-          lForeX: -0.12, rForeX: -0.12, lForeZ: 0.22, rForeZ: -0.22, flare: 0.04
-        };
+        out.spineX = 0.24; out.headX = 0.26; out.headY = 0;
+        out.lLegX = -0.28; out.lShinX = 0.3; out.rLegX = 0.18; out.rShinX = 0.2;
+        out.lArmZ = baseZ + 0.5; out.rArmZ = -(baseZ + 0.5); out.lArmX = -0.12; out.rArmX = -0.12;
+        out.lForeX = -0.12; out.rForeX = -0.12; out.lForeZ = 0.22; out.rForeZ = -0.22; out.flare = 0.04;
+        return out;
       case 'star':
-        return {
-          lArmZ: 0.78, lArmX: 0.12, lForeX: -0.35, lForeZ: -1.5,
-          rArmZ: -1.35, rArmX: -0.45, rForeX: -0.55, rForeZ: -0.35,
-          headZ: -0.15, headY: 0.18, headX: -0.04, spineZ: -0.05, spineY: 0.12,
-          bodyRotY: 0.18, bodyX: 0.02, rLegX: -0.14, rShinX: 0.28, lLegX: 0.04
-        };
+        out.lArmZ = 0.78; out.lArmX = 0.12; out.lForeX = -0.35; out.lForeZ = -1.5;
+        out.rArmZ = -1.35; out.rArmX = -0.45; out.rForeX = -0.55; out.rForeZ = -0.35;
+        out.headZ = -0.15; out.headY = 0.18; out.headX = -0.04; out.spineZ = -0.05; out.spineY = 0.12;
+        out.bodyRotY = 0.18; out.bodyX = 0.02; out.rLegX = -0.14; out.rShinX = 0.28; out.lLegX = 0.04;
+        return out;
       default:
-        return {};
+        return out;
     }
   }
 
   /** Micro-gestos ocasionales en reposo. */
-  static gesture(id, te) {
+  static gesture(id, te, out = {}) {
+    PoseLibrary.#clearOut(out);
     switch (id) {
       case 'chest':
-        return { rArmX: -0.62, rArmZ: -0.12, rForeX: -1.55, rForeZ: 0.75, headZ: 0.06, headX: 0.04 };
+        out.rArmX = -0.62; out.rArmZ = -0.12; out.rForeX = -1.55; out.rForeZ = 0.75; out.headZ = 0.06; out.headX = 0.04;
+        return out;
       case 'tilt':
-        return { headZ: 0.16, headY: 0.1, spineZ: -0.03 };
+        out.headZ = 0.16; out.headY = 0.1; out.spineZ = -0.03;
+        return out;
       case 'look':
-        return { headY: Math.sin(te * 2.1) * 0.45, headX: -0.04 };
+        out.headY = Math.sin(te * 2.1) * 0.45; out.headX = -0.04;
+        return out;
       case 'heel':
-        return { rLegX: -0.08, rShinX: 0.24, bodyRotZ: 0.03, headZ: -0.06 };
+        out.rLegX = -0.08; out.rShinX = 0.24; out.bodyRotZ = 0.03; out.headZ = -0.06;
+        return out;
       default:
-        return {};
+        return out;
     }
   }
 }
@@ -294,6 +310,9 @@ export class CharacterAnimator {
   #prevPos = new THREE.Vector3(); #vel = new THREE.Vector3(); #velS = new THREE.Vector3();
   #prevYaw = 0; #yawRate = 0; #hasPrev = false; #spinAngle = 0; #smoothYaw = 0; #breath = 0;
   #torsoBase = new THREE.Vector3(1, 1, 1); #shoulderY = 0;
+  #motionOut = { fwd: 0, side: 0, vy: 0, spinRate: 0 };
+  #springIn = { fwd: 0, side: 0, vy: 0, yawRate: 0, sway: 0, flare: 0 };
+  #partialPose = {};
 
   constructor(bones, isMale = false) {
     this.#b = bones;
@@ -322,7 +341,7 @@ export class CharacterAnimator {
   /** Punto del mundo al que mira la cabeza (o null para mirada libre). */
   setLookTarget(worldPos) { this.#lookTarget = worldPos || null; }
 
-  update(dt, state = 'idle', _speed = 0) {
+  update(dt, state = 'idle', _speed = 0, lod = 0) {
     dt = Math.max(0, Math.min(dt, 0.1));
     if (dt <= 0) return;
     this.#t += dt;
@@ -344,30 +363,40 @@ export class CharacterAnimator {
       default: PoseLibrary.idle(p, t, this.#baseZ); break;
     }
 
-    if (state === 'idle') this.#updateGesture(dt, p);
+    if (state === 'idle' && (lod === 0 || this.#emote)) this.#updateGesture(dt, p);
     else this.#gesture = null;
     this.#updateEmote(dt, p);
+
+    const hasEmote = Boolean(this.#emote);
+    const runMid = lod === 0 || hasEmote;
+    const runFar = lod < 2 || hasEmote;
 
     if (this.#landT >= 0) {
       this.#landT += dt;
       const k = this.#landT / 0.3;
       if (k >= 1) this.#landT = -1;
-      else PoseLibrary.blend(p, PoseLibrary.landing(this.#baseZ), Math.sin(Math.PI * k) * 0.9);
+      else PoseLibrary.blend(p, PoseLibrary.landing(this.#baseZ, this.#partialPose), Math.sin(Math.PI * k) * 0.9);
     }
 
     this.#applyLook(dt, p);
     if (state === 'walk' || state === 'run') {
       p.bodyRotZ += clamp(-this.#yawRate * (state === 'run' ? 0.055 : 0.04), -0.17, 0.17);
     }
-    if (state !== 'jump') this.#plantFeet(p);
+    if (state !== 'jump' && runFar) this.#plantFeet(p);
 
-    this.#applyPose(dt, p);
-    this.#updateBlink(dt);
-    this.#springs.update(dt, {
-      fwd: motion.fwd, side: motion.side, vy: motion.vy,
-      yawRate: this.#yawRate + motion.spinRate, sway: sway * (state === 'run' ? 1 : 0.6), flare: p.flare
-    });
-    this.#springs.apply(this.#b.skirtPivot, this.#b.hairSwing);
+    this.#applyPose(dt, p, runFar);
+    if (runMid) this.#updateBlink(dt);
+    if (runFar) {
+      const si = this.#springIn;
+      si.fwd = motion.fwd;
+      si.side = motion.side;
+      si.vy = motion.vy;
+      si.yawRate = this.#yawRate + motion.spinRate;
+      si.sway = sway * (state === 'run' ? 1 : 0.6);
+      si.flare = p.flare;
+      this.#springs.update(dt, si);
+      this.#springs.apply(this.#b.skirtPivot, this.#b.hairSwing);
+    }
   }
 
   #trackMotion(dt) {
@@ -394,7 +423,12 @@ export class CharacterAnimator {
     const s = Math.sin(yaw);
     const c = Math.cos(yaw);
     const v = this.#velS;
-    return { fwd: v.x * s + v.z * c, side: v.x * c - v.z * s, vy: v.y, spinRate };
+    const mo = this.#motionOut;
+    mo.fwd = v.x * s + v.z * c;
+    mo.side = v.x * c - v.z * s;
+    mo.vy = v.y;
+    mo.spinRate = spinRate;
+    return mo;
   }
 
   #updateEmote(dt, p) {
@@ -408,7 +442,7 @@ export class CharacterAnimator {
     }
     const k = e.t / dur;
     const w = PoseLibrary.envelope(k, dur, e.def.fadeIn, e.def.fadeOut);
-    PoseLibrary.blend(p, PoseLibrary.emote(e.id, k, e.t, this.#baseZ), e.id === 'spin' ? Math.max(w, 0.6) : w);
+    PoseLibrary.blend(p, PoseLibrary.emote(e.id, k, e.t, this.#baseZ, this.#partialPose), e.id === 'spin' ? Math.max(w, 0.6) : w);
   }
 
   #updateGesture(dt, p) {
@@ -416,7 +450,7 @@ export class CharacterAnimator {
     if (!this.#gesture) {
       this.#gestureTimer -= dt;
       if (this.#gestureTimer > 0) return;
-      const ids = Object.keys(GESTURE_DEFS).filter((id) => !(id === 'look' && this.#lookTarget));
+      const ids = this.#lookTarget ? GESTURE_KEYS_NO_LOOK : GESTURE_KEYS_ALL;
       const id = ids[Math.floor(Math.random() * ids.length)];
       this.#gesture = { id, t: 0, dur: GESTURE_DEFS[id] };
       this.#gestureTimer = 4 + Math.random() * 4;
@@ -427,7 +461,7 @@ export class CharacterAnimator {
       this.#gesture = null;
       return;
     }
-    PoseLibrary.blend(p, PoseLibrary.gesture(g.id, g.t), PoseLibrary.envelope(g.t / g.dur, g.dur, 0.5, 0.6));
+    PoseLibrary.blend(p, PoseLibrary.gesture(g.id, g.t, this.#partialPose), PoseLibrary.envelope(g.t / g.dur, g.dur, 0.5, 0.6));
   }
 
   #applyLook(dt, p) {
@@ -451,7 +485,7 @@ export class CharacterAnimator {
     p.bodyY += Math.max(dl, dr) - LEG;
   }
 
-  #applyPose(dt, p) {
+  #applyPose(dt, p, applyBreathing = true) {
     const b = this.#b;
     const a = 1 - Math.exp(-dt * 12);
     const L = (cur, target) => cur + (target - cur) * a;
@@ -473,13 +507,15 @@ export class CharacterAnimator {
     b.rShin.rotation.x = L(b.rShin.rotation.x, p.rShinX);
 
     this.#breath = L(this.#breath, p.breath);
-    if (b.torso) {
-      const tb = this.#torsoBase;
-      b.torso.scale.set(tb.x * (1 + this.#breath * 0.014), tb.y * (1 + this.#breath * 0.004), tb.z * (1 + this.#breath * 0.02));
+    if (applyBreathing) {
+      if (b.torso) {
+        const tb = this.#torsoBase;
+        b.torso.scale.set(tb.x * (1 + this.#breath * 0.014), tb.y * (1 + this.#breath * 0.004), tb.z * (1 + this.#breath * 0.02));
+      }
+      const sy = this.#shoulderY + this.#breath * 0.005;
+      b.lShoulder.position.y = sy;
+      b.rShoulder.position.y = sy;
     }
-    const sy = this.#shoulderY + this.#breath * 0.005;
-    b.lShoulder.position.y = sy;
-    b.rShoulder.position.y = sy;
   }
 
   #updateBlink(dt) {

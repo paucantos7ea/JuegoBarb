@@ -201,8 +201,23 @@ export class HairBuilder {
     add(HairBuilder.createWavySheet({ arcStart: Math.PI * 0.48, arcEnd: Math.PI * 1.48, topY: 0.098, bottomY: -0.135, topR: 0.166, midR: 0.176, botR: 0.148, waveAmp: 0.010, waveFreq: 1.8, rippleFreq: 8, hemPoint: 0.03, segU: 20, segV: 12 }));
     // Mechones diagonales recogidos hacia la trenza lateral (+X)
     strand([[-0.135, 0.055, -0.04], [-0.04, -0.02, -0.165], [0.095, -0.075, -0.125], [0.162, -0.115, 0.025]], 0.048, 0.026, 0.28);
-    // Trenza tejida en eslabones planos inclinados cayendo sobre el hombro derecho
-    const linkGeo = new THREE.SphereGeometry(0.036, 12, 10);
+    // Trenza tejida en eslabones planos inclinados cayendo sobre el hombro derecho (unificada en 1 malla)
+    const rawLink = new THREE.SphereGeometry(0.036, 12, 10);
+    const linkBase = rawLink.index ? rawLink.toNonIndexed() : rawLink.clone();
+    rawLink.dispose();
+    if (!linkBase.attributes.normal) linkBase.computeVertexNormals();
+
+    const vCount = linkBase.attributes.position.count;
+    const totalVerts = vCount * 8;
+    const positions = new Float32Array(totalVerts * 3);
+    const normals = new Float32Array(totalVerts * 3);
+    const uvs = new Float32Array(totalVerts * 2);
+    const mat4 = new THREE.Matrix4();
+    const posV = new THREE.Vector3();
+    const euler = new THREE.Euler();
+    const quat = new THREE.Quaternion();
+    const scaleV = new THREE.Vector3();
+
     for (let i = 0; i < 8; i++) {
       const t = i / 7;
       const side = i % 2 === 0 ? -1 : 1;
@@ -210,9 +225,52 @@ export class HairBuilder {
       const ly = -0.125 - i * 0.044;
       const lz = 0.045 + Math.sin(t * Math.PI) * 0.048;
       const scale = 1 - t * 0.42;
-      add(linkGeo.clone(), lx, ly, lz, 0.25, 0, side * 0.58, 1.05 * scale, 0.72 * scale, 0.58 * scale);
+
+      posV.set(lx, ly, lz);
+      euler.set(0.25, 0, side * 0.58);
+      quat.setFromEuler(euler);
+      scaleV.set(1.05 * scale, 0.72 * scale, 0.58 * scale);
+      mat4.compose(posV, quat, scaleV);
+
+      const g = linkBase.clone();
+      g.applyMatrix4(mat4);
+      const posArr = g.attributes.position.array;
+      const normArr = g.attributes.normal.array;
+      const uvAttr = g.attributes.uv;
+      const uvArr = uvAttr ? uvAttr.array : null;
+
+      if (mat4.determinant() < 0) {
+        for (let v = 0; v + 2 < vCount; v += 3) {
+          const i1 = (v + 1) * 3;
+          const i2 = (v + 2) * 3;
+          for (let k = 0; k < 3; k++) {
+            const tp = posArr[i1 + k]; posArr[i1 + k] = posArr[i2 + k]; posArr[i2 + k] = tp;
+            const tn = normArr[i1 + k]; normArr[i1 + k] = normArr[i2 + k]; normArr[i2 + k] = tn;
+          }
+          if (uvArr) {
+            const u1 = (v + 1) * 2;
+            const u2 = (v + 2) * 2;
+            for (let k = 0; k < 2; k++) {
+              const tu = uvArr[u1 + k]; uvArr[u1 + k] = uvArr[u2 + k]; uvArr[u2 + k] = tu;
+            }
+          }
+        }
+      }
+
+      const off = i * vCount;
+      positions.set(posArr, off * 3);
+      normals.set(normArr, off * 3);
+      if (uvArr) uvs.set(uvArr, off * 2);
+      g.dispose();
     }
-    linkGeo.dispose();
+    linkBase.dispose();
+
+    const braidGeo = new THREE.BufferGeometry();
+    braidGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    braidGeo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    braidGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    braidGeo.computeBoundingSphere();
+    add(braidGeo);
     // Punta suave ahusada + lazo dorado con gema
     strand([[0.160, -0.43, 0.055], [0.168, -0.49, 0.062], [0.155, -0.545, 0.052]], 0.024, 0.005, 0.30);
     add(new THREE.TorusGeometry(0.026, 0.008, 8, 16), 0.160, -0.44, 0.056, Math.PI / 2, 0, 0, 1, 1, 1, mats.roseGold);

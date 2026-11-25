@@ -24,6 +24,7 @@ export class FashionRunwayGame {
   #score = 0;
   #hits = 0;
   #keyHandler = null;
+  #tmpCamPos = new THREE.Vector3();
 
   #stops = [
     { z: -4.0, label: 'Pose Estrella' },
@@ -246,8 +247,8 @@ export class FashionRunwayGame {
 
     const px = -46;
     const pz = this.#currentZ;
-    const desiredCam = new THREE.Vector3(px + Math.sin(pz * 0.12) * 5.2, 2.8, pz + 6.4);
-    this.#camera.position.lerp(desiredCam, Math.min(1, dt * 5));
+    this.#tmpCamPos.set(px + Math.sin(pz * 0.12) * 5.2, 2.8, pz + 6.4);
+    this.#camera.position.lerp(this.#tmpCamPos, Math.min(1, dt * 5));
     this.#camera.lookAt(px, 1.65, pz);
   }
 
@@ -291,6 +292,7 @@ export class RoyalBallRhythmGame {
   #totalNotes = 24;
   #finished = false;
   #keyHandler = null;
+  #tmpCamPos = new THREE.Vector3();
   #lanes = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
 
   constructor(ctx) {
@@ -469,8 +471,8 @@ export class RoyalBallRhythmGame {
     }
 
     const angle = this.#songTime * 0.55;
-    const camPos = new THREE.Vector3(23 + Math.sin(angle) * 5.6, 3.4, -33 + Math.cos(angle) * 5.6);
-    this.#camera.position.lerp(camPos, Math.min(1, dt * 6));
+    this.#tmpCamPos.set(23 + Math.sin(angle) * 5.6, 3.4, -33 + Math.cos(angle) * 5.6);
+    this.#camera.position.lerp(this.#tmpCamPos, Math.min(1, dt * 6));
     this.#camera.lookAt(23, 2.0, -33);
     this.#player.getRig().getRoot().rotation.y = Math.sin(this.#songTime * 2.2) * 0.6;
   }
@@ -661,9 +663,11 @@ export class GardenRaceGame {
 
     const target = this.#ringMeshes[this.#currentIdx];
     const pPos = this.#player.getPosition();
-    const dist = Math.hypot(pPos.x - target.pos.x, (pPos.y + 0.9) - target.pos.y, pPos.z - target.pos.z);
+    const dx = pPos.x - target.pos.x;
+    const dy = (pPos.y + 0.9) - target.pos.y;
+    const dz = pPos.z - target.pos.z;
 
-    if (dist < 2.45) {
+    if (dx * dx + dy * dy + dz * dz < 2.45 * 2.45) {
       this.#currentIdx++;
       this.#audio?.playGemCollect();
       const ringsEl = this.#overlayEl.querySelector('#race-rings');

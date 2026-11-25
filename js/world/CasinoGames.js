@@ -5,6 +5,7 @@ import { CasinoUI } from '../ui/CasinoUI.js';
 const SUITS = Object.freeze(['♠', '♥', '♦', '♣']);
 const RANKS = Object.freeze(['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']);
 const DEFAULT_SLOT_SYMBOLS = Object.freeze(['crown', 'seven', 'gem', 'star', 'heart', 'bell']);
+const COIN_RAIN_POOL_SIZE = 64;
 
 const SYMBOL_LABELS = Object.freeze({
   crown: 'Corona Real',
@@ -100,6 +101,15 @@ export class CasinoGames {
   #camTargetLookAt = new THREE.Vector3();
   #tmpVec = new THREE.Vector3();
   #tmpLook = new THREE.Vector3();
+  #tmpRight = new THREE.Vector3();
+  #tmpUp = new THREE.Vector3();
+  #tmpFwd = new THREE.Vector3();
+  #tmpRestPos = new THREE.Vector3();
+  #tmpKnobPos = new THREE.Vector3();
+  #tmpLookTarget = new THREE.Vector3();
+  #tmpPivotOffset = new THREE.Vector3();
+  #tmpVec2 = new THREE.Vector3();
+  #xAxis = new THREE.Vector3(1, 0, 0);
 
   // Recursos compartidos 3D
   #cardGeometry = null;
@@ -110,9 +120,11 @@ export class CasinoGames {
   #coinGeo = null;
   #coinMat = null;
 
-  // Lluvia de monedas VFX
+  // Lluvia de monedas VFX (pool fijo InstancedMesh)
+  #coinRainMesh = null;
   #coinParticles = [];
-  #coinGroup = null;
+  #coinCursor = 0;
+  #coinDummy = new THREE.Object3D();
 
   // Estado Tragaperras
   #slotsSpin = null;
@@ -130,6 +142,7 @@ export class CasinoGames {
   #bjCardMeshes = [];
   #bjAnimations = [];
   #bjTimeline = [];
+  #bjReadyFns = [];
   #bjYawTowardPlayer = 0;
   #bjRightLocal = new THREE.Vector3(1, 0, 0);
   #bjForwardLocal = new THREE.Vector3(0, 0, 1);
@@ -204,6 +217,39 @@ export class CasinoGames {
       metalness: 0.72
     });
     this.#coinMat.userData.isVfx = true;
+
+    this.#coinRainMesh = new THREE.InstancedMesh(this.#coinGeo, this.#coinMat, COIN_RAIN_POOL_SIZE);
+    this.#coinRainMesh.name = 'CasinoCoinRain';
+    this.#coinRainMesh.castShadow = false;
+    this.#coinRainMesh.receiveShadow = false;
+    this.#coinRainMesh.frustumCulled = false;
+    this.#coinRainMesh.visible = false;
+
+    this.#coinParticles = Array.from({ length: COIN_RAIN_POOL_SIZE }, () => ({
+      active: false,
+      x: 0,
+      y: 0,
+      z: 0,
+      rx: 0,
+      ry: 0,
+      rz: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      vrx: 0,
+      vry: 0,
+      floorY: 0,
+      life: 0,
+      maxLife: 2
+    }));
+
+    this.#coinDummy.scale.setScalar(0);
+    this.#coinDummy.updateMatrix();
+    for (let i = 0; i < COIN_RAIN_POOL_SIZE; i++) {
+      this.#coinRainMesh.setMatrixAt(i, this.#coinDummy.matrix);
+    }
+    this.#coinRainMesh.instanceMatrix.needsUpdate = true;
+    this.#scene?.add(this.#coinRainMesh);
   }
 
   #createCardFrontTexture(suit, rank) {
@@ -662,19 +708,25 @@ export class CasinoGames {
     this.#armMats.length = 0;
   }
 
-  #getLeverKnobWorldPos(leverAngle) {
+  #getLeverKnobWorldPos(leverAngle, out = this.#tmpKnobPos) {
     const station = this.#station;
     if (!station?.group) {
-      return this.#camTargetLookAt.clone();
+      return out.copy(this.#camTargetLookAt);
     }
-    const grabLocal = toVec3(station.leverGrabLocal, new THREE.Vector3(0.55, 1.4, 0.18));
+    if (station.leverGrabLocal) {
+      toVec3(station.leverGrabLocal, this.#tmpVec2);
+    } else {
+      this.#tmpVec2.set(0.55, 1.4, 0.18);
+    }
     if (station.leverPivot) {
       const pivotLocal = station.leverPivot.position;
-      const offset = grabLocal.clone().sub(pivotLocal);
-      offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), leverAngle);
-      return station.group.localToWorld(pivotLocal.clone().add(offset));
+      this.#tmpPivotOffset.copy(this.#tmpVec2).sub(pivotLocal);
+      this.#tmpPivotOffset.applyAxisAngle(this.#xAxis, leverAngle);
+      out.copy(pivotLocal).add(this.#tmpPivotOffset);
+      return station.group.localToWorld(out);
     }
-    return station.group.localToWorld(grabLocal);
+    out.copy(this.#tmpVec2);
+    return station.group.localToWorld(out);
   }
 
   #updateSlotSpin(dt) {
@@ -707,29 +759,34 @@ export class CasinoGames {
     }
 
     if (this.#armGroup) {
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.#camera.quaternion);
-      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.#camera.quaternion);
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.#camera.quaternion);
+      this.#tmpRight.set(1, 0, 0).applyQuaternion(this.#camera.quaternion);
+      this.#tmpUp.set(0, 1, 0).applyQuaternion(this.#camera.quaternion);
+      this.#tmpFwd.set(0, 0, -1).applyQuaternion(this.#camera.quaternion);
 
-      const restPos = this.#camera.position
-        .clone()
-        .addScaledVector(right, 0.30)
-        .addScaledVector(up, -0.28)
-        .addScaledVector(forward, 0.38);
+      this.#tmpRestPos
+        .copy(this.#camera.position)
+        .addScaledVector(this.#tmpRight, 0.30)
+        .addScaledVector(this.#tmpUp, -0.28)
+        .addScaledVector(this.#tmpFwd, 0.38);
 
       if (t <= 0.18) {
         const reach = easeOutCubic(t / 0.18);
-        const knob = this.#getLeverKnobWorldPos(0);
-        this.#armGroup.position.lerpVectors(restPos, knob, reach);
-        this.#armGroup.lookAt(knob.clone().addScaledVector(forward, 0.2));
+        const knob = this.#getLeverKnobWorldPos(0, this.#tmpKnobPos);
+        this.#armGroup.position.lerpVectors(this.#tmpRestPos, knob, reach);
+        this.#tmpLookTarget.copy(knob).addScaledVector(this.#tmpFwd, 0.2);
+        this.#armGroup.lookAt(this.#tmpLookTarget);
       } else if (t <= 0.46) {
-        const knob = this.#getLeverKnobWorldPos(leverAngle);
+        const knob = this.#getLeverKnobWorldPos(leverAngle, this.#tmpKnobPos);
         this.#armGroup.position.copy(knob);
-        this.#armGroup.lookAt(knob.clone().addScaledVector(forward, 0.18).addScaledVector(up, -0.08 * leverAngle));
+        this.#tmpLookTarget
+          .copy(knob)
+          .addScaledVector(this.#tmpFwd, 0.18)
+          .addScaledVector(this.#tmpUp, -0.08 * leverAngle);
+        this.#armGroup.lookAt(this.#tmpLookTarget);
       } else if (t <= 0.72) {
         const retract = easeInOutCubic((t - 0.46) / 0.26);
-        const knob = this.#getLeverKnobWorldPos(leverAngle);
-        this.#armGroup.position.lerpVectors(knob, restPos, retract);
+        const knob = this.#getLeverKnobWorldPos(leverAngle, this.#tmpKnobPos);
+        this.#armGroup.position.lerpVectors(knob, this.#tmpRestPos, retract);
         this.#armGroup.lookAt(knob);
       } else {
         this.#removeFirstPersonArm();
@@ -901,7 +958,7 @@ export class CasinoGames {
     holder.rotation.y = this.#bjYawTowardPlayer;
 
     const mesh = new THREE.Mesh(this.#cardGeometry, mats);
-    mesh.castShadow = true;
+    mesh.castShadow = false;
     mesh.receiveShadow = true;
     mesh.rotation.z = Math.PI; // empieza boca abajo
     holder.add(mesh);
@@ -1336,15 +1393,18 @@ export class CasinoGames {
 
   #updateBlackjack(dt) {
     if (this.#bjTimeline.length > 0) {
-      const ready = [];
+      this.#bjReadyFns.length = 0;
       for (let i = this.#bjTimeline.length - 1; i >= 0; i--) {
         this.#bjTimeline[i].remaining -= dt;
         if (this.#bjTimeline[i].remaining <= 0) {
-          ready.push(this.#bjTimeline[i].fn);
+          this.#bjReadyFns.push(this.#bjTimeline[i].fn);
           this.#bjTimeline.splice(i, 1);
         }
       }
-      for (const fn of ready) fn();
+      for (let i = 0; i < this.#bjReadyFns.length; i++) {
+        this.#bjReadyFns[i]();
+      }
+      this.#bjReadyFns.length = 0;
     }
 
     for (let i = this.#bjAnimations.length - 1; i >= 0; i--) {
@@ -1405,77 +1465,123 @@ export class CasinoGames {
   // =========================================================================
 
   #spawnCoinRain(count = 28) {
-    if (!this.#coinGroup) {
-      this.#coinGroup = new THREE.Group();
-      this.#scene.add(this.#coinGroup);
-    }
+    if (!this.#coinRainMesh) return;
     const center = this.#camTargetLookAt;
-    for (let i = 0; i < count; i++) {
-      const mesh = new THREE.Mesh(this.#coinGeo, this.#coinMat);
-      mesh.position.set(
-        center.x + (Math.random() - 0.5) * 1.15,
-        center.y + 0.75 + Math.random() * 0.75,
-        center.z + (Math.random() - 0.5) * 0.95
-      );
-      mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-      this.#coinGroup.add(mesh);
+    const dummy = this.#coinDummy;
+    const spawnCount = Math.min(count, COIN_RAIN_POOL_SIZE);
 
-      this.#coinParticles.push({
-        mesh,
-        vx: (Math.random() - 0.5) * 1.1,
-        vy: 0.9 + Math.random() * 1.6,
-        vz: (Math.random() - 0.5) * 1.1,
-        rx: 4 + Math.random() * 7,
-        ry: 3 + Math.random() * 6,
-        floorY: center.y - 0.25,
-        life: 0,
-        maxLife: 1.9 + Math.random() * 0.7
-      });
+    for (let i = 0; i < spawnCount; i++) {
+      let slot = null;
+      let slotIdx = -1;
+      for (let attempt = 0; attempt < COIN_RAIN_POOL_SIZE; attempt++) {
+        const idx = (this.#coinCursor + attempt) % COIN_RAIN_POOL_SIZE;
+        if (!this.#coinParticles[idx].active) {
+          slot = this.#coinParticles[idx];
+          slotIdx = idx;
+          this.#coinCursor = (idx + 1) % COIN_RAIN_POOL_SIZE;
+          break;
+        }
+      }
+      if (!slot) {
+        slotIdx = this.#coinCursor;
+        slot = this.#coinParticles[slotIdx];
+        this.#coinCursor = (this.#coinCursor + 1) % COIN_RAIN_POOL_SIZE;
+      }
+
+      slot.active = true;
+      slot.x = center.x + (Math.random() - 0.5) * 1.15;
+      slot.y = center.y + 0.75 + Math.random() * 0.75;
+      slot.z = center.z + (Math.random() - 0.5) * 0.95;
+      slot.rx = Math.random() * Math.PI;
+      slot.ry = Math.random() * Math.PI;
+      slot.rz = Math.random() * Math.PI;
+      slot.vx = (Math.random() - 0.5) * 1.1;
+      slot.vy = 0.9 + Math.random() * 1.6;
+      slot.vz = (Math.random() - 0.5) * 1.1;
+      slot.vrx = 4 + Math.random() * 7;
+      slot.vry = 3 + Math.random() * 6;
+      slot.floorY = center.y - 0.25;
+      slot.life = 0;
+      slot.maxLife = 1.9 + Math.random() * 0.7;
+
+      dummy.position.set(slot.x, slot.y, slot.z);
+      dummy.rotation.set(slot.rx, slot.ry, slot.rz);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      this.#coinRainMesh.setMatrixAt(slotIdx, dummy.matrix);
     }
+
+    this.#coinRainMesh.instanceMatrix.needsUpdate = true;
+    this.#coinRainMesh.visible = true;
   }
 
   #updateCoinRain(dt) {
-    if (this.#coinParticles.length === 0) return;
-    for (let i = this.#coinParticles.length - 1; i >= 0; i--) {
-      const p = this.#coinParticles[i];
-      p.life += dt;
-      p.vy -= 5.2 * dt;
-      p.mesh.position.x += p.vx * dt;
-      p.mesh.position.y += p.vy * dt;
-      p.mesh.position.z += p.vz * dt;
-      p.mesh.rotation.x += p.rx * dt;
-      p.mesh.rotation.y += p.ry * dt;
+    if (!this.#coinRainMesh || !this.#coinRainMesh.visible) return;
 
-      if (p.mesh.position.y <= p.floorY && p.vy < 0) {
-        p.mesh.position.y = p.floorY;
+    const dummy = this.#coinDummy;
+    let activeCount = 0;
+    let dirty = false;
+
+    for (let i = 0; i < COIN_RAIN_POOL_SIZE; i++) {
+      const p = this.#coinParticles[i];
+      if (!p.active) continue;
+
+      dirty = true;
+      p.life += dt;
+      if (p.life >= p.maxLife) {
+        p.active = false;
+        dummy.position.set(p.x, p.y, p.z);
+        dummy.scale.setScalar(0);
+        dummy.updateMatrix();
+        this.#coinRainMesh.setMatrixAt(i, dummy.matrix);
+        continue;
+      }
+
+      activeCount++;
+      p.vy -= 5.2 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.rx += p.vrx * dt;
+      p.ry += p.vry * dt;
+
+      if (p.y <= p.floorY && p.vy < 0) {
+        p.y = p.floorY;
         p.vy = -p.vy * 0.42;
       }
 
-      if (p.life > p.maxLife - 0.35) {
-        const s = Math.max(0.01, (p.maxLife - p.life) / 0.35);
-        p.mesh.scale.setScalar(s);
-      }
+      const s = p.life > p.maxLife - 0.35 ? Math.max(0.01, (p.maxLife - p.life) / 0.35) : 1;
+      dummy.position.set(p.x, p.y, p.z);
+      dummy.rotation.set(p.rx, p.ry, p.rz);
+      dummy.scale.setScalar(s);
+      dummy.updateMatrix();
+      this.#coinRainMesh.setMatrixAt(i, dummy.matrix);
+    }
 
-      if (p.life >= p.maxLife) {
-        this.#coinGroup?.remove(p.mesh);
-        this.#coinParticles.splice(i, 1);
-      }
+    if (dirty) {
+      this.#coinRainMesh.instanceMatrix.needsUpdate = true;
     }
-    if (this.#coinParticles.length === 0 && this.#coinGroup) {
-      this.#scene.remove(this.#coinGroup);
-      this.#coinGroup = null;
-    }
+    this.#coinRainMesh.visible = activeCount > 0;
   }
 
   #clearCoinRain() {
-    for (const p of this.#coinParticles) {
-      this.#coinGroup?.remove(p.mesh);
+    if (!this.#coinRainMesh) return;
+    const dummy = this.#coinDummy;
+    let dirty = false;
+    dummy.scale.setScalar(0);
+    dummy.updateMatrix();
+    for (let i = 0; i < COIN_RAIN_POOL_SIZE; i++) {
+      const p = this.#coinParticles[i];
+      if (p.active) {
+        p.active = false;
+        this.#coinRainMesh.setMatrixAt(i, dummy.matrix);
+        dirty = true;
+      }
     }
-    this.#coinParticles.length = 0;
-    if (this.#coinGroup) {
-      this.#scene.remove(this.#coinGroup);
-      this.#coinGroup = null;
+    if (dirty) {
+      this.#coinRainMesh.instanceMatrix.needsUpdate = true;
     }
+    this.#coinRainMesh.visible = false;
   }
 
   #cleanupSessionVisuals() {
@@ -1572,6 +1678,12 @@ export class CasinoGames {
       entry.material.dispose();
     }
     this.#cardCache.clear();
+
+    if (this.#coinRainMesh) {
+      this.#scene?.remove(this.#coinRainMesh);
+      this.#coinRainMesh = null;
+    }
+    this.#coinParticles.length = 0;
 
     if (this.#coinGeo) {
       this.#coinGeo.dispose();

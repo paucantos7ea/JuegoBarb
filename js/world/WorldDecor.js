@@ -1,5 +1,93 @@
 import * as THREE from 'three';
 
+function swapAttr3(attr, a, b) {
+  const x = attr.getX(a);
+  const y = attr.getY(a);
+  const z = attr.getZ(a);
+  attr.setXYZ(a, attr.getX(b), attr.getY(b), attr.getZ(b));
+  attr.setXYZ(b, x, y, z);
+}
+
+function swapAttr2(attr, a, b) {
+  const x = attr.getX(a);
+  const y = attr.getY(a);
+  attr.setXY(a, attr.getX(b), attr.getY(b));
+  attr.setXY(b, x, y);
+}
+
+function mergeGeometries(pieces) {
+  if (!pieces || pieces.length === 0) return null;
+
+  const normalized = [];
+  let totalVerts = 0;
+
+  for (let i = 0; i < pieces.length; i++) {
+    const { geometry, matrix } = pieces[i];
+    const g = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+    if (!g.attributes.normal) {
+      g.computeVertexNormals();
+    }
+    if (matrix) {
+      g.applyMatrix4(matrix);
+      if (matrix.determinant() < 0) {
+        const pos = g.attributes.position;
+        const norm = g.attributes.normal;
+        const uv = g.attributes.uv;
+        for (let v = 0; v < pos.count; v += 3) {
+          const v1 = v + 1;
+          const v2 = v + 2;
+          swapAttr3(pos, v1, v2);
+          if (norm) swapAttr3(norm, v1, v2);
+          if (uv) swapAttr2(uv, v1, v2);
+        }
+      }
+    }
+    totalVerts += g.attributes.position.count;
+    normalized.push(g);
+  }
+
+  const positions = new Float32Array(totalVerts * 3);
+  const normals = new Float32Array(totalVerts * 3);
+  const uvs = new Float32Array(totalVerts * 2);
+
+  let offset = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    const g = normalized[i];
+    const pos = g.attributes.position;
+    const norm = g.attributes.normal;
+    const uv = g.attributes.uv;
+    const count = pos.count;
+
+    for (let v = 0; v < count; v++) {
+      const i3 = (offset + v) * 3;
+      const i2 = (offset + v) * 2;
+      positions[i3] = pos.getX(v);
+      positions[i3 + 1] = pos.getY(v);
+      positions[i3 + 2] = pos.getZ(v);
+
+      if (norm) {
+        normals[i3] = norm.getX(v);
+        normals[i3 + 1] = norm.getY(v);
+        normals[i3 + 2] = norm.getZ(v);
+      }
+      if (uv) {
+        uvs[i2] = uv.getX(v);
+        uvs[i2 + 1] = uv.getY(v);
+      }
+    }
+    offset += count;
+    g.dispose();
+  }
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  merged.computeBoundingSphere();
+  merged.computeBoundingBox();
+  return merged;
+}
+
 export class WorldDecor {
   #scene;
   #textures;
@@ -8,6 +96,9 @@ export class WorldDecor {
   #geometries = [];
   #materials = [];
   #instancedMeshes = [];
+  #staticBuckets = new Map();
+  #tempGeos = [];
+  #dummy = new THREE.Object3D();
   #waterMeshes = [];
   #fountainCrystal = null;
   #fountainHalo = null;
@@ -17,6 +108,7 @@ export class WorldDecor {
   #petalData = null;
   #lanternLights = [];
   #lanternMat = null;
+  #lanternHaloMat = null;
   #elapsed = 0;
 
   constructor(scene, textureFactory, collisionSystem) {
@@ -37,12 +129,16 @@ export class WorldDecor {
     this.#buildGazebos(mats);
     this.#buildPondsStreamsAndBridges(mats);
     this.#buildMiradorAndLake(mats);
+    this.#flushStaticBuckets(mats);
+
     this.#buildCurvedStonePaths(mats);
     this.#buildLanterns(mats);
     this.#buildForestsAndTrees(mats);
     this.#buildFlowerbeds(mats);
     this.#buildSakuraPetals();
 
+    this.#root.matrixAutoUpdate = false;
+    this.#root.updateMatrix();
     this.#scene.add(this.#root);
   }
 
@@ -66,6 +162,43 @@ export class WorldDecor {
     return m;
   }
 
+  #addStaticMesh(geo, mat, x, y, z, castShadow = true, receiveShadow = true, rotX = 0, rotY = 0, rotZ = 0, sx = 1, sy = 1, sz = 1, sharedGeo = false) {
+    if (!sharedGeo) {
+      this.#tempGeos.push(geo);
+    }
+    const key = `${mat.id}_${castShadow ? 1 : 0}_${receiveShadow ? 1 : 0}`;
+    let bucket = this.#staticBuckets.get(key);
+    if (!bucket) {
+      bucket = { mat, castShadow, receiveShadow, pieces: [] };
+      this.#staticBuckets.set(key, bucket);
+    }
+    this.#dummy.position.set(x, y, z);
+    this.#dummy.rotation.set(rotX, rotY, rotZ);
+    this.#dummy.scale.set(sx, sy, sz);
+    this.#dummy.updateMatrix();
+    bucket.pieces.push({ geometry: geo, matrix: this.#dummy.matrix.clone() });
+  }
+
+  #flushStaticBuckets(mats) {
+    for (const bucket of this.#staticBuckets.values()) {
+      const merged = mergeGeometries(bucket.pieces);
+      if (!merged) continue;
+      this.#trackGeo(merged);
+      const mesh = new THREE.Mesh(merged, bucket.mat);
+      mesh.castShadow = bucket.castShadow;
+      mesh.receiveShadow = bucket.receiveShadow;
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      this.#root.add(mesh);
+      if (bucket.mat === mats.water) {
+        this.#waterMeshes.push(mesh);
+      }
+    }
+    this.#staticBuckets.clear();
+    for (const g of this.#tempGeos) g.dispose();
+    this.#tempGeos.length = 0;
+  }
+
   #createInstanced(geo, mat, count, castShadow = true, receiveShadow = true) {
     this.#trackGeo(geo);
     const im = new THREE.InstancedMesh(geo, mat, count);
@@ -74,6 +207,14 @@ export class WorldDecor {
     this.#instancedMeshes.push(im);
     this.#root.add(im);
     return im;
+  }
+
+  #finalizeStaticInstanced(im) {
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    im.computeBoundingSphere();
+    im.matrixAutoUpdate = false;
+    im.updateMatrix();
   }
 
   #createMaterials() {
@@ -112,15 +253,17 @@ export class WorldDecor {
       roughness: 0.18
     }));
 
-    const water = this.#trackMat(new THREE.MeshPhysicalMaterial({
+    const water = this.#trackMat(new THREE.MeshStandardMaterial({
       map: this.#textures.getTexture('water', 4, 4),
       color: 0x7fd8f5,
-      roughness: 0.1,
-      metalness: 0.1,
-      transmission: 0.4,
+      emissive: 0x246b82,
+      emissiveIntensity: 0.12,
+      roughness: 0.15,
+      metalness: 0.25,
       transparent: true,
-      opacity: 0.86
+      opacity: 0.78
     }));
+    water.userData.preserveRoughness = true;
 
     const pondBed = this.#trackMat(new THREE.MeshStandardMaterial({
       color: 0x265463,
@@ -135,25 +278,38 @@ export class WorldDecor {
       roughness: 0.2
     }));
 
-    const crystalDome = this.#trackMat(new THREE.MeshPhysicalMaterial({
+    const lanternHalo = this.#trackMat(new THREE.MeshBasicMaterial({
+      color: 0xffdca8,
+      transparent: true,
+      opacity: 0.24,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false
+    }));
+    lanternHalo.userData.isVfx = true;
+
+    const crystalDome = this.#trackMat(new THREE.MeshStandardMaterial({
       color: 0xf7cce6,
       emissive: 0xc96dad,
       emissiveIntensity: 0.2,
-      roughness: 0.12,
-      metalness: 0.1,
+      roughness: 0.15,
+      metalness: 0.25,
       transparent: true,
-      opacity: 0.68
+      opacity: 0.28,
+      depthWrite: false
     }));
+    crystalDome.userData.preserveRoughness = true;
 
-    const crystalFinial = this.#trackMat(new THREE.MeshPhysicalMaterial({
+    const crystalFinial = this.#trackMat(new THREE.MeshStandardMaterial({
       color: 0xffe4f5,
       emissive: 0xe87cc4,
       emissiveIntensity: 0.55,
-      roughness: 0.08,
-      metalness: 0.15,
+      roughness: 0.15,
+      metalness: 0.25,
       transparent: true,
-      opacity: 0.88
+      opacity: 0.82
     }));
+    crystalFinial.userData.preserveRoughness = true;
 
     const barkCherry = this.#trackMat(new THREE.MeshStandardMaterial({
       color: 0x5c403c,
@@ -192,76 +348,68 @@ export class WorldDecor {
     }));
 
     this.#lanternMat = lantern;
+    this.#lanternHaloMat = lanternHalo;
 
     return {
       grass, marble, plazaFloor, stoneSlab, roseGold, water, pondBed,
-      lantern, crystalDome, crystalFinial, barkCherry, barkForest,
+      lantern, lanternHalo, crystalDome, crystalFinial, barkCherry, barkForest,
       foliage, flowerPetal, stemGreen, lilyPad
     };
   }
 
   #buildGroundAndAvenues(mats) {
     // Césped amplio 240 x 240 cubriendo todo el valle real
-    const ground = this.#addMesh(new THREE.PlaneGeometry(240, 240), mats.grass, 0, 0, -6, false, true);
-    ground.rotation.x = -Math.PI / 2;
+    this.#addStaticMesh(new THREE.PlaneGeometry(240, 240), mats.grass, 0, 0, -6, false, true, -Math.PI / 2);
 
     // Avenida Norte-Sur: X ∈ [-5.5, 5.5], Z ∈ [-17, 36]
-    this.#addMesh(new THREE.BoxGeometry(11.0, 0.06, 53.0), mats.plazaFloor, 0, 0.015, 9.5, false, true);
+    this.#addStaticMesh(new THREE.BoxGeometry(11.0, 0.06, 53.0), mats.plazaFloor, 0, 0.015, 9.5, false, true);
     // Bordillos oro-rosa sutiles de la avenida Norte-Sur (fuera de la plaza de la fuente r=14.5)
     for (const sx of [-5.55, 5.55]) {
-      this.#addMesh(new THREE.BoxGeometry(0.16, 0.08, 22.0), mats.roseGold, sx, 0.02, 25.0, false, true);
+      this.#addStaticMesh(new THREE.BoxGeometry(0.16, 0.08, 22.0), mats.roseGold, sx, 0.02, 25.0, false, true);
     }
 
     // Avenida Oeste: Z ∈ [-3.2, 3.2], X ∈ [-37.5, -14]
-    this.#addMesh(new THREE.BoxGeometry(23.5, 0.06, 6.4), mats.plazaFloor, -25.75, 0.015, 0, false, true);
+    this.#addStaticMesh(new THREE.BoxGeometry(23.5, 0.06, 6.4), mats.plazaFloor, -25.75, 0.015, 0, false, true);
     for (const sz of [-3.25, 3.25]) {
-      this.#addMesh(new THREE.BoxGeometry(23.5, 0.08, 0.16), mats.roseGold, -25.75, 0.02, sz, false, true);
+      this.#addStaticMesh(new THREE.BoxGeometry(23.5, 0.08, 0.16), mats.roseGold, -25.75, 0.02, sz, false, true);
     }
 
     // Avenida Este: Z ∈ [-3.2, 3.2], X ∈ [14, 42]
-    this.#addMesh(new THREE.BoxGeometry(28.0, 0.06, 6.4), mats.plazaFloor, 28.0, 0.015, 0, false, true);
+    this.#addStaticMesh(new THREE.BoxGeometry(28.0, 0.06, 6.4), mats.plazaFloor, 28.0, 0.015, 0, false, true);
     for (const sz of [-3.25, 3.25]) {
-      this.#addMesh(new THREE.BoxGeometry(28.0, 0.08, 0.16), mats.roseGold, 28.0, 0.02, sz, false, true);
+      this.#addStaticMesh(new THREE.BoxGeometry(28.0, 0.08, 0.16), mats.roseGold, 28.0, 0.02, sz, false, true);
     }
   }
 
   #buildMonumentalFountain(mats) {
     // Plaza circular de mármol r = 14.5 con borde oro-rosa
-    this.#addMesh(new THREE.CylinderGeometry(14.5, 14.8, 0.1, 48), mats.plazaFloor, 0, 0.02, 0, false, true);
-    const rim = this.#addMesh(new THREE.TorusGeometry(14.48, 0.15, 10, 64), mats.roseGold, 0, 0.08, 0, false, true);
-    rim.rotation.x = Math.PI / 2;
-    const innerRing = this.#addMesh(new THREE.TorusGeometry(8.8, 0.08, 8, 48), mats.roseGold, 0, 0.075, 0, false, true);
-    innerRing.rotation.x = Math.PI / 2;
+    this.#addStaticMesh(new THREE.CylinderGeometry(14.5, 14.8, 0.1, 48), mats.plazaFloor, 0, 0.02, 0, false, true);
+    this.#addStaticMesh(new THREE.TorusGeometry(14.48, 0.15, 10, 64), mats.roseGold, 0, 0.08, 0, false, true, Math.PI / 2);
+    this.#addStaticMesh(new THREE.TorusGeometry(8.8, 0.08, 8, 48), mats.roseGold, 0, 0.075, 0, false, true, Math.PI / 2);
 
     // Vaso inferior (r = 5.6)
-    this.#addMesh(new THREE.CylinderGeometry(5.6, 5.9, 0.72, 36), mats.marble, 0, 0.39, 0, true, true);
-    this.#addMesh(new THREE.CylinderGeometry(5.1, 5.1, 0.12, 32), mats.pondBed, 0, 0.15, 0, false, true);
-    const basinRim = this.#addMesh(new THREE.TorusGeometry(5.6, 0.18, 12, 48), mats.roseGold, 0, 0.76, 0, true, true);
-    basinRim.rotation.x = Math.PI / 2;
-    const lowerWater = this.#addMesh(new THREE.CylinderGeometry(5.32, 5.32, 0.1, 36), mats.water, 0, 0.65, 0, false, false);
-    this.#waterMeshes.push(lowerWater);
+    this.#addStaticMesh(new THREE.CylinderGeometry(5.6, 5.9, 0.72, 36), mats.marble, 0, 0.39, 0, true, true);
+    this.#addStaticMesh(new THREE.CylinderGeometry(5.1, 5.1, 0.12, 32), mats.pondBed, 0, 0.15, 0, false, true);
+    this.#addStaticMesh(new THREE.TorusGeometry(5.6, 0.18, 12, 48), mats.roseGold, 0, 0.76, 0, true, true, Math.PI / 2);
+    this.#addStaticMesh(new THREE.CylinderGeometry(5.32, 5.32, 0.1, 36), mats.water, 0, 0.65, 0, false, false);
 
     // Colisionador sólido del vaso inferior
     this.#collision.addCylinderCollider(0, 0, 5.65, 0, 5.5);
 
     // Pedestal central inferior -> Copa intermedia (r = 3.3)
-    this.#addMesh(new THREE.CylinderGeometry(0.95, 1.35, 1.9, 20), mats.marble, 0, 1.55, 0, true, true);
-    this.#addMesh(new THREE.CylinderGeometry(3.3, 1.15, 0.52, 28), mats.marble, 0, 2.55, 0, true, true);
-    const midRim = this.#addMesh(new THREE.TorusGeometry(3.3, 0.12, 10, 40), mats.roseGold, 0, 2.82, 0, false, true);
-    midRim.rotation.x = Math.PI / 2;
-    const midWater = this.#addMesh(new THREE.CylinderGeometry(3.05, 3.05, 0.08, 28), mats.water, 0, 2.77, 0, false, false);
-    this.#waterMeshes.push(midWater);
+    this.#addStaticMesh(new THREE.CylinderGeometry(0.95, 1.35, 1.9, 20), mats.marble, 0, 1.55, 0, true, true);
+    this.#addStaticMesh(new THREE.CylinderGeometry(3.3, 1.15, 0.52, 28), mats.marble, 0, 2.55, 0, true, true);
+    this.#addStaticMesh(new THREE.TorusGeometry(3.3, 0.12, 10, 40), mats.roseGold, 0, 2.82, 0, false, true, Math.PI / 2);
+    this.#addStaticMesh(new THREE.CylinderGeometry(3.05, 3.05, 0.08, 28), mats.water, 0, 2.77, 0, false, false);
 
     // Pedestal medio -> Copa superior (r = 1.7)
-    this.#addMesh(new THREE.CylinderGeometry(0.5, 0.72, 1.65, 16), mats.roseGold, 0, 3.6, 0, true, true);
-    this.#addMesh(new THREE.CylinderGeometry(1.7, 0.65, 0.42, 24), mats.marble, 0, 4.45, 0, true, true);
-    const topRim = this.#addMesh(new THREE.TorusGeometry(1.7, 0.09, 8, 32), mats.roseGold, 0, 4.66, 0, false, true);
-    topRim.rotation.x = Math.PI / 2;
-    const topWater = this.#addMesh(new THREE.CylinderGeometry(1.5, 1.5, 0.06, 24), mats.water, 0, 4.62, 0, false, false);
-    this.#waterMeshes.push(topWater);
+    this.#addStaticMesh(new THREE.CylinderGeometry(0.5, 0.72, 1.65, 16), mats.roseGold, 0, 3.6, 0, true, true);
+    this.#addStaticMesh(new THREE.CylinderGeometry(1.7, 0.65, 0.42, 24), mats.marble, 0, 4.45, 0, true, true);
+    this.#addStaticMesh(new THREE.TorusGeometry(1.7, 0.09, 8, 32), mats.roseGold, 0, 4.66, 0, false, true, Math.PI / 2);
+    this.#addStaticMesh(new THREE.CylinderGeometry(1.5, 1.5, 0.06, 24), mats.water, 0, 4.62, 0, false, false);
 
     // Pedestal superior y remate de cristal giratorio en Y = 6.2
-    this.#addMesh(new THREE.CylinderGeometry(0.24, 0.36, 1.1, 14), mats.marble, 0, 5.2, 0, true, true);
+    this.#addStaticMesh(new THREE.CylinderGeometry(0.24, 0.36, 1.1, 14), mats.marble, 0, 5.2, 0, true, true);
     this.#fountainCrystal = this.#addMesh(new THREE.OctahedronGeometry(0.58, 0), mats.crystalFinial, 0, 6.2, 0, false, false);
     this.#fountainHalo = this.#addMesh(new THREE.TorusGeometry(0.85, 0.055, 8, 28), mats.roseGold, 0, 6.2, 0, false, false);
 
@@ -287,6 +435,8 @@ export class WorldDecor {
       depthWrite: false
     }));
     this.#fountainDrops = new THREE.Points(dropGeo, dropMat);
+    this.#fountainDrops.matrixAutoUpdate = false;
+    this.#fountainDrops.updateMatrix();
     this.#root.add(this.#fountainDrops);
   }
 
@@ -297,11 +447,21 @@ export class WorldDecor {
       { x: -54, z: -44, openAngle: Math.PI / 4 }   // Glorieta del Claro Norte-Oeste
     ];
 
+    const floorGeo = new THREE.CylinderGeometry(4.2, 4.35, 0.08, 24);
+    const baseTrimGeo = new THREE.TorusGeometry(4.22, 0.08, 8, 32);
+    const colGeo = new THREE.CylinderGeometry(0.18, 0.22, 4.2, 12);
+    const colBaseGeo = new THREE.CylinderGeometry(0.3, 0.34, 0.22, 12);
+    const corniceGeo = new THREE.TorusGeometry(3.6, 0.16, 10, 32);
+    const domeGeo = new THREE.SphereGeometry(3.55, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    const finialGeo = new THREE.OctahedronGeometry(0.32, 0);
+    const benchGeo = new THREE.BoxGeometry(1.75, 0.12, 0.62);
+    const legGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.44, 8);
+    this.#tempGeos.push(floorGeo, baseTrimGeo, colGeo, colBaseGeo, corniceGeo, domeGeo, finialGeo, benchGeo, legGeo);
+
     for (const g of specs) {
       // Suelo plano de mármol accesible sin escalón brusco
-      this.#addMesh(new THREE.CylinderGeometry(4.2, 4.35, 0.08, 24), mats.plazaFloor, g.x, 0.04, g.z, false, true);
-      const baseTrim = this.#addMesh(new THREE.TorusGeometry(4.22, 0.08, 8, 32), mats.roseGold, g.x, 0.08, g.z, false, true);
-      baseTrim.rotation.x = Math.PI / 2;
+      this.#addStaticMesh(floorGeo, mats.plazaFloor, g.x, 0.04, g.z, false, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addStaticMesh(baseTrimGeo, mats.roseGold, g.x, 0.08, g.z, false, true, Math.PI / 2, 0, 0, 1, 1, 1, true);
       this.#collision.addDiscSurface(g.x, g.z, 4.2, 0.08);
 
       // 6 columnas oro-rosa con entrada despejada hacia openAngle
@@ -309,30 +469,42 @@ export class WorldDecor {
         const a = g.openAngle + Math.PI / 6 + (i / 6) * Math.PI * 2;
         const cx = g.x + Math.cos(a) * 3.55;
         const cz = g.z + Math.sin(a) * 3.55;
-        this.#addMesh(new THREE.CylinderGeometry(0.18, 0.22, 4.2, 12), mats.roseGold, cx, 2.18, cz, true, true);
-        this.#addMesh(new THREE.CylinderGeometry(0.3, 0.34, 0.22, 12), mats.marble, cx, 0.19, cz, true, true);
+        this.#addStaticMesh(colGeo, mats.roseGold, cx, 2.18, cz, true, true, 0, 0, 0, 1, 1, 1, true);
+        this.#addStaticMesh(colBaseGeo, mats.marble, cx, 0.19, cz, true, true, 0, 0, 0, 1, 1, 1, true);
         this.#collision.addCylinderCollider(cx, cz, 0.3, 0, 4.4);
       }
 
       // Cornisa y cúpula de cristal rosado
-      const cornice = this.#addMesh(new THREE.TorusGeometry(3.6, 0.16, 10, 32), mats.roseGold, g.x, 4.3, g.z, true, false);
-      cornice.rotation.x = Math.PI / 2;
-      this.#addMesh(new THREE.SphereGeometry(3.55, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), mats.crystalDome, g.x, 4.32, g.z, false, false);
-      this.#addMesh(new THREE.OctahedronGeometry(0.32, 0), mats.crystalFinial, g.x, 8.05, g.z, false, false);
+      this.#addStaticMesh(corniceGeo, mats.roseGold, g.x, 4.3, g.z, true, false, Math.PI / 2, 0, 0, 1, 1, 1, true);
+      this.#addStaticMesh(domeGeo, mats.crystalDome, g.x, 4.32, g.z, false, false, 0, 0, 0, 1, 1, 1, true);
+      this.#addStaticMesh(finialGeo, mats.crystalFinial, g.x, 8.05, g.z, false, false, 0, 0, 0, 1, 1, 1, true);
 
       // 2 bancos interiores cómodos en lados opuestos a la entrada
       for (const offset of [Math.PI * 0.68, -Math.PI * 0.68]) {
         const ba = g.openAngle + offset;
         const bx = g.x + Math.cos(ba) * 2.55;
         const bz = g.z + Math.sin(ba) * 2.55;
-        const seat = this.#addMesh(new THREE.BoxGeometry(1.75, 0.12, 0.62), mats.marble, bx, 0.52, bz, true, true);
-        seat.rotation.y = -ba + Math.PI / 2;
-        const legL = this.#addMesh(new THREE.CylinderGeometry(0.08, 0.1, 0.44, 8), mats.roseGold,
-          bx + Math.cos(ba + Math.PI / 2) * 0.65, 0.26, bz + Math.sin(ba + Math.PI / 2) * 0.65, true, true);
-        const legR = this.#addMesh(new THREE.CylinderGeometry(0.08, 0.1, 0.44, 8), mats.roseGold,
-          bx - Math.cos(ba + Math.PI / 2) * 0.65, 0.26, bz - Math.sin(ba + Math.PI / 2) * 0.65, true, true);
-        legL.visible = true;
-        legR.visible = true;
+        this.#addStaticMesh(benchGeo, mats.marble, bx, 0.52, bz, true, true, 0, -ba + Math.PI / 2, 0, 1, 1, 1, true);
+        this.#addStaticMesh(
+          legGeo,
+          mats.roseGold,
+          bx + Math.cos(ba + Math.PI / 2) * 0.65,
+          0.26,
+          bz + Math.sin(ba + Math.PI / 2) * 0.65,
+          true,
+          true,
+          0, 0, 0, 1, 1, 1, true
+        );
+        this.#addStaticMesh(
+          legGeo,
+          mats.roseGold,
+          bx - Math.cos(ba + Math.PI / 2) * 0.65,
+          0.26,
+          bz - Math.sin(ba + Math.PI / 2) * 0.65,
+          true,
+          true,
+          0, 0, 0, 1, 1, 1, true
+        );
         this.#collision.addCylinderCollider(bx, bz, 0.55, 0, 0.7);
       }
     }
@@ -340,26 +512,17 @@ export class WorldDecor {
 
   #buildPondsStreamsAndBridges(mats) {
     // 1. Estanque de los Cisnes Este: centro (46, 0.06, 26), rx = 11, rz = 8.5
-    const pondBed = this.#addMesh(new THREE.CircleGeometry(1.0, 36), mats.pondBed, 46, 0.012, 26, false, true);
-    pondBed.rotation.x = -Math.PI / 2;
-    pondBed.scale.set(11.0, 8.5, 1);
-
-    const pondWater = this.#addMesh(new THREE.CircleGeometry(1.0, 36), mats.water, 46, 0.06, 26, false, false);
-    pondWater.rotation.x = -Math.PI / 2;
-    pondWater.scale.set(10.8, 8.3, 1);
-    this.#waterMeshes.push(pondWater);
+    const circleGeo = new THREE.CircleGeometry(1.0, 36);
+    this.#tempGeos.push(circleGeo);
+    this.#addStaticMesh(circleGeo, mats.pondBed, 46, 0.012, 26, false, true, -Math.PI / 2, 0, 0, 11.0, 8.5, 1, true);
+    this.#addStaticMesh(circleGeo, mats.water, 46, 0.06, 26, false, false, -Math.PI / 2, 0, 0, 10.8, 8.3, 1, true);
 
     // Canal ornamental hacia el Oeste: X ∈ [31, 36], Z ∈ [18, 30]
-    const canalBed = this.#addMesh(new THREE.PlaneGeometry(5.4, 12.2), mats.pondBed, 33.5, 0.012, 24, false, true);
-    canalBed.rotation.x = -Math.PI / 2;
-    const canalWater = this.#addMesh(new THREE.PlaneGeometry(5.0, 12.0), mats.water, 33.5, 0.058, 24, false, false);
-    canalWater.rotation.x = -Math.PI / 2;
-    this.#waterMeshes.push(canalWater);
+    this.#addStaticMesh(new THREE.PlaneGeometry(5.4, 12.2), mats.pondBed, 33.5, 0.012, 24, false, true, -Math.PI / 2);
+    this.#addStaticMesh(new THREE.PlaneGeometry(5.0, 12.0), mats.water, 33.5, 0.058, 24, false, false, -Math.PI / 2);
 
     // Conector suave del canal al estanque
-    const joinWater = this.#addMesh(new THREE.PlaneGeometry(4.0, 9.5), mats.water, 37.0, 0.059, 25.0, false, false);
-    joinWater.rotation.x = -Math.PI / 2;
-    this.#waterMeshes.push(joinWater);
+    this.#addStaticMesh(new THREE.PlaneGeometry(4.0, 9.5), mats.water, 37.0, 0.059, 25.0, false, false, -Math.PI / 2);
 
     // Colisión interior del Estanque Este (permite caminar por la orilla sin entrar al agua profunda)
     const pondColliders = [
@@ -391,11 +554,8 @@ export class WorldDecor {
     }
 
     // 2. Arroyo Sur-Oeste: X ∈ [-24, -18], Z ∈ [28, 48] (desagua al Lago Sur Z=55)
-    const streamBed = this.#addMesh(new THREE.PlaneGeometry(6.0, 27.5), mats.pondBed, -21, 0.012, 41.5, false, true);
-    streamBed.rotation.x = -Math.PI / 2;
-    const streamWater = this.#addMesh(new THREE.PlaneGeometry(5.2, 27.2), mats.water, -21, 0.058, 41.5, false, false);
-    streamWater.rotation.x = -Math.PI / 2;
-    this.#waterMeshes.push(streamWater);
+    this.#addStaticMesh(new THREE.PlaneGeometry(6.0, 27.5), mats.pondBed, -21, 0.012, 41.5, false, true, -Math.PI / 2);
+    this.#addStaticMesh(new THREE.PlaneGeometry(5.2, 27.2), mats.water, -21, 0.058, 41.5, false, false, -Math.PI / 2);
 
     // Colisión del Arroyo Sur-Oeste (deja libre Puente 2 en Z ∈ [32.2, 35.8])
     this.#collision.addBox(-23.6, -18.4, 0, 1.4, 28.0, 32.05);
@@ -409,8 +569,8 @@ export class WorldDecor {
 
     // InstancedMesh único para piedras blancas de borde de agua
     const stoneGeo = new THREE.DodecahedronGeometry(0.55, 1);
-    const stoneInst = this.#createInstanced(stoneGeo, mats.stoneSlab, stonePositions.length, true, true);
-    const dummy = new THREE.Object3D();
+    const stoneInst = this.#createInstanced(stoneGeo, mats.stoneSlab, stonePositions.length, false, true);
+    const dummy = this.#dummy;
     stonePositions.forEach(([sx, sz, scale, rot], idx) => {
       dummy.position.set(sx, 0.12, sz);
       dummy.rotation.set(0.1, rot, 0.08);
@@ -418,7 +578,7 @@ export class WorldDecor {
       dummy.updateMatrix();
       stoneInst.setMatrixAt(idx, dummy.matrix);
     });
-    stoneInst.instanceMatrix.needsUpdate = true;
+    this.#finalizeStaticInstanced(stoneInst);
 
     // Nenúfares en el Estanque Este
     const lilyCoords = [
@@ -434,7 +594,7 @@ export class WorldDecor {
       dummy.updateMatrix();
       lilyInst.setMatrixAt(idx, dummy.matrix);
     });
-    lilyInst.instanceMatrix.needsUpdate = true;
+    this.#finalizeStaticInstanced(lilyInst);
 
     // 3. Puente Romántico 1 en (34, 0, 24) sobre canal Este
     this.#buildArchedBridge(mats, 34, 24, 30.0, 38.0);
@@ -451,6 +611,10 @@ export class WorldDecor {
     const segments = 12;
     const halfSpan = (maxX - minX) / 2;
     const segLen = (maxX - minX) / segments;
+    const plankGeo = new THREE.BoxGeometry(segLen + 0.06, 0.14, 3.6);
+    const postGeo = new THREE.CylinderGeometry(0.075, 0.09, 0.92, 10);
+    const orbGeo = new THREE.SphereGeometry(0.11, 10, 8);
+    this.#tempGeos.push(plankGeo, postGeo, orbGeo);
 
     for (let i = 0; i < segments; i++) {
       const t0 = i / segments;
@@ -464,8 +628,7 @@ export class WorldDecor {
       const ym = (y0 + y1) * 0.5;
       const slope = Math.atan2(y1 - y0, x1 - x0);
 
-      const plank = this.#addMesh(new THREE.BoxGeometry(segLen + 0.06, 0.14, 3.6), mats.marble, xm, ym - 0.06, cz, true, true);
-      plank.rotation.z = slope;
+      this.#addStaticMesh(plankGeo, mats.marble, xm, ym - 0.06, cz, true, true, 0, 0, slope, 1, 1, 1, true);
     }
 
     // Barandillas doradas laterales en Z = cz - 1.8 y Z = cz + 1.8
@@ -473,8 +636,8 @@ export class WorldDecor {
       const rz = cz + side;
       for (const px of [minX + 0.15, cx - 2.0, cx, cx + 2.0, maxX - 0.15]) {
         const py = 0.75 * (1 - Math.abs(px - cx) / halfSpan);
-        this.#addMesh(new THREE.CylinderGeometry(0.075, 0.09, 0.92, 10), mats.roseGold, px, py + 0.46, rz, true, false);
-        this.#addMesh(new THREE.SphereGeometry(0.11, 10, 8), mats.roseGold, px, py + 0.96, rz, false, false);
+        this.#addStaticMesh(postGeo, mats.roseGold, px, py + 0.46, rz, true, false, 0, 0, 0, 1, 1, 1, true);
+        this.#addStaticMesh(orbGeo, mats.roseGold, px, py + 0.96, rz, false, false, 0, 0, 0, 1, 1, 1, true);
       }
 
       // Pasamanos inclinados siguiendo el perfil del puente
@@ -484,9 +647,19 @@ export class WorldDecor {
         const startY = (dir < 0 ? 0.03 : 0.75) + 0.88;
         const endY = (dir < 0 ? 0.75 : 0.03) + 0.88;
         const len = Math.hypot(endX - startX, endY - startY);
-        const rail = this.#addMesh(new THREE.CylinderGeometry(0.045, 0.045, len, 8), mats.roseGold,
-          (startX + endX) * 0.5, (startY + endY) * 0.5, rz, true, false);
-        rail.rotation.z = Math.PI / 2 - Math.atan2(endY - startY, endX - startX);
+        const railAngle = Math.PI / 2 - Math.atan2(endY - startY, endX - startX);
+        this.#addStaticMesh(
+          new THREE.CylinderGeometry(0.045, 0.045, len, 8),
+          mats.roseGold,
+          (startX + endX) * 0.5,
+          (startY + endY) * 0.5,
+          rz,
+          true,
+          false,
+          0,
+          0,
+          railAngle
+        );
       }
 
       this.#collision.addBox(minX, maxX, 0, 1.7, rz - 0.14, rz + 0.14);
@@ -495,8 +668,8 @@ export class WorldDecor {
 
   #buildMiradorAndLake(mats) {
     // Mirador Real Sur en (0, 1.2, 46), radio 7.5
-    this.#addMesh(new THREE.CylinderGeometry(7.5, 7.9, 1.2, 32), mats.marble, 0, 0.6, 46, true, true);
-    this.#addMesh(new THREE.CylinderGeometry(7.15, 7.15, 0.06, 32), mats.plazaFloor, 0, 1.22, 46, false, true);
+    this.#addStaticMesh(new THREE.CylinderGeometry(7.5, 7.9, 1.2, 32), mats.marble, 0, 0.6, 46, true, true);
+    this.#addStaticMesh(new THREE.CylinderGeometry(7.15, 7.15, 0.06, 32), mats.plazaFloor, 0, 1.22, 46, false, true);
     this.#collision.addDiscSurface(0, 46, 7.5, 1.2);
     this.#collision.addCylinderCollider(0, 46, 7.5, 0, 0.95);
 
@@ -505,30 +678,29 @@ export class WorldDecor {
     for (let i = 0; i < steps; i++) {
       const h = ((i + 1) / steps) * 1.2;
       const sz = 36.25 + i * 0.5;
-      this.#addMesh(new THREE.BoxGeometry(5.0, h, 0.54), mats.marble, 0, h / 2, sz, true, true);
+      this.#addStaticMesh(new THREE.BoxGeometry(5.0, h, 0.54), mats.marble, 0, h / 2, sz, true, true);
     }
     this.#collision.addRampSurface(-3.6, 3.6, 35.8, 39.2, 'z', 36.0, 39.0, 0.0, 1.2);
 
     // 8 columnas y cúpula cristalina del Mirador
+    const colGeo = new THREE.CylinderGeometry(0.24, 0.28, 5.2, 12);
+    const colBaseGeo = new THREE.CylinderGeometry(0.32, 0.34, 0.25, 12);
+    this.#tempGeos.push(colGeo, colBaseGeo);
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
       const cx = Math.cos(a) * 6.55;
       const cz = 46 + Math.sin(a) * 6.55;
-      this.#addMesh(new THREE.CylinderGeometry(0.24, 0.28, 5.2, 12), mats.marble, cx, 3.8, cz, true, true);
-      this.#addMesh(new THREE.CylinderGeometry(0.32, 0.34, 0.25, 12), mats.roseGold, cx, 1.33, cz, true, true);
+      this.#addStaticMesh(colGeo, mats.marble, cx, 3.8, cz, true, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addStaticMesh(colBaseGeo, mats.roseGold, cx, 1.33, cz, true, true, 0, 0, 0, 1, 1, 1, true);
       this.#collision.addCylinderCollider(cx, cz, 0.34, 1.2, 6.4);
     }
-    const miradorRing = this.#addMesh(new THREE.TorusGeometry(6.6, 0.22, 10, 36), mats.roseGold, 0, 6.4, 46, true, false);
-    miradorRing.rotation.x = Math.PI / 2;
-    this.#addMesh(new THREE.SphereGeometry(6.55, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2), mats.crystalDome, 0, 6.4, 46, false, false);
-    this.#addMesh(new THREE.OctahedronGeometry(0.42, 0), mats.crystalFinial, 0, 13.15, 46, false, false);
+    this.#addStaticMesh(new THREE.TorusGeometry(6.6, 0.22, 10, 36), mats.roseGold, 0, 6.4, 46, true, false, Math.PI / 2);
+    this.#addStaticMesh(new THREE.SphereGeometry(6.55, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2), mats.crystalDome, 0, 6.4, 46, false, false);
+    this.#addStaticMesh(new THREE.OctahedronGeometry(0.42, 0), mats.crystalFinial, 0, 13.15, 46, false, false);
 
     // Gran Lago Imperial Sur: Z ∈ [55, 108], X ∈ [-95, 95]
-    const lakeBed = this.#addMesh(new THREE.PlaneGeometry(190, 53), mats.pondBed, 0, 0.01, 81.5, false, true);
-    lakeBed.rotation.x = -Math.PI / 2;
-    const lakeWater = this.#addMesh(new THREE.PlaneGeometry(190, 53), mats.water, 0, 0.06, 81.5, false, false);
-    lakeWater.rotation.x = -Math.PI / 2;
-    this.#waterMeshes.push(lakeWater);
+    this.#addStaticMesh(new THREE.PlaneGeometry(190, 53), mats.pondBed, 0, 0.01, 81.5, false, true, -Math.PI / 2);
+    this.#addStaticMesh(new THREE.PlaneGeometry(190, 53), mats.water, 0, 0.06, 81.5, false, false, -Math.PI / 2);
 
     // Rocas ornamentales en la orilla del Lago Sur (Z ≈ 55)
     const shoreGeo = new THREE.DodecahedronGeometry(0.75, 1);
@@ -537,8 +709,8 @@ export class WorldDecor {
       if (Math.abs(x) < 10.5) continue;
       shoreCoords.push([x + Math.sin(x) * 0.6, 54.8 + Math.cos(x * 0.4) * 0.7]);
     }
-    const shoreInst = this.#createInstanced(shoreGeo, mats.stoneSlab, shoreCoords.length, true, true);
-    const dummy = new THREE.Object3D();
+    const shoreInst = this.#createInstanced(shoreGeo, mats.stoneSlab, shoreCoords.length, false, true);
+    const dummy = this.#dummy;
     shoreCoords.forEach(([sx, sz], idx) => {
       dummy.position.set(sx, 0.14, sz);
       dummy.rotation.set(0.1, idx * 0.9, 0.05);
@@ -546,7 +718,7 @@ export class WorldDecor {
       dummy.updateMatrix();
       shoreInst.setMatrixAt(idx, dummy.matrix);
     });
-    shoreInst.instanceMatrix.needsUpdate = true;
+    this.#finalizeStaticInstanced(shoreInst);
   }
 
   #buildCurvedStonePaths(mats) {
@@ -604,7 +776,7 @@ export class WorldDecor {
 
     const slabGeo = new THREE.CylinderGeometry(0.68, 0.72, 0.05, 8);
     const slabInst = this.#createInstanced(slabGeo, mats.stoneSlab, slabPts.length, false, true);
-    const dummy = new THREE.Object3D();
+    const dummy = this.#dummy;
     slabPts.forEach((s, idx) => {
       dummy.position.set(s.x, 0.025, s.z);
       dummy.rotation.set(0, s.yaw, 0);
@@ -612,7 +784,7 @@ export class WorldDecor {
       dummy.updateMatrix();
       slabInst.setMatrixAt(idx, dummy.matrix);
     });
-    slabInst.instanceMatrix.needsUpdate = true;
+    this.#finalizeStaticInstanced(slabInst);
   }
 
   #buildLanterns(mats) {
@@ -637,14 +809,16 @@ export class WorldDecor {
     const baseGeo = new THREE.CylinderGeometry(0.24, 0.3, 0.35, 10);
     const capGeo = new THREE.ConeGeometry(0.36, 0.35, 8);
     const bulbGeo = new THREE.OctahedronGeometry(0.26, 0);
+    const haloGeo = new THREE.OctahedronGeometry(0.75, 1);
 
-    const postInst = this.#createInstanced(postGeo, mats.roseGold, positions.length, true, false);
-    const baseInst = this.#createInstanced(baseGeo, mats.marble, positions.length, true, true);
-    const capInst = this.#createInstanced(capGeo, mats.roseGold, positions.length, true, false);
+    const postInst = this.#createInstanced(postGeo, mats.roseGold, positions.length, false, false);
+    const baseInst = this.#createInstanced(baseGeo, mats.marble, positions.length, false, true);
+    const capInst = this.#createInstanced(capGeo, mats.roseGold, positions.length, false, false);
     const bulbInst = this.#createInstanced(bulbGeo, mats.lantern, positions.length, false, false);
+    const haloInst = this.#createInstanced(haloGeo, mats.lanternHalo, positions.length, false, false);
 
-    const dummy = new THREE.Object3D();
-    positions.forEach(([lx, lz, hasLight], idx) => {
+    const dummy = this.#dummy;
+    positions.forEach(([lx, lz], idx) => {
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(1, 1, 1);
 
@@ -664,20 +838,19 @@ export class WorldDecor {
       dummy.updateMatrix();
       bulbInst.setMatrixAt(idx, dummy.matrix);
 
-      this.#collision.addCylinderCollider(lx, lz, 0.24, 0, 3.5);
+      dummy.position.set(lx, 3.55, lz);
+      dummy.scale.set(1.15, 1.15, 1.15);
+      dummy.updateMatrix();
+      haloInst.setMatrixAt(idx, dummy.matrix);
 
-      if (hasLight && this.#lanternLights.length < 9) {
-        const pt = new THREE.PointLight(0xffd7a8, 4.5, 18, 1.8);
-        pt.position.set(lx, 3.65, lz);
-        this.#root.add(pt);
-        this.#lanternLights.push(pt);
-      }
+      this.#collision.addCylinderCollider(lx, lz, 0.24, 0, 3.5);
     });
 
-    postInst.instanceMatrix.needsUpdate = true;
-    baseInst.instanceMatrix.needsUpdate = true;
-    capInst.instanceMatrix.needsUpdate = true;
-    bulbInst.instanceMatrix.needsUpdate = true;
+    this.#finalizeStaticInstanced(postInst);
+    this.#finalizeStaticInstanced(baseInst);
+    this.#finalizeStaticInstanced(capInst);
+    this.#finalizeStaticInstanced(bulbInst);
+    this.#finalizeStaticInstanced(haloInst);
   }
 
   #isReservedZone(x, z, margin = 1.6) {
@@ -810,7 +983,7 @@ export class WorldDecor {
     const willows = trees.filter((t) => t.type === 'willow');
     const broadleafs = trees.filter((t) => t.type === 'broadleaf');
 
-    const dummy = new THREE.Object3D();
+    const dummy = this.#dummy;
     const color = new THREE.Color();
 
     // Colisionadores para árboles dentro del área caminable [-86, 86] × [-82, 62]
@@ -827,7 +1000,7 @@ export class WorldDecor {
       const puffGeo = new THREE.IcosahedronGeometry(1.55, 1);
 
       const trunkInst = this.#createInstanced(trunkGeo, mats.barkCherry, sakuras.length, true, true);
-      const branchInst = this.#createInstanced(branchGeo, mats.barkCherry, sakuras.length * 2, true, true);
+      const branchInst = this.#createInstanced(branchGeo, mats.barkCherry, sakuras.length * 2, false, true);
       const puffInst = this.#createInstanced(puffGeo, mats.foliage, sakuras.length * 4, true, false);
 
       const pinkPalette = [0xffb7d5, 0xff9ec6, 0xffcfe3, 0xf58db8];
@@ -870,10 +1043,9 @@ export class WorldDecor {
         });
       });
 
-      trunkInst.instanceMatrix.needsUpdate = true;
-      branchInst.instanceMatrix.needsUpdate = true;
-      puffInst.instanceMatrix.needsUpdate = true;
-      if (puffInst.instanceColor) puffInst.instanceColor.needsUpdate = true;
+      this.#finalizeStaticInstanced(trunkInst);
+      this.#finalizeStaticInstanced(branchInst);
+      this.#finalizeStaticInstanced(puffInst);
     }
 
     // --- Especie 2: Cipreses reales recortados (conos escalonados verde esmeralda) ---
@@ -909,9 +1081,8 @@ export class WorldDecor {
         });
       });
 
-      trunkInst.instanceMatrix.needsUpdate = true;
-      coneInst.instanceMatrix.needsUpdate = true;
-      if (coneInst.instanceColor) coneInst.instanceColor.needsUpdate = true;
+      this.#finalizeStaticInstanced(trunkInst);
+      this.#finalizeStaticInstanced(coneInst);
     }
 
     // --- Especie 3: Sauces elegantes (copas amplias + cortinas colgantes) ---
@@ -922,7 +1093,7 @@ export class WorldDecor {
 
       const trunkInst = this.#createInstanced(trunkGeo, mats.barkForest, willows.length, true, true);
       const crownInst = this.#createInstanced(crownGeo, mats.foliage, willows.length, true, false);
-      const drapeInst = this.#createInstanced(drapeGeo, mats.foliage, willows.length * 8, true, false);
+      const drapeInst = this.#createInstanced(drapeGeo, mats.foliage, willows.length * 8, false, false);
       const willowColors = [0x6da659, 0x7cb865, 0x5d944b];
 
       willows.forEach((t, i) => {
@@ -954,11 +1125,9 @@ export class WorldDecor {
         }
       });
 
-      trunkInst.instanceMatrix.needsUpdate = true;
-      crownInst.instanceMatrix.needsUpdate = true;
-      drapeInst.instanceMatrix.needsUpdate = true;
-      if (crownInst.instanceColor) crownInst.instanceColor.needsUpdate = true;
-      if (drapeInst.instanceColor) drapeInst.instanceColor.needsUpdate = true;
+      this.#finalizeStaticInstanced(trunkInst);
+      this.#finalizeStaticInstanced(crownInst);
+      this.#finalizeStaticInstanced(drapeInst);
     }
 
     // --- Especie 4: Árboles frondosos de copa multicapa verde primavera ---
@@ -1001,9 +1170,8 @@ export class WorldDecor {
         });
       });
 
-      trunkInst.instanceMatrix.needsUpdate = true;
-      canopyInst.instanceMatrix.needsUpdate = true;
-      if (canopyInst.instanceColor) canopyInst.instanceColor.needsUpdate = true;
+      this.#finalizeStaticInstanced(trunkInst);
+      this.#finalizeStaticInstanced(canopyInst);
     }
   }
 
@@ -1063,7 +1231,7 @@ export class WorldDecor {
       }
     }
 
-    const dummy = new THREE.Object3D();
+    const dummy = this.#dummy;
     const color = new THREE.Color();
 
     // Rosas (rojas, rosas, blancas)
@@ -1089,9 +1257,8 @@ export class WorldDecor {
         color.setHex(roseColors[i % roseColors.length]);
         headInst.setColorAt(i, color);
       });
-      stemInst.instanceMatrix.needsUpdate = true;
-      headInst.instanceMatrix.needsUpdate = true;
-      if (headInst.instanceColor) headInst.instanceColor.needsUpdate = true;
+      this.#finalizeStaticInstanced(stemInst);
+      this.#finalizeStaticInstanced(headInst);
     }
 
     // Tulipanes (dorados, coral, magenta)
@@ -1118,9 +1285,8 @@ export class WorldDecor {
         color.setHex(tulipColors[i % tulipColors.length]);
         cupInst.setColorAt(i, color);
       });
-      stemInst.instanceMatrix.needsUpdate = true;
-      cupInst.instanceMatrix.needsUpdate = true;
-      if (cupInst.instanceColor) cupInst.instanceColor.needsUpdate = true;
+      this.#finalizeStaticInstanced(stemInst);
+      this.#finalizeStaticInstanced(cupInst);
     }
 
     // Espigas de lavanda (violetas)
@@ -1146,9 +1312,8 @@ export class WorldDecor {
         color.setHex(lavColors[i % lavColors.length]);
         spikeInst.setColorAt(i, color);
       });
-      stemInst.instanceMatrix.needsUpdate = true;
-      spikeInst.instanceMatrix.needsUpdate = true;
-      if (spikeInst.instanceColor) spikeInst.instanceColor.needsUpdate = true;
+      this.#finalizeStaticInstanced(stemInst);
+      this.#finalizeStaticInstanced(spikeInst);
     }
 
     // Arbustos floridos bajos en los parterres
@@ -1156,7 +1321,7 @@ export class WorldDecor {
     if (validBushes.length > 0) {
       const bushGeo = new THREE.IcosahedronGeometry(0.62, 1);
       const blossomGeo = new THREE.DodecahedronGeometry(0.14, 0);
-      const bushInst = this.#createInstanced(bushGeo, mats.foliage, validBushes.length, true, true);
+      const bushInst = this.#createInstanced(bushGeo, mats.foliage, validBushes.length, false, true);
       const blossomInst = this.#createInstanced(blossomGeo, mats.flowerPetal, validBushes.length * 4, false, false);
       const bushGreens = [0x3d8a42, 0x4b9c4e, 0x357d3a];
       const speckColors = [0xff8dc2, 0xffd166, 0xffffff];
@@ -1182,10 +1347,8 @@ export class WorldDecor {
           blossomInst.setColorAt(idx, color);
         }
       });
-      bushInst.instanceMatrix.needsUpdate = true;
-      blossomInst.instanceMatrix.needsUpdate = true;
-      if (bushInst.instanceColor) bushInst.instanceColor.needsUpdate = true;
-      if (blossomInst.instanceColor) blossomInst.instanceColor.needsUpdate = true;
+      this.#finalizeStaticInstanced(bushInst);
+      this.#finalizeStaticInstanced(blossomInst);
     }
   }
 
@@ -1216,6 +1379,8 @@ export class WorldDecor {
       depthWrite: false
     }));
     this.#sakuraPetals = new THREE.Points(geo, mat);
+    this.#sakuraPetals.matrixAutoUpdate = false;
+    this.#sakuraPetals.updateMatrix();
     this.#root.add(this.#sakuraPetals);
   }
 
@@ -1223,6 +1388,9 @@ export class WorldDecor {
     if (!theme) return;
     if (this.#lanternMat) {
       this.#lanternMat.emissiveIntensity = 0.65 + theme.lanternIntensity * 0.5;
+    }
+    if (this.#lanternHaloMat) {
+      this.#lanternHaloMat.opacity = Math.min(0.42, 0.14 + (theme.lanternIntensity ?? 1) * 0.14);
     }
     for (const light of this.#lanternLights) {
       light.intensity = 4.2 * theme.lanternIntensity;
@@ -1308,12 +1476,17 @@ export class WorldDecor {
       if (typeof im.dispose === 'function') im.dispose();
     }
     for (const g of this.#geometries) g.dispose();
+    for (const g of this.#tempGeos) g.dispose();
     for (const m of this.#materials) m.dispose();
     this.#instancedMeshes.length = 0;
     this.#geometries.length = 0;
+    this.#tempGeos.length = 0;
     this.#materials.length = 0;
+    this.#staticBuckets.clear();
     this.#lanternLights.length = 0;
     this.#waterMeshes.length = 0;
+    this.#lanternMat = null;
+    this.#lanternHaloMat = null;
     this.#fountainCrystal = null;
     this.#fountainHalo = null;
     this.#fountainDrops = null;

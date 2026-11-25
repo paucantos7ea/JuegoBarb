@@ -1,16 +1,38 @@
+const QUALITY_STORAGE_KEY = 'reino_rosa_quality_v1';
+
+const QUALITY_OPTIONS = [
+  { id: 'high', label: 'Alto', desc: 'Calidad completa optimizada' },
+  { id: 'medium', label: 'Medio', desc: 'Recomendado (sombras 1024, bloom ligero)' },
+  { id: 'low', label: 'Bajo', desc: 'Máximo rendimiento (sin sombras ni bloom)' }
+];
+
+const QUALITY_LABELS = {
+  high: 'Alto',
+  medium: 'Medio',
+  low: 'Bajo'
+};
+
 export class HudUI {
+  #engine = null;
   #callbacks;
   #peerManager;
   #audio;
   #hudEl;
   #minimapCtx = null;
   #boundCleanups = [];
+  #injectedNodes = [];
   #inviteModalOpen = false;
   #inviteWorldId = 'palacio_cristal';
   #coinDeltaTimer = null;
   #coinAnimTimer = null;
+  #quality = 'medium';
+  #qualityPopoverEl = null;
+  #qualityPopoverOpen = false;
+  #fpsBadgeEl = null;
+  #fpsVisible = false;
 
-  constructor({ peerManager, audio, callbacks }) {
+  constructor({ engine = null, peerManager, audio, callbacks }) {
+    this.#engine = engine || document.getElementById('canvas-container')?.__engine || null;
     this.#peerManager = peerManager;
     this.#audio = audio;
     this.#callbacks = callbacks;
@@ -21,8 +43,11 @@ export class HudUI {
     const canvas = this.#el('minimap-canvas');
     this.#minimapCtx = canvas.getContext('2d');
 
+    this.#quality = this.#resolveInitialQuality();
     this.#ensureCoinCounterUI();
+    this.#ensureQualityAndFpsUI();
     this.#syncMuteButton();
+    this.#syncQualityButtons();
 
     this.#on('btn-hud-wardrobe', 'click', () => this.#callbacks.onToggleWardrobe?.());
     this.#on('btn-hud-world', 'click', () => this.#callbacks.onCycleWorld?.());
@@ -133,10 +158,12 @@ export class HudUI {
 
   show() {
     this.#syncMuteButton();
+    this.#syncQualityButtons();
     this.#hudEl.classList.remove('hidden');
   }
 
   hide() {
+    this.#closeQualityPopover();
     this.#hudEl.classList.add('hidden');
     this.closeInviteModal();
   }
@@ -532,6 +559,391 @@ export class HudUI {
     }
   }
 
+  #getEngine() {
+    if (!this.#engine) {
+      this.#engine = document.getElementById('canvas-container')?.__engine || null;
+    }
+    return this.#engine;
+  }
+
+  #resolveInitialQuality() {
+    const engineQuality = this.#getEngine()?.getQuality?.();
+    if (engineQuality && QUALITY_LABELS[engineQuality]) return engineQuality;
+    try {
+      const saved = localStorage.getItem(QUALITY_STORAGE_KEY);
+      if (saved && QUALITY_LABELS[saved]) return saved;
+    } catch {
+      // Sin acceso a localStorage
+    }
+    return 'medium';
+  }
+
+  #ensureQualityAndFpsUI() {
+    if (!document.getElementById('hud-quality-fps-style')) {
+      const style = document.createElement('style');
+      style.id = 'hud-quality-fps-style';
+      style.textContent = `
+        #btn-hud-quality {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          white-space: nowrap;
+        }
+        #reino-quality-popover {
+          position: fixed;
+          z-index: 10075;
+          width: 268px;
+          padding: 8px;
+          border-radius: 16px;
+          border: 1px solid rgba(229, 184, 105, 0.72);
+          background: rgba(255, 246, 251, 0.94);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          box-shadow: 0 12px 30px rgba(62, 18, 44, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          pointer-events: auto;
+        }
+        #reino-quality-popover.hidden {
+          display: none;
+        }
+        .quality-popover-title {
+          font-size: 0.7rem;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--gold-deep, #b07a32);
+          padding: 2px 6px 2px;
+        }
+        .quality-option-btn {
+          width: 100%;
+          text-align: left;
+          padding: 8px 10px;
+          border-radius: 11px;
+          border: 1.5px solid transparent;
+          background: rgba(255, 255, 255, 0.78);
+          color: var(--ink-dark, #3d182b);
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          cursor: pointer;
+          transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+        }
+        .quality-option-btn:hover {
+          background: #fff;
+          border-color: rgba(243, 116, 174, 0.45);
+        }
+        .quality-option-btn.active {
+          background: linear-gradient(135deg, rgba(255, 232, 244, 0.95), rgba(255, 246, 224, 0.95));
+          border-color: var(--rose-500, #d44d8f);
+          box-shadow: 0 4px 12px rgba(199, 65, 130, 0.18);
+        }
+        .quality-option-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 0.82rem;
+          font-weight: 800;
+          color: var(--rose-600, #a72f6b);
+        }
+        .quality-option-desc {
+          font-size: 0.7rem;
+          color: var(--ink-muted, #764a62);
+          line-height: 1.28;
+        }
+        body.casino-open #reino-quality-popover {
+          display: none !important;
+        }
+        #reino-fps-badge {
+          position: fixed;
+          top: 58px;
+          right: 16px;
+          z-index: 10080;
+          pointer-events: none;
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          padding: 5px 12px;
+          border-radius: 999px;
+          border: 1px solid rgba(255, 214, 130, 0.58);
+          background: rgba(34, 14, 30, 0.82);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+          color: #fff5fa;
+          font-size: 0.74rem;
+          font-weight: 700;
+          font-variant-numeric: tabular-nums;
+          letter-spacing: 0.02em;
+          white-space: nowrap;
+        }
+        #reino-fps-badge.hidden {
+          display: none;
+        }
+        #reino-fps-badge .fps-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          flex-shrink: 0;
+          background: #47c97f;
+          box-shadow: 0 0 8px rgba(71, 201, 127, 0.75);
+        }
+        #reino-fps-badge.fps-good {
+          color: #d8ffe9;
+          border-color: rgba(71, 201, 127, 0.6);
+        }
+        #reino-fps-badge.fps-good .fps-dot {
+          background: #47c97f;
+          box-shadow: 0 0 8px rgba(71, 201, 127, 0.75);
+        }
+        #reino-fps-badge.fps-warn {
+          color: #ffefc2;
+          border-color: rgba(246, 189, 77, 0.68);
+        }
+        #reino-fps-badge.fps-warn .fps-dot {
+          background: #f6bd4d;
+          box-shadow: 0 0 8px rgba(246, 189, 77, 0.75);
+        }
+        #reino-fps-badge.fps-low {
+          color: #ffd3e2;
+          border-color: rgba(255, 102, 152, 0.72);
+        }
+        #reino-fps-badge.fps-low .fps-dot {
+          background: #ff6698;
+          box-shadow: 0 0 8px rgba(255, 102, 152, 0.8);
+        }
+      `;
+      document.head.appendChild(style);
+      this.#injectedNodes.push(style);
+    }
+
+    const hudActions = this.#hudEl?.querySelector('.hud-actions');
+    if (hudActions && !this.#el('btn-hud-quality')) {
+      const btn = document.createElement('button');
+      btn.id = 'btn-hud-quality';
+      btn.className = 'icon-btn glass-chip';
+      btn.type = 'button';
+      btn.title = 'Calidad gráfica';
+      btn.setAttribute('aria-haspopup', 'true');
+      btn.setAttribute('aria-expanded', 'false');
+      const menuBtn = this.#el('btn-hud-menu');
+      if (menuBtn && menuBtn.parentNode === hudActions) {
+        hudActions.insertBefore(btn, menuBtn);
+      } else {
+        hudActions.appendChild(btn);
+      }
+      this.#injectedNodes.push(btn);
+
+      const onHudQualityClick = (e) => {
+        e.stopPropagation();
+        btn.blur?.();
+        this.#toggleQualityPopover(btn);
+      };
+      btn.addEventListener('click', onHudQualityClick);
+      this.#boundCleanups.push(() => btn.removeEventListener('click', onHudQualityClick));
+    }
+
+    const pwaToolbar = document.querySelector('#menu-overlay .pwa-toolbar');
+    if (pwaToolbar && !this.#el('btn-menu-quality')) {
+      const menuQBtn = document.createElement('button');
+      menuQBtn.id = 'btn-menu-quality';
+      menuQBtn.className = 'pwa-btn pwa-fullscreen-btn';
+      menuQBtn.type = 'button';
+      menuQBtn.title = 'Calidad gráfica';
+      menuQBtn.setAttribute('aria-haspopup', 'true');
+      menuQBtn.setAttribute('aria-expanded', 'false');
+      pwaToolbar.appendChild(menuQBtn);
+      this.#injectedNodes.push(menuQBtn);
+
+      const onMenuQualityClick = (e) => {
+        e.stopPropagation();
+        menuQBtn.blur?.();
+        this.#toggleQualityPopover(menuQBtn);
+      };
+      menuQBtn.addEventListener('click', onMenuQualityClick);
+      this.#boundCleanups.push(() => menuQBtn.removeEventListener('click', onMenuQualityClick));
+    }
+
+    const appRoot = document.getElementById('app-root') || document.body;
+    if (!this.#el('reino-quality-popover')) {
+      const popover = document.createElement('div');
+      popover.id = 'reino-quality-popover';
+      popover.className = 'hidden';
+      popover.setAttribute('role', 'menu');
+      popover.setAttribute('aria-label', 'Selector de calidad gráfica');
+      popover.innerHTML = `
+        <div class="quality-popover-title">Calidad Gráfica</div>
+        ${QUALITY_OPTIONS.map((opt) => `
+          <button class="quality-option-btn" type="button" data-quality="${opt.id}" role="menuitemradio" aria-checked="false">
+            <span class="quality-option-head">
+              <span>${opt.label}</span>
+              <span class="quality-check" aria-hidden="true"></span>
+            </span>
+            <span class="quality-option-desc">${opt.desc}</span>
+          </button>
+        `).join('')}
+      `;
+      appRoot.appendChild(popover);
+      this.#qualityPopoverEl = popover;
+      this.#injectedNodes.push(popover);
+
+      const onPopoverClick = (e) => {
+        e.stopPropagation();
+        const optionBtn = e.target.closest?.('.quality-option-btn');
+        if (!optionBtn) return;
+        const q = optionBtn.dataset.quality;
+        if (q) this.#selectQuality(q);
+      };
+      popover.addEventListener('click', onPopoverClick);
+      this.#boundCleanups.push(() => popover.removeEventListener('click', onPopoverClick));
+    } else {
+      this.#qualityPopoverEl = this.#el('reino-quality-popover');
+    }
+
+    if (!this.#el('reino-fps-badge')) {
+      const fpsBadge = document.createElement('div');
+      fpsBadge.id = 'reino-fps-badge';
+      fpsBadge.className = 'hidden fps-good';
+      fpsBadge.setAttribute('aria-live', 'off');
+      fpsBadge.innerHTML = '<span class="fps-dot" aria-hidden="true"></span><span id="reino-fps-text">60 FPS · 16.7 ms · 0 DC · Medio</span>';
+      appRoot.appendChild(fpsBadge);
+      this.#fpsBadgeEl = fpsBadge;
+      this.#injectedNodes.push(fpsBadge);
+    } else {
+      this.#fpsBadgeEl = this.#el('reino-fps-badge');
+    }
+
+    const onDocClick = (e) => {
+      if (!this.#qualityPopoverOpen) return;
+      if (this.#qualityPopoverEl?.contains(e.target)) return;
+      if (e.target === this.#el('btn-hud-quality') || e.target === this.#el('btn-menu-quality')) return;
+      this.#closeQualityPopover();
+    };
+    const onPointerLockChange = () => {
+      if (document.pointerLockElement) {
+        this.#closeQualityPopover();
+      }
+    };
+    const onKeyDown = (e) => {
+      if (e.code === 'F3') {
+        e.preventDefault();
+        if (e.repeat) return;
+        this.#fpsVisible = !this.#fpsVisible;
+        this.#fpsBadgeEl?.classList.toggle('hidden', !this.#fpsVisible);
+        return;
+      }
+      if ((e.code === 'Escape' || e.key === 'Escape') && this.#qualityPopoverOpen) {
+        this.#closeQualityPopover();
+      }
+    };
+    const onExternalQuality = (e) => {
+      const q = e?.detail?.quality;
+      if (q && QUALITY_LABELS[q] && q !== this.#quality) {
+        this.#quality = q;
+        this.#syncQualityButtons();
+      }
+    };
+
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('pointerlockchange', onPointerLockChange);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('reino:set-quality', onExternalQuality);
+    this.#boundCleanups.push(
+      () => document.removeEventListener('click', onDocClick),
+      () => document.removeEventListener('pointerlockchange', onPointerLockChange),
+      () => window.removeEventListener('keydown', onKeyDown),
+      () => window.removeEventListener('reino:set-quality', onExternalQuality)
+    );
+
+    this.#getEngine()?.setStatsListener?.((stats) => this.#updateFpsBadge(stats));
+  }
+
+  #syncQualityButtons() {
+    const label = QUALITY_LABELS[this.#quality] || 'Medio';
+    const hudBtn = this.#el('btn-hud-quality');
+    if (hudBtn) {
+      hudBtn.textContent = `⚙️ ${label}`;
+      hudBtn.setAttribute('aria-expanded', String(this.#qualityPopoverOpen));
+    }
+    const menuBtn = this.#el('btn-menu-quality');
+    if (menuBtn) {
+      menuBtn.textContent = `⚙️ Calidad: ${label}`;
+      menuBtn.setAttribute('aria-expanded', String(this.#qualityPopoverOpen));
+    }
+    if (this.#qualityPopoverEl) {
+      this.#qualityPopoverEl.querySelectorAll('.quality-option-btn').forEach((optBtn) => {
+        const isActive = optBtn.dataset.quality === this.#quality;
+        optBtn.classList.toggle('active', isActive);
+        optBtn.setAttribute('aria-checked', String(isActive));
+        const check = optBtn.querySelector('.quality-check');
+        if (check) check.textContent = isActive ? '✓' : '';
+      });
+    }
+  }
+
+  #toggleQualityPopover(anchorEl) {
+    if (!this.#qualityPopoverEl) return;
+    if (this.#qualityPopoverOpen) {
+      this.#closeQualityPopover();
+      return;
+    }
+    this.#qualityPopoverOpen = true;
+    this.#syncQualityButtons();
+    this.#qualityPopoverEl.classList.remove('hidden');
+
+    const rect = anchorEl.getBoundingClientRect();
+    const popWidth = 268;
+    const left = Math.max(12, Math.min(window.innerWidth - popWidth - 12, rect.right - popWidth));
+    const top = Math.min(window.innerHeight - 190, rect.bottom + 8);
+    this.#qualityPopoverEl.style.left = `${Math.round(left)}px`;
+    this.#qualityPopoverEl.style.top = `${Math.round(top)}px`;
+  }
+
+  #closeQualityPopover() {
+    if (!this.#qualityPopoverOpen) return;
+    this.#qualityPopoverOpen = false;
+    this.#qualityPopoverEl?.classList.add('hidden');
+    this.#syncQualityButtons();
+  }
+
+  #selectQuality(quality) {
+    if (!QUALITY_LABELS[quality]) return;
+    this.#quality = quality;
+    try {
+      localStorage.setItem(QUALITY_STORAGE_KEY, quality);
+    } catch {
+      // Sin acceso a localStorage
+    }
+    this.#getEngine()?.setQuality?.(quality);
+    window.dispatchEvent(new CustomEvent('reino:set-quality', { detail: { quality } }));
+    this.#syncQualityButtons();
+    this.#closeQualityPopover();
+    this.showToast(`✨ Calidad gráfica: ${QUALITY_LABELS[quality]}`);
+  }
+
+  #updateFpsBadge(stats) {
+    if (!this.#fpsBadgeEl || !stats) return;
+    const fps = Math.max(0, Math.round(Number(stats.fps) || 0));
+    const frameMs = Number.isFinite(Number(stats.frameMs)) ? Number(stats.frameMs).toFixed(1) : '0.0';
+    const drawCalls = Math.max(0, Math.round(Number(stats.drawCalls) || 0));
+    const qLabel = QUALITY_LABELS[stats.quality] || QUALITY_LABELS[this.#quality] || 'Medio';
+
+    const textEl = this.#fpsBadgeEl.querySelector('#reino-fps-text');
+    if (textEl) {
+      textEl.textContent = `${fps} FPS · ${frameMs} ms · ${drawCalls} DC · ${qLabel}`;
+    }
+
+    this.#fpsBadgeEl.classList.remove('fps-good', 'fps-warn', 'fps-low');
+    if (fps >= 50) {
+      this.#fpsBadgeEl.classList.add('fps-good');
+    } else if (fps >= 35) {
+      this.#fpsBadgeEl.classList.add('fps-warn');
+    } else {
+      this.#fpsBadgeEl.classList.add('fps-low');
+    }
+  }
+
   #escape(str) {
     return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -543,8 +955,15 @@ export class HudUI {
     clearTimeout(this.#coinAnimTimer);
     this.#coinDeltaTimer = null;
     this.#coinAnimTimer = null;
+    this.#getEngine()?.setStatsListener?.(null);
     for (const fn of this.#boundCleanups) fn();
     this.#boundCleanups.length = 0;
+    for (const node of this.#injectedNodes) node?.remove?.();
+    this.#injectedNodes.length = 0;
+    this.#qualityPopoverEl = null;
+    this.#fpsBadgeEl = null;
+    this.#qualityPopoverOpen = false;
+    this.#fpsVisible = false;
     this.hide();
   }
 }

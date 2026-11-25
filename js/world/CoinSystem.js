@@ -10,6 +10,7 @@ const RESPAWN_MIN_SEC = 45;
 const RESPAWN_RANGE_SEC = 15;
 const RESPAWN_POP_SEC = 0.5;
 const PARTICLE_POOL_SIZE = 60;
+const ACTIVE_CULL_SQ = 55 * 55;
 
 /**
  * Crea las posiciones distribuidas de ~60 monedas doradas imperiales por todo el reino.
@@ -419,6 +420,7 @@ export class CoinSystem {
     this.#particleMesh = new THREE.InstancedMesh(particleGeo, particleMat, PARTICLE_POOL_SIZE);
     this.#particleMesh.name = 'ImperialCoinParticles';
     this.#particleMesh.frustumCulled = false;
+    this.#particleMesh.visible = false;
 
     this.#particles = Array.from({ length: PARTICLE_POOL_SIZE }, () => ({
       active: false,
@@ -481,11 +483,23 @@ export class CoinSystem {
 
     const hasPlayer = Boolean(playerPos);
     const dummy = this.#dummy;
+    let coinDirty = false;
+    let haloDirty = false;
 
     for (let i = 0; i < this.#coins.length; i++) {
       const c = this.#coins[i];
 
       if (c.state === 'active') {
+        let distSq = 0;
+        if (hasPlayer) {
+          const dx = playerPos.x - c.x;
+          const dz = playerPos.z - c.z;
+          distSq = dx * dx + dz * dz;
+          if (distSq > ACTIVE_CULL_SQ && c.appearTimer >= RESPAWN_POP_SEC) {
+            continue;
+          }
+        }
+
         if (c.appearTimer < RESPAWN_POP_SEC) {
           c.appearTimer = Math.min(RESPAWN_POP_SEC, c.appearTimer + animDt);
         }
@@ -493,21 +507,16 @@ export class CoinSystem {
         const floatY = c.baseY + 0.9 + Math.sin(this.#elapsed * 2.5 + c.phase) * 0.14;
         const rotY = c.phase + this.#elapsed * 2.15;
 
-        if (hasPlayer) {
-          const dx = playerPos.x - c.x;
-          const dz = playerPos.z - c.z;
-          const dy = Math.abs(playerPos.y - c.baseY);
-          if (dx * dx + dz * dz < PICKUP_RADIUS_SQ && dy < PICKUP_Y_TOLERANCE) {
-            c.state = 'collecting';
-            c.collectTimer = 0;
-            c.collectStartX = c.x;
-            c.collectStartY = floatY;
-            c.collectStartZ = c.z;
-            c.collectRotY = rotY;
-            this.#spawnBurst(c.x, floatY, c.z);
-            this.addCoins(COIN_VALUE, 'pickup');
-            this.#audioManager?.playCoin?.();
-          }
+        if (hasPlayer && distSq < PICKUP_RADIUS_SQ && Math.abs(playerPos.y - c.baseY) < PICKUP_Y_TOLERANCE) {
+          c.state = 'collecting';
+          c.collectTimer = 0;
+          c.collectStartX = c.x;
+          c.collectStartY = floatY;
+          c.collectStartZ = c.z;
+          c.collectRotY = rotY;
+          this.#spawnBurst(c.x, floatY, c.z);
+          this.addCoins(COIN_VALUE, 'pickup');
+          this.#audioManager?.playCoin?.();
         }
 
         if (c.state === 'active') {
@@ -526,6 +535,8 @@ export class CoinSystem {
           dummy.scale.setScalar(haloPulse);
           dummy.updateMatrix();
           this.#haloMesh.setMatrixAt(i, dummy.matrix);
+          coinDirty = true;
+          haloDirty = true;
           continue;
         }
       }
@@ -556,6 +567,8 @@ export class CoinSystem {
         dummy.scale.setScalar(Math.max(0.001, (1 - t) * 0.8));
         dummy.updateMatrix();
         this.#haloMesh.setMatrixAt(i, dummy.matrix);
+        coinDirty = true;
+        haloDirty = true;
 
         if (t >= 1) {
           c.state = 'hidden';
@@ -574,16 +587,10 @@ export class CoinSystem {
         c.state = 'active';
         c.appearTimer = 0;
       }
-      dummy.position.set(c.x, c.baseY + 0.9, c.z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.setScalar(0);
-      dummy.updateMatrix();
-      this.#coinMesh.setMatrixAt(i, dummy.matrix);
-      this.#haloMesh.setMatrixAt(i, dummy.matrix);
     }
 
-    this.#coinMesh.instanceMatrix.needsUpdate = true;
-    this.#haloMesh.instanceMatrix.needsUpdate = true;
+    if (coinDirty) this.#coinMesh.instanceMatrix.needsUpdate = true;
+    if (haloDirty) this.#haloMesh.instanceMatrix.needsUpdate = true;
 
     this.#updateParticles(animDt);
   }
@@ -668,6 +675,7 @@ export class CoinSystem {
   }
 
   #spawnBurst(x, y, z) {
+    if (this.#particleMesh) this.#particleMesh.visible = true;
     const count = 10;
     for (let i = 0; i < count; i++) {
       const p = this.#particles[this.#particleCursor];
@@ -689,8 +697,9 @@ export class CoinSystem {
   }
 
   #updateParticles(dt) {
-    if (!this.#particleMesh) return;
+    if (!this.#particleMesh || !this.#particleMesh.visible) return;
     let dirty = false;
+    let activeCount = 0;
     const dummy = this.#dummy;
 
     for (let i = 0; i < this.#particles.length; i++) {
@@ -708,6 +717,7 @@ export class CoinSystem {
         continue;
       }
 
+      activeCount++;
       p.vy -= 8.8 * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
@@ -727,5 +737,6 @@ export class CoinSystem {
     if (dirty) {
       this.#particleMesh.instanceMatrix.needsUpdate = true;
     }
+    this.#particleMesh.visible = activeCount > 0;
   }
 }

@@ -31,6 +31,7 @@ export class CharacterRig {
   #leftLeg = null; #rightLeg = null; #leftShin = null; #rightShin = null;
   #puffSleeves = []; #armMeshes = []; #thighMeshes = []; #shinMeshes = []; #shoeMeshes = [];
   #accessoryNodes = {}; #materials = {}; #geometries = [];
+  #sharedMats = null; #hairSkipSet = null;
   #spine = null; #spineInner = null; #skirtPivot = null; #skirtInner = null;
   #hairSwing = null; #hairSwingInner = null; #torso = null; #animator = null;
   #isMale = false; #outfitStyle = 'ballgown';
@@ -55,6 +56,7 @@ export class CharacterRig {
     const avatar = CatalogData.getAvatar(this.#appearance.avatarId);
     this.#isMale = avatar.gender === 'male';
     this.#root = new THREE.Group();
+    this.#root.userData.isCharacter = true;
     this.#bodyGroup = new THREE.Group();
     this.#root.add(this.#bodyGroup);
     // Columna (torso, brazos, cabeza) con pivote en la cintura y vuelo de falda en la cadera
@@ -69,9 +71,11 @@ export class CharacterRig {
     }
 
     this.#headGroup = FaceBuilder.buildHead(this.#materials, this.#isMale, (g) => this.#track(g));
+    this.#mergeHeadStaticMeshes();
     this.#hairGroup = new THREE.Group();
     this.#headGroup.add(this.#hairGroup);
     [this.#hairSwing, this.#hairSwingInner] = this.#makePivot(this.#hairGroup, HAIR_PIVOT);
+    this.#hairSkipSet = new Set([this.#hairSwing]);
     this.#spineInner.add(this.#headGroup);
 
     this.#accessoryNodes = OutfitBuilder.buildAccessories(
@@ -81,6 +85,9 @@ export class CharacterRig {
       this.#materials,
       (g) => this.#track(g)
     );
+    for (const accNode of Object.values(this.#accessoryNodes)) {
+      this.#mergeAndUntrack(accNode, true);
+    }
 
     this.#animator = new CharacterAnimator({
       root: this.#root, body: this.#bodyGroup, spine: this.#spine, head: this.#headGroup,
@@ -136,6 +143,144 @@ export class CharacterRig {
     return _box.copy(geo.boundingBox).applyMatrix4(mesh.matrix).min.y < -0.12;
   }
 
+  /** Fusiona hijos THREE.Mesh estáticos con el mismo material en una única geometría para reducir draw calls. */
+  static mergeGroupByMaterial(group, track = null) {
+    if (!group) return new Set();
+    const buckets = new Map();
+    for (const child of group.children) {
+      if (!child.isMesh || !child.geometry || !child.material || child.userData?.isEye) continue;
+      let list = buckets.get(child.material);
+      if (!list) {
+        list = [];
+        buckets.set(child.material, list);
+      }
+      list.push(child);
+    }
+
+    const keptGeos = new Set();
+    for (const child of group.children) {
+      if (child.isMesh && child.geometry) {
+        const list = buckets.get(child.material);
+        if (!list || list.length < 2) keptGeos.add(child.geometry);
+      }
+    }
+
+    const disposed = new Set();
+    for (const [material, meshes] of buckets.entries()) {
+      if (meshes.length < 2) continue;
+
+      const pieces = [];
+      let totalVerts = 0;
+      let castShadow = false;
+      let receiveShadow = false;
+      let renderOrder = 0;
+
+      for (const mesh of meshes) {
+        mesh.updateMatrix();
+        const srcGeo = mesh.geometry;
+        const g = srcGeo.index ? srcGeo.toNonIndexed() : srcGeo.clone();
+        if (!g.attributes.normal) g.computeVertexNormals();
+        g.applyMatrix4(mesh.matrix);
+
+        const posAttr = g.attributes.position;
+        const count = posAttr ? posAttr.count : 0;
+        if (count === 0) {
+          g.dispose();
+          continue;
+        }
+
+        const normAttr = g.attributes.normal;
+        const uvAttr = g.attributes.uv;
+        const posArr = posAttr.array;
+        const normArr = normAttr.array;
+        const uvArr = uvAttr ? uvAttr.array : null;
+
+        if (mesh.matrix.determinant() < 0) {
+          for (let v = 0; v + 2 < count; v += 3) {
+            const i1 = (v + 1) * 3;
+            const i2 = (v + 2) * 3;
+            for (let k = 0; k < 3; k++) {
+              const tp = posArr[i1 + k]; posArr[i1 + k] = posArr[i2 + k]; posArr[i2 + k] = tp;
+              const tn = normArr[i1 + k]; normArr[i1 + k] = normArr[i2 + k]; normArr[i2 + k] = tn;
+            }
+            if (uvArr) {
+              const u1 = (v + 1) * 2;
+              const u2 = (v + 2) * 2;
+              for (let k = 0; k < 2; k++) {
+                const tu = uvArr[u1 + k]; uvArr[u1 + k] = uvArr[u2 + k]; uvArr[u2 + k] = tu;
+              }
+            }
+          }
+        }
+
+        castShadow = castShadow || mesh.castShadow;
+        receiveShadow = receiveShadow || mesh.receiveShadow;
+        if (mesh.renderOrder > renderOrder) renderOrder = mesh.renderOrder;
+        totalVerts += count;
+        pieces.push({ g, count, posArr, normArr, uvArr });
+      }
+
+      if (pieces.length === 0) continue;
+
+      const positions = new Float32Array(totalVerts * 3);
+      const normals = new Float32Array(totalVerts * 3);
+      const uvs = new Float32Array(totalVerts * 2);
+
+      let vOffset = 0;
+      for (const p of pieces) {
+        positions.set(p.posArr.subarray(0, p.count * 3), vOffset * 3);
+        normals.set(p.normArr.subarray(0, p.count * 3), vOffset * 3);
+        if (p.uvArr) {
+          uvs.set(p.uvArr.subarray(0, p.count * 2), vOffset * 2);
+        }
+        vOffset += p.count;
+        p.g.dispose();
+      }
+
+      const merged = new THREE.BufferGeometry();
+      merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+      merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      merged.computeBoundingSphere();
+
+      if (track) track(merged);
+
+      const mergedMesh = new THREE.Mesh(merged, material);
+      mergedMesh.castShadow = castShadow;
+      mergedMesh.receiveShadow = receiveShadow;
+      mergedMesh.renderOrder = renderOrder;
+      group.add(mergedMesh);
+
+      for (const mesh of meshes) {
+        group.remove(mesh);
+        if (!keptGeos.has(mesh.geometry)) {
+          disposed.add(mesh.geometry);
+        }
+      }
+    }
+
+    for (const geo of disposed) {
+      geo.dispose();
+    }
+    return disposed;
+  }
+
+  #mergeAndUntrack(group, trackMerged = false) {
+    const disposed = CharacterRig.mergeGroupByMaterial(group, trackMerged ? (g) => this.#track(g) : null);
+    if (disposed.size > 0) {
+      this.#geometries = this.#geometries.filter((g) => !disposed.has(g));
+    }
+  }
+
+  #mergeHeadStaticMeshes() {
+    this.#mergeAndUntrack(this.#headGroup, true);
+    for (const child of this.#headGroup.children) {
+      if (child.isGroup) {
+        this.#mergeAndUntrack(child, true);
+      }
+    }
+  }
+
   #createMaterials() {
     const m = this.#materials;
     // Piel mate-satinada de muñeca: sin brillos plásticos
@@ -153,12 +298,13 @@ export class CharacterRig {
     m.lips = new THREE.MeshStandardMaterial({ color: 0xe86a80, roughness: 0.55, metalness: 0.0 });
     m.hair = new THREE.MeshStandardMaterial({ color: 0xf0c975, roughness: 0.45, metalness: 0.04, side: THREE.DoubleSide });
     m.hair.userData.preserveRoughness = true;
-    m.primary = new THREE.MeshPhysicalMaterial({ color: 0xf18bb8, roughness: 0.36, metalness: 0.08, sheen: 0.72, sheenColor: new THREE.Color(0xffe0ef), clearcoat: 0.14 });
-    m.secondary = new THREE.MeshPhysicalMaterial({ color: 0xffdce9, roughness: 0.38, metalness: 0.08, sheen: 0.60, side: THREE.DoubleSide });
+    m.primary = new THREE.MeshStandardMaterial({ color: 0xf18bb8, roughness: 0.36, metalness: 0.08 });
+    m.secondary = new THREE.MeshStandardMaterial({ color: 0xffdce9, roughness: 0.38, metalness: 0.08, side: THREE.DoubleSide });
     m.roseGold = new THREE.MeshStandardMaterial({ color: 0xf0be74, metalness: 0.84, roughness: 0.22 });
-    m.crystal = new THREE.MeshPhysicalMaterial({ color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 0.42, roughness: 0.12, metalness: 0.15, clearcoat: 0.8 });
-    m.shawl = new THREE.MeshPhysicalMaterial({ color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.18, roughness: 0.14, transparent: true, opacity: 0.52, side: THREE.DoubleSide });
+    m.crystal = new THREE.MeshStandardMaterial({ color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 0.42, roughness: 0.12, metalness: 0.15 });
+    m.shawl = new THREE.MeshStandardMaterial({ color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.18, roughness: 0.14, transparent: true, opacity: 0.52, side: THREE.DoubleSide });
     m.dark = new THREE.MeshStandardMaterial({ color: 0x221520, roughness: 0.30, metalness: 0.28 });
+    this.#sharedMats = new Set(Object.values(m));
   }
 
   #buildPrinceBody() {
@@ -171,6 +317,8 @@ export class CharacterRig {
     this.#thighMeshes = parts.thighMeshes; this.#shinMeshes = parts.shinMeshes;
     this.#shoeMeshes = parts.shoeMeshes; this.#outfitGroup = parts.outfitGroup;
     this.#moveMeshes(this.#outfitGroup, this.#skirtInner, (m) => this.#isSkirtPart(m));
+    CharacterRig.mergeGroupByMaterial(this.#outfitGroup);
+    CharacterRig.mergeGroupByMaterial(this.#skirtInner);
   }
 
   #buildPrincessBody() {
@@ -194,7 +342,7 @@ export class CharacterRig {
       const shinGroup = new THREE.Group(); shinGroup.position.y = -0.44;
       const shin = new THREE.Mesh(shinGeo, this.#materials.skin); shin.position.y = -0.21; shin.castShadow = true; shinGroup.add(shin);
       const shoe = new THREE.Mesh(footGeo, this.#materials.roseGold); shoe.position.set(0, -0.43, 0.035); shoe.castShadow = true; shinGroup.add(shoe);
-      const heel = new THREE.Mesh(heelGeo, this.#materials.roseGold); heel.position.set(0, -0.45, -0.032); shinGroup.add(heel);
+      const heel = new THREE.Mesh(heelGeo, this.#materials.roseGold); heel.position.set(0, -0.45, -0.032); heel.castShadow = false; shinGroup.add(heel);
       leg.add(shinGroup); this.#bodyGroup.add(leg);
       this.#thighMeshes.push(thigh); this.#shinMeshes.push(shin); this.#shoeMeshes.push(shoe);
       if (i === 0) this.#leftShin = shinGroup; else this.#rightShin = shinGroup;
@@ -222,7 +370,7 @@ export class CharacterRig {
       const forearm = new THREE.Group(); forearm.position.y = -0.27;
       forearm.rotation.set(-0.22, 0, i === 0 ? 0.08 : -0.08);
       const lower = new THREE.Mesh(loGeo, this.#materials.skin); lower.position.y = -0.125; lower.castShadow = true; forearm.add(lower);
-      const hand = new THREE.Mesh(hdGeo, this.#materials.skin); hand.scale.set(0.85, 1.38, 0.62); hand.position.y = -0.265; forearm.add(hand);
+      const hand = new THREE.Mesh(hdGeo, this.#materials.skin); hand.scale.set(0.85, 1.38, 0.62); hand.position.y = -0.265; hand.castShadow = false; forearm.add(hand);
       arm.add(forearm); this.#spineInner.add(arm);
       this.#armMeshes.push(sh, upper, lower);
       if (i === 0) this.#leftForearm = forearm; else this.#rightForearm = forearm;
@@ -276,17 +424,23 @@ export class CharacterRig {
       for (const sh of this.#shinMeshes) sh.material = tallBoots ? m.dark : m.skin;
       for (const so of this.#shoeMeshes) so.material = tallBoots ? m.dark : m.roseGold;
       for (const ps of this.#puffSleeves) ps.visible = outfit.style === 'ballgown';
-      OutfitBuilder.clearGroup(this.#skirtInner);
+      OutfitBuilder.clearGroup(this.#skirtInner, null, null, this.#sharedMats);
       OutfitBuilder.populateOutfit(this.#outfitGroup, outfit, m);
       this.#moveMeshes(this.#outfitGroup, this.#skirtInner, (mesh) => this.#isSkirtPart(mesh));
+      CharacterRig.mergeGroupByMaterial(this.#outfitGroup);
+      CharacterRig.mergeGroupByMaterial(this.#skirtInner);
     }
 
     // Libera el pelo anterior (incluido el pivote con inercia) y reconstruye el nuevo peinado
-    OutfitBuilder.clearGroup(this.#hairSwingInner);
-    OutfitBuilder.clearGroup(this.#hairGroup);
+    OutfitBuilder.clearGroup(this.#hairSwingInner, null, null, this.#sharedMats);
+    OutfitBuilder.clearGroup(this.#hairGroup, this.#hairSkipSet, null, this.#sharedMats);
     HairBuilder.populate(this.#hairGroup, this.#isMale ? 'principe_tupe' : ap.hairId, m, this.#isMale);
-    this.#hairGroup.add(this.#hairSwing);
+    if (this.#hairSwing && !this.#hairSwing.parent) {
+      this.#hairGroup.add(this.#hairSwing);
+    }
     this.#moveMeshes(this.#hairGroup, this.#hairSwingInner, (mesh) => this.#isLongHair(mesh));
+    CharacterRig.mergeGroupByMaterial(this.#hairGroup);
+    CharacterRig.mergeGroupByMaterial(this.#hairSwingInner);
     this.#animator?.setBaseArmZ(this.#getBaseArmZ());
 
     const activeAcc = new Set(ap.accessories);
@@ -318,8 +472,8 @@ export class CharacterRig {
   }
 
   /** Avanza la animación (idle, walk, run, jump, dance, pose, talk) y la física secundaria. */
-  update(dt, animState = 'idle', speed = 0) {
-    this.#animator?.update(dt, animState, speed);
+  update(dt, animState = 'idle', speed = 0, lod = 0) {
+    this.#animator?.update(dt, animState, speed, lod);
   }
 
   /** Emotes: 'wave' | 'spin' | 'curtsy' | 'star'. */
@@ -330,13 +484,21 @@ export class CharacterRig {
   resetMotion() { this.#animator?.resetMotion(); }
 
   dispose() {
-    for (const g of this.#geometries) g.dispose();
+    const sharedGeos = new Set(this.#geometries);
+    for (const g of sharedGeos) g.dispose();
     this.#geometries.length = 0;
-    OutfitBuilder.clearGroup(this.#outfitGroup);
-    OutfitBuilder.clearGroup(this.#skirtInner);
-    OutfitBuilder.clearGroup(this.#hairSwingInner);
-    OutfitBuilder.clearGroup(this.#hairGroup);
+
+    OutfitBuilder.clearGroup(this.#outfitGroup, null, sharedGeos, this.#sharedMats);
+    OutfitBuilder.clearGroup(this.#skirtInner, null, sharedGeos, this.#sharedMats);
+    OutfitBuilder.clearGroup(this.#hairSwingInner, null, sharedGeos, this.#sharedMats);
+    OutfitBuilder.clearGroup(this.#hairGroup, this.#hairSkipSet, sharedGeos, this.#sharedMats);
+    for (const node of Object.values(this.#accessoryNodes)) {
+      OutfitBuilder.clearGroup(node, null, sharedGeos, this.#sharedMats);
+    }
+    OutfitBuilder.clearGroup(this.#headGroup, null, sharedGeos, this.#sharedMats);
+
     for (const mat of Object.values(this.#materials)) mat.dispose();
     this.#materials = {};
+    this.#sharedMats = null;
   }
 }

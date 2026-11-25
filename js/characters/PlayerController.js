@@ -35,6 +35,7 @@ export class PlayerController {
   init(initialAppearance) {
     this.#rig = new CharacterRig(initialAppearance, this.#textures);
     const root = this.#rig.init();
+    root.userData.isCharacter = true;
     root.position.copy(this.#position);
     root.rotation.y = this.#facingYaw;
     this.#scene.add(root);

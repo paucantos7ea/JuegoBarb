@@ -2,6 +2,9 @@ import * as THREE from 'three';
 
 const SMOKE_PALETTE = [0xffb4d8, 0xfff5fb, 0xf799ca, 0xffe8f4, 0xffe4c4];
 const SPARKLE_PALETTE = [0xffe07d, 0xfff4c2, 0xffc95c, 0xffd1ec];
+const POOL_SIZE = 4;
+const PUFF_COUNT = 28;
+const SPARKLE_COUNT = 24;
 
 /**
  * Efecto 3D de transformación mágica para el Vestidor Real (local y remoto P2P):
@@ -15,36 +18,31 @@ export class WardrobeFX {
   #sparkleTexture = null;
   #ringGeometry = null;
   #bursts = [];
+  #nextBurstId = 0;
 
   constructor(scene) {
     this.#scene = scene;
   }
 
   init() {
+    if (this.#bursts.length > 0) return;
+
     this.#smokeTexture = this.#createSmokeTexture();
     this.#sparkleTexture = this.#createSparkleTexture();
     this.#ringGeometry = new THREE.RingGeometry(0.42, 0.56, 32);
+
+    for (let s = 0; s < POOL_SIZE; s++) {
+      this.#bursts.push(this.#createBurstSlot());
+    }
   }
 
-  /**
-   * Lanza una nube mágica alrededor de `anchorObject` (p. ej. el root del personaje).
-   * @param {THREE.Object3D} anchorObject
-   * @param {{ peakMs?: number, onPeak?: () => void }} options
-   * @returns {{ cancelPeak: () => void }}
-   */
-  trigger(anchorObject, { peakMs = 120, onPeak = null } = {}) {
-    if (!this.#scene || !anchorObject) {
-      onPeak?.();
-      return { cancelPeak: () => {} };
-    }
-
+  #createBurstSlot() {
     const group = new THREE.Group();
-    group.position.copy(anchorObject.position);
-    this.#scene.add(group);
+    group.visible = false;
+    this.#scene?.add(group);
 
     const puffs = [];
-    const puffCount = 30;
-    for (let i = 0; i < puffCount; i++) {
+    for (let i = 0; i < PUFF_COUNT; i++) {
       const mat = new THREE.SpriteMaterial({
         map: this.#smokeTexture,
         color: SMOKE_PALETTE[i % SMOKE_PALETTE.length],
@@ -56,36 +54,25 @@ export class WardrobeFX {
       mat.userData.isVfx = true;
 
       const sprite = new THREE.Sprite(mat);
-      const angle = (i / puffCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
-      const heightRatio = (i + Math.random() * 0.7) / puffCount;
-      const baseY = 0.16 + heightRatio * 1.72;
-      const startRadius = 0.08 + Math.random() * 0.24;
-      const radialSpeed = 0.65 + Math.random() * 0.85;
-      const baseScale = 0.72 + Math.random() * 0.55;
-
-      sprite.position.set(Math.cos(angle) * startRadius, baseY, Math.sin(angle) * startRadius);
-      sprite.scale.set(baseScale * 0.4, baseScale * 0.4, 1);
-      mat.rotation = Math.random() * Math.PI * 2;
       group.add(sprite);
 
       puffs.push({
         sprite,
         mat,
-        angle,
-        baseY,
-        startRadius,
-        radialSpeed,
-        riseSpeed: 0.25 + Math.random() * 0.45,
-        swirlSpeed: (Math.random() < 0.5 ? -1 : 1) * (1.1 + Math.random() * 1.4),
-        rotSpeed: (Math.random() - 0.5) * 2.4,
-        baseScale,
-        maxOpacity: 0.78 + Math.random() * 0.18
+        angle: 0,
+        baseY: 0,
+        startRadius: 0,
+        radialSpeed: 0,
+        riseSpeed: 0,
+        swirlSpeed: 0,
+        rotSpeed: 0,
+        baseScale: 1,
+        maxOpacity: 0.8
       });
     }
 
     const sparkles = [];
-    const sparkleCount = 26;
-    for (let i = 0; i < sparkleCount; i++) {
+    for (let i = 0; i < SPARKLE_COUNT; i++) {
       const mat = new THREE.SpriteMaterial({
         map: this.#sparkleTexture,
         color: SPARKLE_PALETTE[i % SPARKLE_PALETTE.length],
@@ -98,27 +85,22 @@ export class WardrobeFX {
       mat.userData.isVfx = true;
 
       const sprite = new THREE.Sprite(mat);
-      const angle = Math.random() * Math.PI * 2;
-      const baseY = 0.2 + Math.random() * 1.75;
-      const startRadius = 0.18 + Math.random() * 0.28;
-      sprite.position.set(Math.cos(angle) * startRadius, baseY, Math.sin(angle) * startRadius);
       group.add(sprite);
 
       sparkles.push({
         sprite,
         mat,
-        angle,
-        baseY,
-        startRadius,
-        radialSpeed: 1.05 + Math.random() * 1.25,
-        riseSpeed: 0.55 + Math.random() * 0.9,
-        swirlSpeed: (Math.random() < 0.5 ? -1 : 1) * (2.2 + Math.random() * 1.8),
-        baseSize: 0.16 + Math.random() * 0.18,
-        twinklePhase: Math.random() * Math.PI * 2
+        angle: 0,
+        baseY: 0,
+        startRadius: 0,
+        radialSpeed: 0,
+        riseSpeed: 0,
+        swirlSpeed: 0,
+        baseSize: 0.2,
+        twinklePhase: 0
       });
     }
 
-    // Aro mágico dorado expansivo alrededor de la silueta
     const ringMat = new THREE.MeshBasicMaterial({
       color: 0xffdc88,
       transparent: true,
@@ -133,8 +115,10 @@ export class WardrobeFX {
     ring.position.y = 0.92;
     group.add(ring);
 
-    const burst = {
-      anchor: anchorObject,
+    return {
+      active: false,
+      burstId: 0,
+      anchor: null,
       group,
       puffs,
       sparkles,
@@ -143,16 +127,106 @@ export class WardrobeFX {
       elapsed: 0,
       smokeDuration: 0.66,
       totalDuration: 0.78,
-      peakTime: Math.max(0.04, peakMs / 1000),
+      peakTime: 0.12,
       peakFired: false,
-      onPeak
+      onPeak: null
     };
-    this.#bursts.push(burst);
+  }
+
+  #acquireSlot() {
+    let oldest = this.#bursts[0];
+    for (let i = 0; i < this.#bursts.length; i++) {
+      const slot = this.#bursts[i];
+      if (!slot.active) return slot;
+      if (slot.elapsed > oldest.elapsed) oldest = slot;
+    }
+    if (oldest && !oldest.peakFired) {
+      oldest.peakFired = true;
+      const pending = oldest.onPeak;
+      oldest.onPeak = null;
+      pending?.();
+    }
+    return oldest;
+  }
+
+  /**
+   * Lanza una nube mágica alrededor de `anchorObject` (p. ej. el root del personaje).
+   * @param {THREE.Object3D} anchorObject
+   * @param {{ peakMs?: number, onPeak?: () => void }} options
+   * @returns {{ cancelPeak: () => void }}
+   */
+  trigger(anchorObject, { peakMs = 120, onPeak = null } = {}) {
+    if (!this.#scene || !anchorObject || this.#bursts.length === 0) {
+      onPeak?.();
+      return { cancelPeak: () => {} };
+    }
+
+    const slot = this.#acquireSlot();
+    const id = ++this.#nextBurstId;
+    slot.active = true;
+    slot.burstId = id;
+    slot.anchor = anchorObject;
+    slot.elapsed = 0;
+    slot.peakTime = Math.max(0.04, peakMs / 1000);
+    slot.peakFired = false;
+    slot.onPeak = onPeak;
+    slot.group.position.copy(anchorObject.position);
+
+    for (let i = 0; i < slot.puffs.length; i++) {
+      const p = slot.puffs[i];
+      const angle = (i / PUFF_COUNT) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
+      const heightRatio = (i + Math.random() * 0.7) / PUFF_COUNT;
+      const baseY = 0.16 + heightRatio * 1.72;
+      const startRadius = 0.08 + Math.random() * 0.24;
+      const baseScale = 0.72 + Math.random() * 0.55;
+
+      p.angle = angle;
+      p.baseY = baseY;
+      p.startRadius = startRadius;
+      p.radialSpeed = 0.65 + Math.random() * 0.85;
+      p.riseSpeed = 0.25 + Math.random() * 0.45;
+      p.swirlSpeed = (Math.random() < 0.5 ? -1 : 1) * (1.1 + Math.random() * 1.4);
+      p.rotSpeed = (Math.random() - 0.5) * 2.4;
+      p.baseScale = baseScale;
+      p.maxOpacity = 0.78 + Math.random() * 0.18;
+
+      p.sprite.position.set(Math.cos(angle) * startRadius, baseY, Math.sin(angle) * startRadius);
+      p.sprite.scale.set(baseScale * 0.4, baseScale * 0.4, 1);
+      p.mat.rotation = Math.random() * Math.PI * 2;
+      p.mat.opacity = 0;
+    }
+
+    for (let i = 0; i < slot.sparkles.length; i++) {
+      const sp = slot.sparkles[i];
+      const angle = Math.random() * Math.PI * 2;
+      const baseY = 0.2 + Math.random() * 1.75;
+      const startRadius = 0.18 + Math.random() * 0.28;
+
+      sp.angle = angle;
+      sp.baseY = baseY;
+      sp.startRadius = startRadius;
+      sp.radialSpeed = 1.05 + Math.random() * 1.25;
+      sp.riseSpeed = 0.55 + Math.random() * 0.9;
+      sp.swirlSpeed = (Math.random() < 0.5 ? -1 : 1) * (2.2 + Math.random() * 1.8);
+      sp.baseSize = 0.16 + Math.random() * 0.18;
+      sp.twinklePhase = Math.random() * Math.PI * 2;
+
+      sp.sprite.position.set(Math.cos(angle) * startRadius, baseY, Math.sin(angle) * startRadius);
+      sp.sprite.scale.set(sp.baseSize * 0.7, sp.baseSize * 0.7, 1);
+      sp.mat.opacity = 0;
+    }
+
+    slot.ring.scale.set(0.5, 0.5, 1);
+    slot.ring.position.y = 0.85;
+    slot.ringMat.opacity = 0;
+    slot.group.visible = true;
 
     return {
       cancelPeak: () => {
-        burst.peakFired = true;
-        burst.onPeak = null;
+        if (slot.burstId === id) {
+          slot.peakFired = true;
+          slot.onPeak = null;
+        }
       }
     };
   }
@@ -160,8 +234,10 @@ export class WardrobeFX {
   update(dt) {
     if (this.#bursts.length === 0) return;
 
-    for (let i = this.#bursts.length - 1; i >= 0; i--) {
+    for (let i = 0; i < this.#bursts.length; i++) {
       const b = this.#bursts[i];
+      if (!b.active) continue;
+
       b.elapsed += dt;
 
       if (b.anchor) {
@@ -181,7 +257,8 @@ export class WardrobeFX {
       const smokeOut = sk <= 0.22 ? 1 : Math.pow(Math.max(0, 1 - (sk - 0.22) / 0.78), 1.65);
       const expandEase = 1 - Math.pow(1 - sk, 2.2);
 
-      for (const p of b.puffs) {
+      for (let j = 0; j < b.puffs.length; j++) {
+        const p = b.puffs[j];
         const ang = p.angle + b.elapsed * p.swirlSpeed;
         const rad = p.startRadius + expandEase * p.radialSpeed;
         const y = p.baseY + expandEase * p.riseSpeed;
@@ -198,7 +275,8 @@ export class WardrobeFX {
       const sparkleEase = 1 - Math.pow(1 - tk, 1.9);
       const sparkleFade = tk < 0.15 ? tk / 0.15 : Math.pow(Math.max(0, 1 - (tk - 0.15) / 0.85), 1.4);
 
-      for (const sp of b.sparkles) {
+      for (let j = 0; j < b.sparkles.length; j++) {
+        const sp = b.sparkles[j];
         const ang = sp.angle + b.elapsed * sp.swirlSpeed;
         const rad = sp.startRadius + sparkleEase * sp.radialSpeed;
         const y = sp.baseY + sparkleEase * sp.riseSpeed;
@@ -218,8 +296,10 @@ export class WardrobeFX {
       b.ringMat.opacity = rk >= 1 ? 0 : Math.sin(rk * Math.PI) * 0.72;
 
       if (b.elapsed >= b.totalDuration) {
-        this.#disposeBurst(b);
-        this.#bursts.splice(i, 1);
+        b.active = false;
+        b.group.visible = false;
+        b.anchor = null;
+        b.onPeak = null;
       }
     }
   }

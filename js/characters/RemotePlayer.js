@@ -26,6 +26,8 @@ export class RemotePlayer {
   #rig = null;
   #targetPos = new THREE.Vector3(0, 0, 14);
   #currentPos = new THREE.Vector3(0, 0, 14);
+  #vel = new THREE.Vector3();
+  #predPos = new THREE.Vector3();
   #targetYaw = Math.PI;
   #currentYaw = Math.PI;
   #animState = 'idle';
@@ -35,6 +37,9 @@ export class RemotePlayer {
   #appearanceKey = '';
   #emoteSeq = -1;
   #pendingFxHandle = null;
+  #hasNetState = false;
+  #lastNetTime = 0;
+  #timeSinceNet = 0;
 
   constructor(scene, peerId, profile = {}, textureFactory = null) {
     this.#scene = scene;
@@ -47,6 +52,7 @@ export class RemotePlayer {
 
   init() {
     const root = this.#rig.init();
+    root.userData.isCharacter = true;
     root.position.copy(this.#currentPos);
     this.#scene.add(root);
 
@@ -94,14 +100,15 @@ export class RemotePlayer {
       this.#name = name;
       this.#replaceSprite('name', name);
     }
-    const appearance = sanitizeAppearance(rawAppearance);
-    if (appearance && !this.#pendingFxHandle) {
-      // Los paquetes 'state' llegan ~15 veces/seg con la apariencia incluida:
-      // solo reconstruimos geometría cuando la ropa cambia de verdad.
-      const key = JSON.stringify(appearance);
-      if (key !== this.#appearanceKey) {
-        this.#appearanceKey = key;
-        this.#rig?.applyAppearance(appearance);
+    if (rawAppearance && !this.#pendingFxHandle) {
+      const appearance = sanitizeAppearance(rawAppearance);
+      if (appearance) {
+        // Solo reconstruimos geometría cuando la ropa cambia de verdad.
+        const key = JSON.stringify(appearance);
+        if (key !== this.#appearanceKey) {
+          this.#appearanceKey = key;
+          this.#rig?.applyAppearance(appearance);
+        }
       }
     }
   }
@@ -173,14 +180,56 @@ export class RemotePlayer {
   }
 
   applyNetworkState(state) {
+    if (ANIM_STATES.has(state.anim)) {
+      this.#animState = state.anim;
+    }
     if (state.pos) {
-      this.#targetPos.set(state.pos[0], state.pos[1], state.pos[2]);
+      const nx = state.pos[0];
+      const ny = state.pos[1];
+      const nz = state.pos[2];
+      const now = performance.now() * 0.001;
+
+      if (!this.#hasNetState) {
+        this.#hasNetState = true;
+        this.#currentPos.set(nx, ny, nz);
+        this.#targetPos.set(nx, ny, nz);
+        this.#vel.set(0, 0, 0);
+        this.#lastNetTime = now;
+        this.#timeSinceNet = 0;
+      } else {
+        const dx = nx - this.#targetPos.x;
+        const dy = ny - this.#targetPos.y;
+        const dz = nz - this.#targetPos.z;
+        const jumpDistSq = dx * dx + dy * dy + dz * dz;
+        if (jumpDistSq > 144) {
+          this.#currentPos.set(nx, ny, nz);
+          this.#targetPos.set(nx, ny, nz);
+          this.#vel.set(0, 0, 0);
+          this.#rig?.resetMotion();
+        } else if (this.#animState === 'idle') {
+          this.#targetPos.set(nx, ny, nz);
+          this.#vel.set(0, 0, 0);
+        } else {
+          const dtNet = Math.max(0.02, Math.min(0.25, now - this.#lastNetTime));
+          let vx = dx / dtNet;
+          let vy = dy / dtNet;
+          let vz = dz / dtNet;
+          const speedSq = vx * vx + vy * vy + vz * vz;
+          if (speedSq > 196) {
+            const s = 14 / Math.sqrt(speedSq);
+            vx *= s;
+            vy *= s;
+            vz *= s;
+          }
+          this.#vel.set(vx, vy, vz);
+          this.#targetPos.set(nx, ny, nz);
+        }
+        this.#lastNetTime = now;
+        this.#timeSinceNet = 0;
+      }
     }
     if (typeof state.yaw === 'number') {
       this.#targetYaw = state.yaw;
-    }
-    if (ANIM_STATES.has(state.anim)) {
-      this.#animState = state.anim;
     }
     // Emote remoto: se reproduce una vez por cada número de secuencia nuevo
     const emote = state.emote;
@@ -188,7 +237,7 @@ export class RemotePlayer {
       this.#emoteSeq = emote.seq;
       this.#rig?.playEmote(emote.id);
     }
-    if (state.name || state.appearance) {
+    if ((state.name && state.name !== this.#name) || state.appearance) {
       this.setProfile(state.name, state.appearance);
     }
   }
@@ -205,20 +254,36 @@ export class RemotePlayer {
     return this.#currentPos;
   }
 
-  update(dt) {
+  update(dt, localPlayerPos = null) {
     if (!this.#rig) return;
-    const t = Math.min(1, dt * 11);
-    this.#currentPos.lerp(this.#targetPos, t);
+    this.#timeSinceNet += dt;
+    const extrap = Math.min(this.#timeSinceNet, 0.10);
+    this.#predPos.copy(this.#targetPos).addScaledVector(this.#vel, extrap);
+
+    const alpha = 1 - Math.exp(-dt * 13);
+    if (this.#currentPos.distanceToSquared(this.#predPos) > 144) {
+      this.#currentPos.copy(this.#predPos);
+      this.#rig.resetMotion();
+    } else {
+      this.#currentPos.lerp(this.#predPos, alpha);
+    }
 
     let diff = this.#targetYaw - this.#currentYaw;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    this.#currentYaw += diff * t;
+    this.#currentYaw += diff * alpha;
 
     const root = this.#rig.getRoot();
     root.position.copy(this.#currentPos);
     root.rotation.y = this.#currentYaw;
-    this.#rig.update(dt, this.#animState, 0);
+
+    let lod = 0;
+    if (localPlayerPos) {
+      const distSq = this.#currentPos.distanceToSquared(localPlayerPos);
+      if (distSq > 2025) lod = 2;
+      else if (distSq > 625) lod = 1;
+    }
+    this.#rig.update(dt, this.#animState, 0, lod);
 
     if (this.#chatTimer > 0) {
       this.#chatTimer -= dt;

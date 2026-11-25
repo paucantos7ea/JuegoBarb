@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+const GEM_PICKUP_SQ = 1.85 * 1.85;
+
 export class QuestSystem {
   #scene;
   #audio;
@@ -7,6 +9,7 @@ export class QuestSystem {
   #gemGroup = null;
   #gemNodes = [];
   #elapsed = 0;
+  #collectedSet = new Set();
 
   #state = {
     galaChangedOutfit: false,
@@ -50,6 +53,7 @@ export class QuestSystem {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(...spec.pos);
       mesh.scale.set(0.85, 1.35, 0.85);
+      mesh.castShadow = false;
 
       const haloMat = new THREE.MeshBasicMaterial({
         color: spec.color,
@@ -60,6 +64,7 @@ export class QuestSystem {
       const halo = new THREE.Mesh(haloGeo, haloMat);
       halo.position.set(spec.pos[0], spec.pos[1] - 0.65, spec.pos[2]);
       halo.rotation.x = -Math.PI / 2;
+      halo.castShadow = false;
 
       this.#gemGroup.add(mesh, halo);
       this.#gemNodes.push({
@@ -72,13 +77,16 @@ export class QuestSystem {
     }
 
     this.#scene.add(this.#gemGroup);
+    this.#collectedSet.clear();
+    for (const id of this.#state.collectedGems) {
+      this.#collectedSet.add(id);
+    }
     this.#syncGemVisibility();
   }
 
   #syncGemVisibility() {
-    const collected = new Set(this.#state.collectedGems);
     for (const node of this.#gemNodes) {
-      const visible = !collected.has(node.spec.id);
+      const visible = !this.#collectedSet.has(node.spec.id);
       node.mesh.visible = visible;
       node.halo.visible = visible;
     }
@@ -150,6 +158,10 @@ export class QuestSystem {
 
     const gemSet = new Set([...this.#state.collectedGems, ...(remote.collectedGems || [])]);
     this.#state.collectedGems = [...gemSet];
+    this.#collectedSet.clear();
+    for (const id of this.#state.collectedGems) {
+      this.#collectedSet.add(id);
+    }
 
     const invSet = new Set([...this.#state.invitedNpcs, ...(remote.invitedNpcs || [])]);
     this.#state.invitedNpcs = [...invSet];
@@ -197,24 +209,23 @@ export class QuestSystem {
   }
 
   getUncollectedGemPositions() {
-    const collected = new Set(this.#state.collectedGems);
     return this.#gemNodes
-      .filter((n) => !collected.has(n.spec.id))
+      .filter((n) => !this.#collectedSet.has(n.spec.id))
       .map((n) => n.pos);
   }
 
   update(dt, playerPos) {
     this.#elapsed += dt;
-    const collected = new Set(this.#state.collectedGems);
 
     for (const node of this.#gemNodes) {
-      if (collected.has(node.spec.id)) continue;
+      if (this.#collectedSet.has(node.spec.id)) continue;
       node.mesh.rotation.y += dt * 1.9;
       node.mesh.position.y = node.baseY + Math.sin(this.#elapsed * 2.8 + node.baseY) * 0.16;
       node.halo.rotation.z -= dt * 1.4;
 
-      if (playerPos && playerPos.distanceTo(node.pos) < 1.85) {
+      if (playerPos && playerPos.distanceToSquared(node.pos) < GEM_PICKUP_SQ) {
         this.#state.collectedGems.push(node.spec.id);
+        this.#collectedSet.add(node.spec.id);
         this.#audio?.playGemCollect();
         const count = this.#state.collectedGems.length;
         const msg = count >= 5

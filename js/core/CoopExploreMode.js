@@ -43,6 +43,8 @@ export class CoopExploreMode {
   #pendingWardrobeFx = null;
   #unsubs = [];
   #currentHotspot = null;
+  #hudRefreshTimer = 0.05;
+  #lastZoneName = '';
 
   #hotspots = [
     { id: 'wardrobe_room', label: 'Usar Vestidor Real', pos: new THREE.Vector3(-22, 1.0, -35), radius: 3.6 },
@@ -118,6 +120,7 @@ export class CoopExploreMode {
     this.#dialogue.init();
 
     this.#hud = new HudUI({
+      engine: context.engine,
       peerManager: context.peerManager,
       audio: context.audio,
       callbacks: {
@@ -185,7 +188,7 @@ export class CoopExploreMode {
       context.textures,
       this.#wardrobeFX
     );
-    this.#stateSync.init(() => ({
+    this.#stateSync.init((includeFull = false) => ({
       name: this.#playerName,
       pos: this.#player.getPosition(),
       yaw: this.#player.getYaw(),
@@ -194,7 +197,7 @@ export class CoopExploreMode {
       appearance: this.#player.getAppearance(),
       casinoStation: this.#casinoGames?.getActiveActivity() || null,
       worldId: this.#worldId,
-      quests: this.#quests.getSnapshot()
+      quests: includeFull ? this.#quests.getSnapshot() : undefined
     }));
 
     this.#minigames = new MinigameManager(
@@ -483,13 +486,21 @@ export class CoopExploreMode {
     }
 
     this.#hud.updateCompass(this.#player.getCameraYaw());
-    this.#hud.setZoneName(this.#collision.getZoneName(pos));
-    this.#hud.drawMinimap(
-      pos,
-      this.#player.getYaw(),
-      this.#stateSync.getRemoteList(),
-      this.#quests.getUncollectedGemPositions()
-    );
+    this.#hudRefreshTimer += dt;
+    if (this.#hudRefreshTimer >= 0.05) {
+      this.#hudRefreshTimer = 0;
+      const zoneName = this.#collision.getZoneName(pos);
+      if (zoneName !== this.#lastZoneName) {
+        this.#lastZoneName = zoneName;
+        this.#hud.setZoneName(zoneName);
+      }
+      this.#hud.drawMinimap(
+        pos,
+        this.#player.getYaw(),
+        this.#stateSync.getRemoteList(),
+        this.#quests.getUncollectedGemPositions()
+      );
+    }
 
     if (this.#wardrobe.isOpen()) {
       this.#hud.setInteractPrompt(null);
@@ -512,7 +523,7 @@ export class CoopExploreMode {
 
     let found = null;
     for (const hs of this.#hotspots) {
-      if (pos.distanceTo(hs.pos) <= hs.radius) {
+      if (pos.distanceToSquared(hs.pos) <= hs.radius * hs.radius) {
         found = hs;
         break;
       }

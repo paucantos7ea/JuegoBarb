@@ -30,27 +30,45 @@ export class OutfitBuilder {
     return geo;
   }
 
-  /** Libera recursivamente las geometrías de un grupo dinámico antes de reconstruirlo. */
-  static clearGroup(group) {
+  /** Libera recursivamente las geometrías (y materiales no compartidos) de un grupo dinámico antes de reconstruirlo. */
+  static clearGroup(group, skipSet = null, sharedGeos = null, sharedMats = null) {
     if (!group) return;
-    while (group.children.length > 0) {
-      const child = group.children[0];
+    const geos = new Set();
+    const mats = new Set();
+    for (const child of [...group.children]) {
+      if (skipSet && skipSet.has(child)) continue;
       child.traverse((obj) => {
-        if (obj.isMesh && obj.geometry) obj.geometry.dispose();
+        if (skipSet && skipSet.has(obj)) return;
+        if (!obj.isMesh) return;
+        if (obj.geometry && (!sharedGeos || !sharedGeos.has(obj.geometry))) {
+          geos.add(obj.geometry);
+        }
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            for (const mat of obj.material) {
+              if (mat && (!sharedMats || !sharedMats.has(mat))) mats.add(mat);
+            }
+          } else if (!sharedMats || !sharedMats.has(obj.material)) {
+            mats.add(obj.material);
+          }
+        }
       });
       group.remove(child);
     }
+    for (const g of geos) g.dispose();
+    for (const m of mats) m.dispose();
   }
 
   static populateOutfit(group, outfit, materials) {
-    OutfitBuilder.clearGroup(group);
+    const sharedMats = materials ? new Set(Object.values(materials)) : null;
+    OutfitBuilder.clearGroup(group, null, null, sharedMats);
 
-    const add = (geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) => {
+    const add = (geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1, castShadow = true) => {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, y, z);
       mesh.rotation.set(rx, ry, rz);
       mesh.scale.set(sx, sy, sz);
-      mesh.castShadow = true;
+      mesh.castShadow = castShadow && mat !== materials.crystal;
       mesh.receiveShadow = true;
       group.add(mesh);
       return mesh;

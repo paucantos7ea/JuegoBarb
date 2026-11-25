@@ -1,6 +1,11 @@
+const CELL_SIZE = 12;
+
 export class CollisionSystem {
   #boxes = [];
   #surfaces = [];
+  #boxGrid = new Map();
+  #surfaceGrid = new Map();
+  #queryStamp = 0;
   #worldBounds = { minX: -88, maxX: 88, minZ: -84, maxZ: 64 };
 
   init() {
@@ -10,6 +15,31 @@ export class CollisionSystem {
   clear() {
     this.#boxes.length = 0;
     this.#surfaces.length = 0;
+    this.#boxGrid.clear();
+    this.#surfaceGrid.clear();
+    this.#queryStamp = 0;
+  }
+
+  #cellKey(gx, gz) {
+    return (gx + 2048) * 4096 + (gz + 2048);
+  }
+
+  #insertIntoGrid(grid, item, minX, maxX, minZ, maxZ) {
+    const gx0 = Math.floor(minX / CELL_SIZE);
+    const gx1 = Math.floor(maxX / CELL_SIZE);
+    const gz0 = Math.floor(minZ / CELL_SIZE);
+    const gz1 = Math.floor(maxZ / CELL_SIZE);
+    for (let gx = gx0; gx <= gx1; gx++) {
+      for (let gz = gz0; gz <= gz1; gz++) {
+        const key = this.#cellKey(gx, gz);
+        let bucket = grid.get(key);
+        if (!bucket) {
+          bucket = [];
+          grid.set(key, bucket);
+        }
+        bucket.push(item);
+      }
+    }
   }
 
   setWorldBounds(minX, maxX, minZ, maxZ) {
@@ -17,59 +47,106 @@ export class CollisionSystem {
   }
 
   addBox(minX, maxX, minY, maxY, minZ, maxZ) {
-    this.#boxes.push({ minX, maxX, minY, maxY, minZ, maxZ });
+    const cx = (minX + maxX) * 0.5;
+    const cz = (minZ + maxZ) * 0.5;
+    const boundR = Math.hypot((maxX - minX) * 0.5, (maxZ - minZ) * 0.5);
+    const box = { minX, maxX, minY, maxY, minZ, maxZ, cx, cz, boundR, stamp: 0 };
+    this.#boxes.push(box);
+    this.#insertIntoGrid(this.#boxGrid, box, minX, maxX, minZ, maxZ);
   }
 
   addCylinderCollider(cx, cz, radius, minY = 0, maxY = 4) {
-    this.#boxes.push({
+    const box = {
       isCylinder: true,
       cx,
       cz,
       radius,
+      boundR: radius,
       minY,
-      maxY
-    });
+      maxY,
+      stamp: 0
+    };
+    this.#boxes.push(box);
+    this.#insertIntoGrid(this.#boxGrid, box, cx - radius, cx + radius, cz - radius, cz + radius);
   }
 
   addFlatSurface(minX, maxX, minZ, maxZ, y) {
-    this.#surfaces.push({
+    const cx = (minX + maxX) * 0.5;
+    const cz = (minZ + maxZ) * 0.5;
+    const boundR = Math.hypot((maxX - minX) * 0.5, (maxZ - minZ) * 0.5);
+    const surface = {
       minX,
       maxX,
       minZ,
       maxZ,
+      cx,
+      cz,
+      boundR,
+      stamp: 0,
       getHeight: () => y
-    });
+    };
+    this.#surfaces.push(surface);
+    this.#insertIntoGrid(this.#surfaceGrid, surface, minX, maxX, minZ, maxZ);
   }
 
   addDiscSurface(cx, cz, radius, y) {
     const rSq = radius * radius;
-    this.#surfaces.push({
-      minX: cx - radius,
-      maxX: cx + radius,
-      minZ: cz - radius,
-      maxZ: cz + radius,
-      contains: (x, z) => (x - cx) * (x - cx) + (z - cz) * (z - cz) <= rSq,
-      getHeight: () => y
-    });
-  }
-
-  addRampSurface(minX, maxX, minZ, maxZ, axis, startCoord, endCoord, startY, endY) {
-    this.#surfaces.push({
+    const minX = cx - radius;
+    const maxX = cx + radius;
+    const minZ = cz - radius;
+    const maxZ = cz + radius;
+    const surface = {
       minX,
       maxX,
       minZ,
       maxZ,
+      cx,
+      cz,
+      boundR: radius,
+      stamp: 0,
+      contains: (x, z) => (x - cx) * (x - cx) + (z - cz) * (z - cz) <= rSq,
+      getHeight: () => y
+    };
+    this.#surfaces.push(surface);
+    this.#insertIntoGrid(this.#surfaceGrid, surface, minX, maxX, minZ, maxZ);
+  }
+
+  addRampSurface(minX, maxX, minZ, maxZ, axis, startCoord, endCoord, startY, endY) {
+    const cx = (minX + maxX) * 0.5;
+    const cz = (minZ + maxZ) * 0.5;
+    const boundR = Math.hypot((maxX - minX) * 0.5, (maxZ - minZ) * 0.5);
+    const surface = {
+      minX,
+      maxX,
+      minZ,
+      maxZ,
+      cx,
+      cz,
+      boundR,
+      stamp: 0,
       getHeight: (x, z) => {
         const v = axis === 'z' ? z : x;
         const t = Math.max(0, Math.min(1, (v - startCoord) / (endCoord - startCoord)));
         return startY + (endY - startY) * t;
       }
-    });
+    };
+    this.#surfaces.push(surface);
+    this.#insertIntoGrid(this.#surfaceGrid, surface, minX, maxX, minZ, maxZ);
   }
 
   getGroundHeight(x, z, currentY = 0, maxStepUp = 1.15) {
     let bestY = 0;
-    for (const s of this.#surfaces) {
+    const gx = Math.floor(x / CELL_SIZE);
+    const gz = Math.floor(z / CELL_SIZE);
+    const bucket = this.#surfaceGrid.get(this.#cellKey(gx, gz));
+    if (!bucket) return bestY;
+
+    for (let i = 0; i < bucket.length; i++) {
+      const s = bucket[i];
+      const dx = x - s.cx;
+      const dz = z - s.cz;
+      const maxR = s.boundR + 1e-4;
+      if (dx * dx + dz * dz > maxR * maxR) continue;
       if (x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ && (!s.contains || s.contains(x, z))) {
         const h = s.getHeight(x, z);
         if (h <= currentY + maxStepUp && h > bestY) {
@@ -87,45 +164,65 @@ export class CollisionSystem {
     const headY = pos.y + height;
 
     for (let pass = 0; pass < 2; pass++) {
-      for (const b of this.#boxes) {
-        if (headY <= b.minY || feetY >= b.maxY) continue;
+      const stamp = ++this.#queryStamp;
+      const gx0 = Math.floor((x - radius) / CELL_SIZE);
+      const gx1 = Math.floor((x + radius) / CELL_SIZE);
+      const gz0 = Math.floor((z - radius) / CELL_SIZE);
+      const gz1 = Math.floor((z + radius) / CELL_SIZE);
 
-        if (b.isCylinder) {
-          const dx = x - b.cx;
-          const dz = z - b.cz;
-          const minDist = b.radius + radius;
-          const distSq = dx * dx + dz * dz;
-          if (distSq < minDist * minDist) {
-            const dist = Math.sqrt(distSq) || 0.0001;
-            x = b.cx + (dx / dist) * minDist;
-            z = b.cz + (dz / dist) * minDist;
-          }
-          continue;
-        }
+      for (let gx = gx0; gx <= gx1; gx++) {
+        for (let gz = gz0; gz <= gz1; gz++) {
+          const bucket = this.#boxGrid.get(this.#cellKey(gx, gz));
+          if (!bucket) continue;
 
-        const closestX = Math.max(b.minX, Math.min(x, b.maxX));
-        const closestZ = Math.max(b.minZ, Math.min(z, b.maxZ));
-        const dx = x - closestX;
-        const dz = z - closestZ;
-        const distSq = dx * dx + dz * dz;
+          for (let i = 0; i < bucket.length; i++) {
+            const b = bucket[i];
+            if (b.stamp === stamp) continue;
+            b.stamp = stamp;
 
-        if (distSq < radius * radius) {
-          if (distSq > 1e-6) {
-            const dist = Math.sqrt(distSq);
-            const push = radius - dist;
-            x += (dx / dist) * push;
-            z += (dz / dist) * push;
-          } else {
-            // Centro dentro del AABB: empujar hacia la cara más cercana
-            const dLeft = Math.abs(x - b.minX);
-            const dRight = Math.abs(b.maxX - x);
-            const dFront = Math.abs(z - b.minZ);
-            const dBack = Math.abs(b.maxZ - z);
-            const m = Math.min(dLeft, dRight, dFront, dBack);
-            if (m === dLeft) x = b.minX - radius;
-            else if (m === dRight) x = b.maxX + radius;
-            else if (m === dFront) z = b.minZ - radius;
-            else z = b.maxZ + radius;
+            if (headY <= b.minY || feetY >= b.maxY) continue;
+
+            const cdx = x - b.cx;
+            const cdz = z - b.cz;
+            const maxR = b.boundR + radius;
+            if (cdx * cdx + cdz * cdz > maxR * maxR) continue;
+
+            if (b.isCylinder) {
+              const minDist = b.radius + radius;
+              const distSq = cdx * cdx + cdz * cdz;
+              if (distSq < minDist * minDist) {
+                const dist = Math.sqrt(distSq) || 0.0001;
+                x = b.cx + (cdx / dist) * minDist;
+                z = b.cz + (cdz / dist) * minDist;
+              }
+              continue;
+            }
+
+            const closestX = Math.max(b.minX, Math.min(x, b.maxX));
+            const closestZ = Math.max(b.minZ, Math.min(z, b.maxZ));
+            const dx = x - closestX;
+            const dz = z - closestZ;
+            const distSq = dx * dx + dz * dz;
+
+            if (distSq < radius * radius) {
+              if (distSq > 1e-6) {
+                const dist = Math.sqrt(distSq);
+                const push = radius - dist;
+                x += (dx / dist) * push;
+                z += (dz / dist) * push;
+              } else {
+                // Centro dentro del AABB: empujar hacia la cara más cercana
+                const dLeft = Math.abs(x - b.minX);
+                const dRight = Math.abs(b.maxX - x);
+                const dFront = Math.abs(z - b.minZ);
+                const dBack = Math.abs(b.maxZ - z);
+                const m = Math.min(dLeft, dRight, dFront, dBack);
+                if (m === dLeft) x = b.minX - radius;
+                else if (m === dRight) x = b.maxX + radius;
+                else if (m === dFront) z = b.minZ - radius;
+                else z = b.maxZ + radius;
+              }
+            }
           }
         }
       }
@@ -148,22 +245,44 @@ export class CollisionSystem {
     ) {
       return true;
     }
-    for (const b of this.#boxes) {
-      if (y < b.minY - margin || y > b.maxY + margin) continue;
-      if (b.isCylinder) {
-        const dx = x - b.cx;
-        const dz = z - b.cz;
-        const r = b.radius + margin;
-        if (dx * dx + dz * dz < r * r) return true;
-        continue;
-      }
-      if (
-        x >= b.minX - margin &&
-        x <= b.maxX + margin &&
-        z >= b.minZ - margin &&
-        z <= b.maxZ + margin
-      ) {
-        return true;
+
+    const stamp = ++this.#queryStamp;
+    const gx0 = Math.floor((x - margin) / CELL_SIZE);
+    const gx1 = Math.floor((x + margin) / CELL_SIZE);
+    const gz0 = Math.floor((z - margin) / CELL_SIZE);
+    const gz1 = Math.floor((z + margin) / CELL_SIZE);
+
+    for (let gx = gx0; gx <= gx1; gx++) {
+      for (let gz = gz0; gz <= gz1; gz++) {
+        const bucket = this.#boxGrid.get(this.#cellKey(gx, gz));
+        if (!bucket) continue;
+
+        for (let i = 0; i < bucket.length; i++) {
+          const b = bucket[i];
+          if (b.stamp === stamp) continue;
+          b.stamp = stamp;
+
+          if (y < b.minY - margin || y > b.maxY + margin) continue;
+
+          const cdx = x - b.cx;
+          const cdz = z - b.cz;
+          const maxR = b.boundR + margin;
+          if (cdx * cdx + cdz * cdz > maxR * maxR) continue;
+
+          if (b.isCylinder) {
+            const r = b.radius + margin;
+            if (cdx * cdx + cdz * cdz < r * r) return true;
+            continue;
+          }
+          if (
+            x >= b.minX - margin &&
+            x <= b.maxX + margin &&
+            z >= b.minZ - margin &&
+            z <= b.maxZ + margin
+          ) {
+            return true;
+          }
+        }
       }
     }
     return false;

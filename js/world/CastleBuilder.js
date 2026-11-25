@@ -1,6 +1,94 @@
 import * as THREE from 'three';
 import { CastleRooms } from './CastleRooms.js';
 
+function swapAttr3(attr, a, b) {
+  const x = attr.getX(a);
+  const y = attr.getY(a);
+  const z = attr.getZ(a);
+  attr.setXYZ(a, attr.getX(b), attr.getY(b), attr.getZ(b));
+  attr.setXYZ(b, x, y, z);
+}
+
+function swapAttr2(attr, a, b) {
+  const x = attr.getX(a);
+  const y = attr.getY(a);
+  attr.setXY(a, attr.getX(b), attr.getY(b));
+  attr.setXY(b, x, y);
+}
+
+function mergeGeometries(pieces) {
+  if (!pieces || pieces.length === 0) return null;
+
+  const normalized = [];
+  let totalVerts = 0;
+
+  for (let i = 0; i < pieces.length; i++) {
+    const { geometry, matrix } = pieces[i];
+    const g = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+    if (!g.attributes.normal) {
+      g.computeVertexNormals();
+    }
+    if (matrix) {
+      g.applyMatrix4(matrix);
+      if (matrix.determinant() < 0) {
+        const pos = g.attributes.position;
+        const norm = g.attributes.normal;
+        const uv = g.attributes.uv;
+        for (let v = 0; v < pos.count; v += 3) {
+          const v1 = v + 1;
+          const v2 = v + 2;
+          swapAttr3(pos, v1, v2);
+          if (norm) swapAttr3(norm, v1, v2);
+          if (uv) swapAttr2(uv, v1, v2);
+        }
+      }
+    }
+    totalVerts += g.attributes.position.count;
+    normalized.push(g);
+  }
+
+  const positions = new Float32Array(totalVerts * 3);
+  const normals = new Float32Array(totalVerts * 3);
+  const uvs = new Float32Array(totalVerts * 2);
+
+  let offset = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    const g = normalized[i];
+    const pos = g.attributes.position;
+    const norm = g.attributes.normal;
+    const uv = g.attributes.uv;
+    const count = pos.count;
+
+    for (let v = 0; v < count; v++) {
+      const i3 = (offset + v) * 3;
+      const i2 = (offset + v) * 2;
+      positions[i3] = pos.getX(v);
+      positions[i3 + 1] = pos.getY(v);
+      positions[i3 + 2] = pos.getZ(v);
+
+      if (norm) {
+        normals[i3] = norm.getX(v);
+        normals[i3 + 1] = norm.getY(v);
+        normals[i3 + 2] = norm.getZ(v);
+      }
+      if (uv) {
+        uvs[i2] = uv.getX(v);
+        uvs[i2 + 1] = uv.getY(v);
+      }
+    }
+    offset += count;
+    g.dispose();
+  }
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  merged.computeBoundingSphere();
+  merged.computeBoundingBox();
+  return merged;
+}
+
 /**
  * Arquitecto del Gran Palacio de Cristal ("Reino Rosa Imperial"):
  * Cimentación, pórtico, muros con puertas amplias, doble escalinata curva,
@@ -17,6 +105,9 @@ export class CastleBuilder {
   #geometries = [];
   #instancedMeshes = [];
   #balusters = [];
+  #staticBuckets = new Map();
+  #tempGeos = [];
+  #dummy = new THREE.Object3D();
   #danceFloorMat = null;
   #crystalMat = null;
   #vaultCrystalMat = null;
@@ -40,11 +131,14 @@ export class CastleBuilder {
     this.#buildStaircaseAndUpperGallery(mats);
     this.#buildExteriorBalconies(mats);
     this.#buildVaultedRoofAndTowers(mats);
+    this.#flushStaticBuckets();
     this.#buildInstancedBalusters(mats);
 
     this.#rooms = new CastleRooms(this.#root, this.#textures, this.#collision, mats);
     this.#rooms.init();
 
+    this.#root.matrixAutoUpdate = false;
+    this.#root.updateMatrix();
     this.#scene.add(this.#root);
   }
 
@@ -68,28 +162,29 @@ export class CastleBuilder {
       roughness: 0.18
     });
 
-    const crystal = new THREE.MeshPhysicalMaterial({
+    const crystal = new THREE.MeshStandardMaterial({
       color: 0xffd9f2,
       emissive: 0xe684c4,
-      emissiveIntensity: 0.45,
-      metalness: 0.12,
-      roughness: 0.08,
-      transmission: 0.55,
-      thickness: 0.8,
+      emissiveIntensity: 0.42,
+      roughness: 0.15,
+      metalness: 0.25,
       transparent: true,
-      opacity: 0.88
+      opacity: 0.34
     });
+    crystal.userData.preserveRoughness = true;
 
     const vaultCrystal = new THREE.MeshStandardMaterial({
       color: 0xffd2ec,
       emissive: 0xc95ea2,
       emissiveIntensity: 0.14,
-      roughness: 0.12,
-      metalness: 0.1,
+      roughness: 0.15,
+      metalness: 0.25,
       transparent: true,
-      opacity: 0.46,
+      opacity: 0.28,
+      depthWrite: false,
       side: THREE.DoubleSide
     });
+    vaultCrystal.userData.preserveRoughness = true;
 
     const stained = new THREE.MeshStandardMaterial({
       map: this.#textures.getTexture('stainedCrystal', 1, 2),
@@ -157,45 +252,63 @@ export class CastleBuilder {
     return geo;
   }
 
-  #addMesh(geo, mat, x, y, z, castShadow = true, receiveShadow = true) {
-    this.#trackGeo(geo);
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y, z);
-    mesh.castShadow = castShadow;
-    mesh.receiveShadow = receiveShadow;
-    this.#root.add(mesh);
-    return mesh;
+  #addMesh(geo, mat, x, y, z, castShadow = true, receiveShadow = true, rotX = 0, rotY = 0, rotZ = 0, sx = 1, sy = 1, sz = 1, sharedGeo = false) {
+    if (!sharedGeo) {
+      this.#tempGeos.push(geo);
+    }
+    const key = `${mat.id}_${castShadow ? 1 : 0}_${receiveShadow ? 1 : 0}`;
+    let bucket = this.#staticBuckets.get(key);
+    if (!bucket) {
+      bucket = { mat, castShadow, receiveShadow, pieces: [] };
+      this.#staticBuckets.set(key, bucket);
+    }
+    this.#dummy.position.set(x, y, z);
+    this.#dummy.rotation.set(rotX, rotY, rotZ);
+    this.#dummy.scale.set(sx, sy, sz);
+    this.#dummy.updateMatrix();
+    bucket.pieces.push({ geometry: geo, matrix: this.#dummy.matrix.clone() });
   }
 
-  #addBox(w, h, d, x, y, z, mat, castShadow = true, addCollider = false) {
-    const mesh = this.#addMesh(new THREE.BoxGeometry(w, h, d), mat, x, y, z, castShadow, true);
+  #flushStaticBuckets() {
+    for (const bucket of this.#staticBuckets.values()) {
+      const merged = mergeGeometries(bucket.pieces);
+      if (!merged) continue;
+      this.#trackGeo(merged);
+      const mesh = new THREE.Mesh(merged, bucket.mat);
+      mesh.castShadow = bucket.castShadow;
+      mesh.receiveShadow = bucket.receiveShadow;
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      this.#root.add(mesh);
+    }
+    this.#staticBuckets.clear();
+    for (const g of this.#tempGeos) g.dispose();
+    this.#tempGeos.length = 0;
+  }
+
+  #addBox(w, h, d, x, y, z, mat, castShadow = true, addCollider = false, receiveShadow = true) {
+    this.#addMesh(new THREE.BoxGeometry(w, h, d), mat, x, y, z, castShadow, receiveShadow);
     if (addCollider) {
       this.#collision.addBox(x - w / 2, x + w / 2, y - h / 2, y + h / 2, z - d / 2, z + d / 2);
     }
-    return mesh;
   }
 
   #addWallSegment(minX, maxX, minY, maxY, minZ, maxZ, mat, castShadow = true) {
     const w = maxX - minX;
     const h = maxY - minY;
     const d = maxZ - minZ;
-    return this.#addBox(w, h, d, (minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2, mat, castShadow, true);
+    this.#addBox(w, h, d, (minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2, mat, castShadow, true);
   }
 
   #addColumn(x, yBase, z, height, radius, mats, addCollider = true) {
-    const shaftGeo = this.#trackGeo(new THREE.CylinderGeometry(radius * 0.88, radius, height, 14));
-    const capGeo = this.#trackGeo(new THREE.CylinderGeometry(radius * 1.32, radius * 0.92, 0.45, 14));
-    const shaft = new THREE.Mesh(shaftGeo, mats.marble);
-    shaft.position.set(x, yBase + height / 2, z);
-    shaft.castShadow = true;
-    shaft.receiveShadow = true;
+    const shaftGeo = new THREE.CylinderGeometry(radius * 0.88, radius, height, 14);
+    const capGeo = new THREE.CylinderGeometry(radius * 1.32, radius * 0.92, 0.45, 14);
+    this.#tempGeos.push(shaftGeo, capGeo);
 
-    const topCap = new THREE.Mesh(capGeo, mats.roseGold);
-    topCap.position.set(x, yBase + height - 0.18, z);
-    const baseCap = new THREE.Mesh(capGeo, mats.roseGold);
-    baseCap.position.set(x, yBase + 0.2, z);
+    this.#addMesh(shaftGeo, mats.marble, x, yBase + height / 2, z, true, true, 0, 0, 0, 1, 1, 1, true);
+    this.#addMesh(capGeo, mats.roseGold, x, yBase + height - 0.18, z, false, true, 0, 0, 0, 1, 1, 1, true);
+    this.#addMesh(capGeo, mats.roseGold, x, yBase + 0.2, z, false, true, 0, 0, 0, 1, 1, 1, true);
 
-    this.#root.add(shaft, topCap, baseCap);
     if (addCollider) {
       this.#collision.addCylinderCollider(x, z, radius * 1.08, yBase, yBase + height);
     }
@@ -210,7 +323,7 @@ export class CastleBuilder {
 
     // Zócalo inferior y pasamano superior oro rosa
     this.#addBox(Math.max(0.22, dx), 0.16, Math.max(0.22, dz), cx, yBase + 0.08, cz, mats.marble, false, false);
-    this.#addBox(Math.max(0.24, dx), 0.12, Math.max(0.24, dz), cx, yBase + railH, cz, mats.roseGold, true, false);
+    this.#addBox(Math.max(0.24, dx), 0.12, Math.max(0.24, dz), cx, yBase + railH, cz, mats.roseGold, false, false);
     this.#collision.addBox(
       cx - Math.max(0.15, dx / 2),
       cx + Math.max(0.15, dx / 2),
@@ -272,8 +385,8 @@ export class CastleBuilder {
     }
     this.#collision.addRampSurface(35.8, 39.8, -38.3, -33.7, 'x', 39.4, 36.0, 0.0, 1.0);
     // Zancas laterales de la escalera exterior Este
-    this.#addBox(3.6, 0.85, 0.28, 37.8, 0.425, -38.45, mats.roseGold, true, true);
-    this.#addBox(3.6, 0.85, 0.28, 37.8, 0.425, -33.55, mats.roseGold, true, true);
+    this.#addBox(3.6, 0.85, 0.28, 37.8, 0.425, -38.45, mats.roseGold, false, true);
+    this.#addBox(3.6, 0.85, 0.28, 37.8, 0.425, -33.55, mats.roseGold, false, true);
   }
 
   // =========================================================================
@@ -282,20 +395,20 @@ export class CastleBuilder {
   #buildWallsAndArches(mats) {
     // --- FACHADA SUR (Z = -22, Y = 1.0 -> 15.0) ---
     // Planta Baja (Y = 1.0 -> 7.5): Gran arco central abierto en X ∈ [-4.4, 4.4] (8.8m)
-    this.#addWallSegment(-36.0, -4.4, 1.0, 7.5, -22.5, -21.5, mats.marble);
-    this.#addWallSegment(4.4, 36.0, 1.0, 7.5, -22.5, -21.5, mats.marble);
-    this.#addWallSegment(-4.4, 4.4, 7.2, 7.5, -22.55, -21.45, mats.roseGold);
+    this.#addWallSegment(-36.0, -4.4, 1.0, 7.5, -22.5, -21.5, mats.marble, true);
+    this.#addWallSegment(4.4, 36.0, 1.0, 7.5, -22.5, -21.5, mats.marble, true);
+    this.#addWallSegment(-4.4, 4.4, 7.2, 7.5, -22.55, -21.45, mats.roseGold, false);
 
     // Planta Alta (Y = 7.5 -> 15.0): Puerta al balcón abierta en X ∈ [-3.2, 3.2] (6.4m)
-    this.#addWallSegment(-36.0, -3.2, 7.5, 15.0, -22.5, -21.5, mats.marble);
-    this.#addWallSegment(3.2, 36.0, 7.5, 15.0, -22.5, -21.5, mats.marble);
-    this.#addWallSegment(-3.2, 3.2, 13.5, 15.0, -22.5, -21.5, mats.marble);
+    this.#addWallSegment(-36.0, -3.2, 7.5, 15.0, -22.5, -21.5, mats.marble, true);
+    this.#addWallSegment(3.2, 36.0, 7.5, 15.0, -22.5, -21.5, mats.marble, true);
+    this.#addWallSegment(-3.2, 3.2, 13.5, 15.0, -22.5, -21.5, mats.marble, true);
     // Marcos dorados del pórtico
-    this.#addBox(0.35, 6.2, 1.25, -4.4, 4.1, -22.0, mats.roseGold, true, false);
-    this.#addBox(0.35, 6.2, 1.25, 4.4, 4.1, -22.0, mats.roseGold, true, false);
-    this.#addBox(0.3, 6.0, 1.2, -3.2, 10.5, -22.0, mats.roseGold, true, false);
-    this.#addBox(0.3, 6.0, 1.2, 3.2, 10.5, -22.0, mats.roseGold, true, false);
-    this.#addBox(6.8, 0.45, 1.25, 0, 13.5, -22.0, mats.roseGold, true, false);
+    this.#addBox(0.35, 6.2, 1.25, -4.4, 4.1, -22.0, mats.roseGold, false, false);
+    this.#addBox(0.35, 6.2, 1.25, 4.4, 4.1, -22.0, mats.roseGold, false, false);
+    this.#addBox(0.3, 6.0, 1.2, -3.2, 10.5, -22.0, mats.roseGold, false, false);
+    this.#addBox(0.3, 6.0, 1.2, 3.2, 10.5, -22.0, mats.roseGold, false, false);
+    this.#addBox(6.8, 0.45, 1.25, 0, 13.5, -22.0, mats.roseGold, false, false);
 
     // Ventanales fachada Sur (2 plantas)
     for (const wx of [-30, -24, -17.5, -10.5, 10.5, 17.5, 24, 30]) {
@@ -305,13 +418,13 @@ export class CastleBuilder {
 
     // --- MURO EXTERIOR OESTE (X = -36, Z ∈ [-54, -22]) ---
     // Planta Baja: muro completo
-    this.#addWallSegment(-36.5, -35.5, 1.0, 7.5, -54.0, -22.0, mats.marble);
+    this.#addWallSegment(-36.5, -35.5, 1.0, 7.5, -54.0, -22.0, mats.marble, true);
     // Planta Alta: puerta abierta al Balcón Oeste en Z ∈ [-38.1, -33.9] (4.2m)
-    this.#addWallSegment(-36.5, -35.5, 7.5, 15.0, -33.9, -22.0, mats.marble);
-    this.#addWallSegment(-36.5, -35.5, 7.5, 15.0, -54.0, -38.1, mats.marble);
-    this.#addWallSegment(-36.5, -35.5, 13.5, 15.0, -38.1, -33.9, mats.marble);
-    this.#addBox(1.2, 6.0, 0.3, -36.0, 10.5, -38.1, mats.roseGold, true, false);
-    this.#addBox(1.2, 6.0, 0.3, -36.0, 10.5, -33.9, mats.roseGold, true, false);
+    this.#addWallSegment(-36.5, -35.5, 7.5, 15.0, -33.9, -22.0, mats.marble, true);
+    this.#addWallSegment(-36.5, -35.5, 7.5, 15.0, -54.0, -38.1, mats.marble, true);
+    this.#addWallSegment(-36.5, -35.5, 13.5, 15.0, -38.1, -33.9, mats.marble, true);
+    this.#addBox(1.2, 6.0, 0.3, -36.0, 10.5, -38.1, mats.roseGold, false, false);
+    this.#addBox(1.2, 6.0, 0.3, -36.0, 10.5, -33.9, mats.roseGold, false, false);
 
     for (const wz of [-48, -42, -35, -28]) {
       this.#addStainedWindowX(-36.55, 4.2, wz, 3.2, 4.4, mats);
@@ -322,18 +435,18 @@ export class CastleBuilder {
 
     // --- MURO EXTERIOR ESTE (X = +36, Z ∈ [-54, -22]) ---
     // Planta Baja: puerta abierta a escalera exterior Este en Z ∈ [-38.3, -33.7] (4.6m)
-    this.#addWallSegment(35.5, 36.5, 1.0, 7.5, -33.7, -22.0, mats.marble);
-    this.#addWallSegment(35.5, 36.5, 1.0, 7.5, -54.0, -38.3, mats.marble);
-    this.#addWallSegment(35.5, 36.5, 6.8, 7.5, -38.3, -33.7, mats.marble);
-    this.#addBox(1.2, 5.8, 0.3, 36.0, 3.9, -38.3, mats.roseGold, true, false);
-    this.#addBox(1.2, 5.8, 0.3, 36.0, 3.9, -33.7, mats.roseGold, true, false);
+    this.#addWallSegment(35.5, 36.5, 1.0, 7.5, -33.7, -22.0, mats.marble, true);
+    this.#addWallSegment(35.5, 36.5, 1.0, 7.5, -54.0, -38.3, mats.marble, true);
+    this.#addWallSegment(35.5, 36.5, 6.8, 7.5, -38.3, -33.7, mats.marble, true);
+    this.#addBox(1.2, 5.8, 0.3, 36.0, 3.9, -38.3, mats.roseGold, false, false);
+    this.#addBox(1.2, 5.8, 0.3, 36.0, 3.9, -33.7, mats.roseGold, false, false);
 
     // Planta Alta: puerta abierta al Balcón Este en Z ∈ [-38.1, -33.9] (4.2m)
-    this.#addWallSegment(35.5, 36.5, 7.5, 15.0, -33.9, -22.0, mats.marble);
-    this.#addWallSegment(35.5, 36.5, 7.5, 15.0, -54.0, -38.1, mats.marble);
-    this.#addWallSegment(35.5, 36.5, 13.5, 15.0, -38.1, -33.9, mats.marble);
-    this.#addBox(1.2, 6.0, 0.3, 36.0, 10.5, -38.1, mats.roseGold, true, false);
-    this.#addBox(1.2, 6.0, 0.3, 36.0, 10.5, -33.9, mats.roseGold, true, false);
+    this.#addWallSegment(35.5, 36.5, 7.5, 15.0, -33.9, -22.0, mats.marble, true);
+    this.#addWallSegment(35.5, 36.5, 7.5, 15.0, -54.0, -38.1, mats.marble, true);
+    this.#addWallSegment(35.5, 36.5, 13.5, 15.0, -38.1, -33.9, mats.marble, true);
+    this.#addBox(1.2, 6.0, 0.3, 36.0, 10.5, -38.1, mats.roseGold, false, false);
+    this.#addBox(1.2, 6.0, 0.3, 36.0, 10.5, -33.9, mats.roseGold, false, false);
 
     for (const wz of [-48, -43, -28]) {
       this.#addStainedWindowX(36.55, 4.2, wz, 3.2, 4.4, mats);
@@ -342,25 +455,25 @@ export class CastleBuilder {
 
     // --- CONEXIÓN NORTE VESTÍBULO <-> SALÓN DEL TRONO (Z = -54) ---
     // Alas cerradas [-36, -20] y [20, 36]
-    this.#addWallSegment(-36.0, -20.0, 1.0, 15.0, -54.5, -53.5, mats.marble);
-    this.#addWallSegment(20.0, 36.0, 1.0, 15.0, -54.5, -53.5, mats.marble);
+    this.#addWallSegment(-36.0, -20.0, 1.0, 15.0, -54.5, -53.5, mats.marble, true);
+    this.#addWallSegment(20.0, 36.0, 1.0, 15.0, -54.5, -53.5, mats.marble, true);
     // Muros del arco del ábside con gran arco imperial abierto X ∈ [-5.5, 5.5] (11.0m, Y libre hasta 9.0)
-    this.#addWallSegment(-20.0, -5.5, 1.0, 15.0, -54.5, -53.5, mats.marble);
-    this.#addWallSegment(5.5, 20.0, 1.0, 15.0, -54.5, -53.5, mats.marble);
-    this.#addWallSegment(-5.5, 5.5, 9.0, 15.0, -54.5, -53.5, mats.marble);
+    this.#addWallSegment(-20.0, -5.5, 1.0, 15.0, -54.5, -53.5, mats.marble, true);
+    this.#addWallSegment(5.5, 20.0, 1.0, 15.0, -54.5, -53.5, mats.marble, true);
+    this.#addWallSegment(-5.5, 5.5, 9.0, 15.0, -54.5, -53.5, mats.marble, true);
     // Moldura dorada del arco imperial
-    this.#addBox(0.4, 8.0, 1.25, -5.5, 5.0, -54.0, mats.roseGold, true, false);
-    this.#addBox(0.4, 8.0, 1.25, 5.5, 5.0, -54.0, mats.roseGold, true, false);
-    this.#addBox(11.4, 0.55, 1.25, 0, 9.0, -54.0, mats.roseGold, true, false);
+    this.#addBox(0.4, 8.0, 1.25, -5.5, 5.0, -54.0, mats.roseGold, false, false);
+    this.#addBox(0.4, 8.0, 1.25, 5.5, 5.0, -54.0, mats.roseGold, false, false);
+    this.#addBox(11.4, 0.55, 1.25, 0, 9.0, -54.0, mats.roseGold, false, false);
 
     // --- MUROS PERIMETRALES DEL ÁBSIDE NORTE (X = ±20, Z = -76) ---
-    this.#addWallSegment(-20.5, -19.5, 1.0, 15.0, -76.0, -54.0, mats.marble);
-    this.#addWallSegment(19.5, 20.5, 1.0, 15.0, -76.0, -54.0, mats.marble);
+    this.#addWallSegment(-20.5, -19.5, 1.0, 15.0, -76.0, -54.0, mats.marble, true);
+    this.#addWallSegment(19.5, 20.5, 1.0, 15.0, -76.0, -54.0, mats.marble, true);
     // Pared trasera con grandes ventanales hacia el bosque Norte
-    this.#addWallSegment(-20.0, 20.0, 1.0, 2.8, -76.5, -75.5, mats.marble);
-    this.#addWallSegment(-20.0, 20.0, 12.6, 15.0, -76.5, -75.5, mats.marble);
+    this.#addWallSegment(-20.0, 20.0, 1.0, 2.8, -76.5, -75.5, mats.marble, true);
+    this.#addWallSegment(-20.0, 20.0, 12.6, 15.0, -76.5, -75.5, mats.marble, true);
     for (const px of [-18.5, -11.0, -4.0, 4.0, 11.0, 18.5]) {
-      this.#addWallSegment(px - 1.2, px + 1.2, 2.8, 12.6, -76.5, -75.5, mats.marble);
+      this.#addWallSegment(px - 1.2, px + 1.2, 2.8, 12.6, -76.5, -75.5, mats.marble, true);
     }
     // Colisionador continuo en Z = -76 y ventanales góticos/imperiales translúcidos
     this.#collision.addBox(-20.0, 20.0, 1.0, 15.0, -76.5, -75.5);
@@ -376,34 +489,34 @@ export class CastleBuilder {
     // --- PARTICIONES INTERIORES PLANTA BAJA (X = -14 y X = +14, Y = 1.0 -> 7.5) ---
     // Dos grandes vanos abiertos de 4.8m: Z ∈ [-31.4, -26.6] y Z ∈ [-47.4, -42.6]
     for (const side of [-14, 14]) {
-      this.#addWallSegment(side - 0.4, side + 0.4, 1.0, 7.5, -26.6, -22.0, mats.marble);
-      this.#addWallSegment(side - 0.4, side + 0.4, 1.0, 7.5, -42.6, -31.4, mats.marble);
-      this.#addWallSegment(side - 0.4, side + 0.4, 1.0, 7.5, -54.0, -47.4, mats.marble);
+      this.#addWallSegment(side - 0.4, side + 0.4, 1.0, 7.5, -26.6, -22.0, mats.marble, true);
+      this.#addWallSegment(side - 0.4, side + 0.4, 1.0, 7.5, -42.6, -31.4, mats.marble, true);
+      this.#addWallSegment(side - 0.4, side + 0.4, 1.0, 7.5, -54.0, -47.4, mats.marble, true);
       // Dinteles superiores sobre los vanos (altura libre 5.4m)
-      this.#addWallSegment(side - 0.4, side + 0.4, 6.4, 7.5, -31.4, -26.6, mats.roseGold);
-      this.#addWallSegment(side - 0.4, side + 0.4, 6.4, 7.5, -47.4, -42.6, mats.roseGold);
+      this.#addWallSegment(side - 0.4, side + 0.4, 6.4, 7.5, -31.4, -26.6, mats.roseGold, false);
+      this.#addWallSegment(side - 0.4, side + 0.4, 6.4, 7.5, -47.4, -42.6, mats.roseGold, false);
     }
 
     // --- PARTICIONES INTERIORES PLANTA ALTA (X = -14.5 y X = +14.5, minY = 7.5 -> 14.8) ---
     // Dos vanos amplios de 4.4m: Z ∈ [-32.2, -27.8] y Z ∈ [-47.2, -42.8]
     for (const side of [-14.5, 14.5]) {
-      this.#addWallSegment(side - 0.35, side + 0.35, 7.5, 14.8, -27.8, -22.0, mats.marble);
-      this.#addWallSegment(side - 0.35, side + 0.35, 7.5, 14.8, -42.8, -32.2, mats.marble);
-      this.#addWallSegment(side - 0.35, side + 0.35, 7.5, 14.8, -54.0, -47.2, mats.marble);
+      this.#addWallSegment(side - 0.35, side + 0.35, 7.5, 14.8, -27.8, -22.0, mats.marble, true);
+      this.#addWallSegment(side - 0.35, side + 0.35, 7.5, 14.8, -42.8, -32.2, mats.marble, true);
+      this.#addWallSegment(side - 0.35, side + 0.35, 7.5, 14.8, -54.0, -47.2, mats.marble, true);
       // Dinteles superiores (altura libre 6.0m desde Y = 7.5)
-      this.#addWallSegment(side - 0.35, side + 0.35, 13.5, 14.8, -32.2, -27.8, mats.roseGold);
-      this.#addWallSegment(side - 0.35, side + 0.35, 13.5, 14.8, -47.2, -42.8, mats.roseGold);
+      this.#addWallSegment(side - 0.35, side + 0.35, 13.5, 14.8, -32.2, -27.8, mats.roseGold, false);
+      this.#addWallSegment(side - 0.35, side + 0.35, 13.5, 14.8, -47.2, -42.8, mats.roseGold, false);
     }
   }
 
   #addStainedWindowZ(x, y, z, w, h, mats) {
-    this.#addBox(w, h, 0.18, x, y, z, mats.stained, false, false);
+    this.#addBox(w, h, 0.18, x, y, z, mats.stained, false, false, false);
     this.#addBox(w + 0.28, 0.22, 0.28, x, y + h / 2, z, mats.roseGold, false, false);
     this.#addBox(w + 0.28, 0.22, 0.28, x, y - h / 2, z, mats.roseGold, false, false);
   }
 
   #addStainedWindowX(x, y, z, d, h, mats) {
-    this.#addBox(0.18, h, d, x, y, z, mats.stained, false, false);
+    this.#addBox(0.18, h, d, x, y, z, mats.stained, false, false, false);
     this.#addBox(0.28, 0.22, d + 0.28, x, y + h / 2, z, mats.roseGold, false, false);
     this.#addBox(0.28, 0.22, d + 0.28, x, y - h / 2, z, mats.roseGold, false, false);
   }
@@ -444,7 +557,7 @@ export class CastleBuilder {
       this.#addSlopedHandrail(dir * 12.65, -30.5, 2.05, -39.5, 5.3, mats);
 
       // Descansillo panorámico (Y = 4.25): Z ∈ [-43.0, -39.2], X ∈ [8.8, 12.8] / [-12.8, -8.8]
-      this.#addBox(4.0, 0.42, 3.8, dir * 10.8, 4.04, -41.1, mats.marbleFloor, true, false);
+      this.#addBox(4.0, 0.42, 3.8, dir * 10.8, 4.04, -41.1, mats.marbleFloor, false, false);
       this.#collision.addFlatSurface(dir < 0 ? -12.8 : 8.8, dir < 0 ? -8.8 : 12.8, -43.0, -39.2, 4.25);
       // Barandilla en el borde interior y sur del descansillo (minY = 4.25)
       this.#addRailing(dir * 8.9, dir * 8.9, -43.0, -39.2, 4.25, mats);
@@ -483,25 +596,25 @@ export class CastleBuilder {
 
     // --- GALERÍA PERIMETRAL SUPERIOR (Y = 7.5) ---
     // Pasarela Norte: X ∈ [-14.8, 14.8], Z ∈ [-54.0, -51.2]
-    this.#addBox(29.6, 0.45, 2.8, 0, 7.275, -52.6, mats.marbleFloor, true, false);
+    this.#addBox(29.6, 0.45, 2.8, 0, 7.275, -52.6, mats.marbleFloor, false, false);
     this.#collision.addFlatSurface(-14.8, 14.8, -54.0, -51.2, 7.5);
 
     // Puente Sur Superior: X ∈ [-14.8, 14.8], Z ∈ [-26.6, -22.0]
-    this.#addBox(29.6, 0.45, 4.6, 0, 7.275, -24.3, mats.marbleFloor, true, false);
+    this.#addBox(29.6, 0.45, 4.6, 0, 7.275, -24.3, mats.marbleFloor, false, false);
     this.#collision.addFlatSurface(-14.8, 14.8, -26.6, -22.0, 7.5);
 
     for (const dir of [-1, 1]) {
       // Pasarelas laterales Sur-Centro (Z ∈ [-42.5, -26.6], X ∈ [10.8, 14.8] / [-14.8, -10.8])
-      this.#addBox(4.0, 0.45, 15.9, dir * 12.8, 7.275, -34.55, mats.marbleFloor, true, false);
+      this.#addBox(4.0, 0.45, 15.9, dir * 12.8, 7.275, -34.55, mats.marbleFloor, false, false);
       this.#collision.addFlatSurface(dir < 0 ? -14.8 : 10.8, dir < 0 ? -10.8 : 14.8, -42.5, -26.6, 7.5);
 
       // Corredores laterales junto al hueco del Tramo 2 (Z ∈ [-51.2, -42.5], X ∈ [12.1, 14.8] / [-14.8, -12.1])
       // Dejan libre el hueco de la escalera [8.8, 12.0] y dan un pasillo amplio de 2m hacia Suite/Biblioteca
-      this.#addBox(2.7, 0.45, 8.7, dir * 13.45, 7.275, -46.85, mats.marbleFloor, true, false);
+      this.#addBox(2.7, 0.45, 8.7, dir * 13.45, 7.275, -46.85, mats.marbleFloor, false, false);
       this.#collision.addFlatSurface(dir < 0 ? -14.8 : 12.1, dir < 0 ? -12.1 : 14.8, -51.2, -42.5, 7.5);
 
       // Suelos completos de Suite Real (Oeste) y Biblioteca Real (Este) en Y = 7.5
-      this.#addBox(21.6, 0.45, 32.0, dir * 25.2, 7.275, -38.0, mats.marbleFloor, true, false);
+      this.#addBox(21.6, 0.45, 32.0, dir * 25.2, 7.275, -38.0, mats.marbleFloor, false, false);
       this.#collision.addFlatSurface(dir < 0 ? -36.0 : 14.4, dir < 0 ? -14.4 : 36.0, -54.0, -22.0, 7.5);
 
       // Barandillas hacia el hueco central y huecos del Tramo 2 (minY = 7.5)
@@ -522,16 +635,16 @@ export class CastleBuilder {
     const dy = yEnd - yStart;
     const len = Math.hypot(dz, dy);
     const angle = Math.atan2(dy, -dz);
-    const rail = this.#addMesh(
+    this.#addMesh(
       new THREE.BoxGeometry(0.14, 0.1, len),
       mats.roseGold,
       x,
       (yStart + yEnd) / 2,
       (zStart + zEnd) / 2,
+      false,
       true,
-      false
+      angle
     );
-    rail.rotation.x = angle;
 
     const posts = 6;
     for (let i = 0; i <= posts; i++) {
@@ -549,7 +662,7 @@ export class CastleBuilder {
   // =========================================================================
   #buildExteriorBalconies(mats) {
     // Balcón Frontal Sur: X ∈ [-10, 10], Z ∈ [-22.2, -16.8]
-    this.#addBox(20.0, 0.55, 5.4, 0, 7.225, -19.5, mats.marbleFloor, true, false);
+    this.#addBox(20.0, 0.55, 5.4, 0, 7.225, -19.5, mats.marbleFloor, false, false);
     this.#collision.addFlatSurface(-10.0, 10.0, -22.2, -16.8, 7.5);
     this.#addRailing(-9.9, 9.9, -16.95, -16.95, 7.5, mats);
     this.#addRailing(-9.85, -9.85, -22.0, -16.95, 7.5, mats);
@@ -561,7 +674,7 @@ export class CastleBuilder {
     }
 
     // Balcón Oeste Suite Real: X ∈ [-41.5, -36], Z ∈ [-42, -30]
-    this.#addBox(5.7, 0.5, 12.0, -38.65, 7.25, -36.0, mats.marbleFloor, true, false);
+    this.#addBox(5.7, 0.5, 12.0, -38.65, 7.25, -36.0, mats.marbleFloor, false, false);
     this.#collision.addFlatSurface(-41.5, -35.8, -42.0, -30.0, 7.5);
     this.#addRailing(-41.35, -41.35, -41.9, -30.1, 7.5, mats);
     this.#addRailing(-41.35, -36.0, -30.15, -30.15, 7.5, mats);
@@ -570,7 +683,7 @@ export class CastleBuilder {
     this.#addColumn(-41.0, 0, -41.4, 7.1, 0.34, mats, true);
 
     // Balcón Este Biblioteca: X ∈ [36, 41.5], Z ∈ [-42, -30]
-    this.#addBox(5.7, 0.5, 12.0, 38.65, 7.25, -36.0, mats.marbleFloor, true, false);
+    this.#addBox(5.7, 0.5, 12.0, 38.65, 7.25, -36.0, mats.marbleFloor, false, false);
     this.#collision.addFlatSurface(35.8, 41.5, -42.0, -30.0, 7.5);
     this.#addRailing(41.35, 41.35, -41.9, -30.1, 7.5, mats);
     this.#addRailing(36.0, 41.35, -30.15, -30.15, 7.5, mats);
@@ -586,36 +699,25 @@ export class CastleBuilder {
     // Cubiertas planas de alas laterales (X ∈ [-36, -14] y [14, 36])
     this.#addBox(22.5, 0.55, 32.6, -25.25, 15.05, -38.0, mats.marble, true, false);
     this.#addBox(22.5, 0.55, 32.6, 25.25, 15.05, -38.0, mats.marble, true, false);
-    this.#addBox(73.2, 0.5, 33.2, 0, 14.8, -38.0, mats.roseGold, true, false);
+    this.#addBox(73.2, 0.5, 33.2, 0, 14.8, -38.0, mats.roseGold, false, false);
 
     // Bóveda semicilíndrica de cristal rosado sobre el Gran Vestíbulo (X ∈ [-14, 14], Y = 15 -> 20.5)
-    const vaultGeo = this.#trackGeo(
-      new THREE.CylinderGeometry(14.0, 14.0, 32.0, 24, 1, true, -Math.PI / 2, Math.PI)
-    );
-    const vault = new THREE.Mesh(vaultGeo, mats.vaultCrystal);
-    vault.position.set(0, 15.0, -38.0);
-    vault.rotation.x = -Math.PI / 2;
-    vault.scale.set(1, 1, 5.5 / 14.0);
-    this.#root.add(vault);
+    const vaultGeo = new THREE.CylinderGeometry(14.0, 14.0, 32.0, 24, 1, true, -Math.PI / 2, Math.PI);
+    this.#addMesh(vaultGeo, mats.vaultCrystal, 0, 15.0, -38.0, false, false, -Math.PI / 2, 0, 0, 1, 1, 5.5 / 14.0);
 
     // Costillas estructurales oro-rosa de la bóveda
-    const ribGeo = this.#trackGeo(new THREE.TorusGeometry(14.0, 0.22, 8, 28, Math.PI));
+    const ribGeo = new THREE.TorusGeometry(14.0, 0.22, 8, 28, Math.PI);
+    this.#tempGeos.push(ribGeo);
     for (const rz of [-54.0, -46.0, -38.0, -30.0, -22.0]) {
-      const rib = new THREE.Mesh(ribGeo, mats.roseGold);
-      rib.position.set(0, 15.0, rz);
-      rib.scale.set(1, 5.5 / 14.0, 1);
-      this.#root.add(rib);
+      this.#addMesh(ribGeo, mats.roseGold, 0, 15.0, rz, false, true, 0, 0, 0, 1, 5.5 / 14.0, 1, true);
     }
 
     // Cubierta y Cúpula del Salón del Trono (X ∈ [-20, 20], Z ∈ [-76, -54])
-    this.#addBox(40.8, 0.6, 22.8, 0, 15.0, -65.0, mats.roseGold, true, false);
-    const apseDomeGeo = this.#trackGeo(new THREE.SphereGeometry(10.5, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2));
-    const apseDome = new THREE.Mesh(apseDomeGeo, mats.vaultCrystal);
-    apseDome.position.set(0, 15.2, -65.0);
-    apseDome.scale.set(1.15, 0.72, 0.95);
-    this.#root.add(apseDome);
-    this.#addMesh(new THREE.CylinderGeometry(2.6, 3.1, 1.8, 12), mats.roseGold, 0, 22.8, -65.0, false);
-    this.#addMesh(new THREE.ConeGeometry(1.6, 4.8, 8), mats.crystal, 0, 26.0, -65.0, false);
+    this.#addBox(40.8, 0.6, 22.8, 0, 15.0, -65.0, mats.roseGold, false, false);
+    const apseDomeGeo = new THREE.SphereGeometry(10.5, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2);
+    this.#addMesh(apseDomeGeo, mats.vaultCrystal, 0, 15.2, -65.0, false, false, 0, 0, 0, 1.15, 0.72, 0.95);
+    this.#addMesh(new THREE.CylinderGeometry(2.6, 3.1, 1.8, 12), mats.roseGold, 0, 22.8, -65.0, false, true);
+    this.#addMesh(new THREE.ConeGeometry(1.6, 4.8, 8), mats.crystal, 0, 26.0, -65.0, false, false);
 
     // 6 Torres esquineras: (-36,-22), (36,-22), (-36,-54), (36,-54), (-20,-76), (20,-76)
     const towerCoords = [
@@ -623,43 +725,47 @@ export class CastleBuilder {
       [-36, -54], [36, -54],
       [-20, -76], [20, -76]
     ];
+    const towerShaftGeo = new THREE.CylinderGeometry(3.15, 3.45, 20.5, 8);
+    const towerCollarGeo = new THREE.CylinderGeometry(3.45, 3.25, 0.65, 8);
+    const towerDomeGeo = new THREE.SphereGeometry(3.2, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    const towerSpireGeo = new THREE.ConeGeometry(0.95, 5.6, 6);
+    this.#tempGeos.push(towerShaftGeo, towerCollarGeo, towerDomeGeo, towerSpireGeo);
+
     for (const [tx, tz] of towerCoords) {
-      this.#addMesh(new THREE.CylinderGeometry(3.15, 3.45, 20.5, 8), mats.marble, tx, 10.25, tz, true);
+      this.#addMesh(towerShaftGeo, mats.marble, tx, 10.25, tz, true, true, 0, 0, 0, 1, 1, 1, true);
       this.#collision.addCylinderCollider(tx, tz, 3.35, 0, 20.5);
-      this.#addMesh(new THREE.CylinderGeometry(3.45, 3.25, 0.65, 8), mats.roseGold, tx, 20.5, tz, false);
-      this.#addMesh(
-        new THREE.SphereGeometry(3.2, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-        mats.roseGold,
-        tx,
-        20.8,
-        tz,
-        false
-      );
-      this.#addMesh(new THREE.ConeGeometry(0.95, 5.6, 6), mats.crystal, tx, 26.2, tz, false);
+      this.#addMesh(towerCollarGeo, mats.roseGold, tx, 20.5, tz, false, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addMesh(towerDomeGeo, mats.roseGold, tx, 20.8, tz, false, true, 0, 0, 0, 1, 1, 1, true);
+      this.#addMesh(towerSpireGeo, mats.crystal, tx, 26.2, tz, false, false, 0, 0, 0, 1, 1, 1, true);
     }
 
     // Gran aguja imperial central sobre la bóveda
-    this.#addMesh(new THREE.CylinderGeometry(4.8, 5.6, 3.4, 12), mats.roseGold, 0, 21.8, -38.0, false);
-    const core = this.#addMesh(new THREE.OctahedronGeometry(3.8, 0), mats.crystal, 0, 27.6, -38.0, false);
-    core.scale.set(1, 1.7, 1);
-    this.#addMesh(new THREE.ConeGeometry(2.6, 11.5, 8), mats.crystal, 0, 34.4, -38.0, false);
+    this.#addMesh(new THREE.CylinderGeometry(4.8, 5.6, 3.4, 12), mats.roseGold, 0, 21.8, -38.0, false, true);
+    this.#addMesh(new THREE.OctahedronGeometry(3.8, 0), mats.crystal, 0, 27.6, -38.0, false, false, 0, 0, 0, 1, 1.7, 1);
+    this.#addMesh(new THREE.ConeGeometry(2.6, 11.5, 8), mats.crystal, 0, 34.4, -38.0, false, false);
   }
 
   #buildInstancedBalusters(mats) {
     if (this.#balusters.length === 0) return;
     const geo = this.#trackGeo(new THREE.CylinderGeometry(0.06, 0.085, 0.96, 8));
     const inst = new THREE.InstancedMesh(geo, mats.roseGold, this.#balusters.length);
-    const dummy = new THREE.Object3D();
+    inst.castShadow = false;
+    inst.receiveShadow = true;
+    const dummy = this.#dummy;
 
     for (let i = 0; i < this.#balusters.length; i++) {
       const b = this.#balusters[i];
       dummy.position.set(b.x, b.y, b.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       inst.setMatrixAt(i, dummy.matrix);
     }
 
     inst.instanceMatrix.needsUpdate = true;
     inst.computeBoundingSphere();
+    inst.matrixAutoUpdate = false;
+    inst.updateMatrix();
     this.#root.add(inst);
     this.#instancedMeshes.push(inst);
   }
@@ -716,11 +822,14 @@ export class CastleBuilder {
       if (typeof inst.dispose === 'function') inst.dispose();
     }
     for (const g of this.#geometries) g.dispose();
+    for (const g of this.#tempGeos) g.dispose();
     for (const m of this.#materials) m.dispose();
     this.#instancedMeshes.length = 0;
     this.#geometries.length = 0;
+    this.#tempGeos.length = 0;
     this.#materials.length = 0;
     this.#balusters.length = 0;
+    this.#staticBuckets.clear();
     this.#lights.length = 0;
   }
 }

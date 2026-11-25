@@ -5,6 +5,7 @@ export class NPCManager {
   #scene;
   #textures;
   #npcs = [];
+  #frameCounter = 0;
 
   #definitions = [
     {
@@ -94,6 +95,7 @@ export class NPCManager {
     for (const def of this.#definitions) {
       const rig = new CharacterRig(def.appearance, this.#textures);
       const root = rig.init();
+      root.userData.isCharacter = true;
       root.position.set(...def.position);
       root.rotation.y = def.yaw;
 
@@ -113,6 +115,7 @@ export class NPCManager {
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.rotation.x = -Math.PI / 2;
       ring.position.y = 0.05;
+      ring.castShadow = false;
       root.add(ring);
 
       this.#scene.add(root);
@@ -123,7 +126,8 @@ export class NPCManager {
         label,
         ring,
         pos: new THREE.Vector3(...def.position),
-        look: new THREE.Vector3()
+        look: new THREE.Vector3(),
+        accumDt: 0
       });
     }
   }
@@ -184,14 +188,16 @@ export class NPCManager {
    * diálogo abierto, el NPC más cercano gesticula mientras habla.
    */
   update(dt, playerPos, dialogueOpen = false) {
+    this.#frameCounter = (this.#frameCounter + 1) | 0;
     const speaker = dialogueOpen && playerPos ? this.getNearestNPC(playerPos, 4.2) : null;
-    for (const npc of this.#npcs) {
-      const dist = playerPos ? npc.pos.distanceTo(playerPos) : 99;
+    for (let i = 0; i < this.#npcs.length; i++) {
+      const npc = this.#npcs[i];
+      const distSq = playerPos ? npc.pos.distanceToSquared(playerPos) : 999999;
       const talking = speaker === npc.def;
-      if (dist < 6.0 && playerPos) {
+      if (distSq < 36 && playerPos) {
         npc.look.copy(playerPos);
         npc.rig.setLookTarget(npc.look);
-        if (dist < 4.2) {
+        if (distSq < 17.64) {
           const targetYaw = Math.atan2(playerPos.x - npc.pos.x, playerPos.z - npc.pos.z);
           let diff = targetYaw - npc.root.rotation.y;
           while (diff > Math.PI) diff -= Math.PI * 2;
@@ -201,8 +207,23 @@ export class NPCManager {
       } else {
         npc.rig.setLookTarget(null);
       }
-      npc.ring.rotation.z += dt * 0.9;
-      npc.rig.update(dt, talking ? 'talk' : 'idle', 0);
+
+      if (distSq > 2025 && !talking) {
+        npc.accumDt += dt;
+        if ((this.#frameCounter + i) % 3 === 0) {
+          const stepDt = npc.accumDt;
+          npc.accumDt = 0;
+          npc.ring.rotation.z += stepDt * 0.9;
+          npc.rig.update(stepDt, 'idle', 0, 2);
+        }
+        continue;
+      }
+
+      const stepDt = dt + npc.accumDt;
+      npc.accumDt = 0;
+      const lod = distSq > 625 ? 1 : 0;
+      npc.ring.rotation.z += stepDt * 0.9;
+      npc.rig.update(stepDt, talking ? 'talk' : 'idle', 0, talking ? 0 : lod);
     }
   }
 

@@ -1,5 +1,13 @@
 import { RemotePlayer } from '../characters/RemotePlayer.js';
 
+const SEND_INTERVAL = 0.058;
+
+function getAppearanceKey(ap) {
+  if (!ap) return '';
+  const acc = Array.isArray(ap.accessories) ? ap.accessories.join(',') : '';
+  return `${ap.avatarId || ''}|${ap.outfitId || ''}|${ap.hairId || ''}|${ap.hairColorId || ''}|${ap.skinId || ''}|${ap.eyeColorId || ''}|${acc}`;
+}
+
 export class StateSync {
   #scene;
   #peerManager;
@@ -7,6 +15,17 @@ export class StateSync {
   #wardrobeFX;
   #remotePlayers = new Map();
   #sendTimer = 0;
+  #keepaliveTimer = 0;
+  #appearanceSyncTimer = 0;
+  #lastAppearanceKey = '';
+  #lastSentX = NaN;
+  #lastSentY = NaN;
+  #lastSentZ = NaN;
+  #lastSentYaw = NaN;
+  #lastSentAnim = '';
+  #lastSentEmoteSeq = -1;
+  #lastSentCasino = null;
+  #lastSentName = '';
   #unsubs = [];
   #callbacks = {};
   #getLocalState = null;
@@ -57,7 +76,7 @@ export class StateSync {
   }
 
   #buildProfilePacket(requestReply) {
-    const local = this.#getLocalState?.();
+    const local = this.#getLocalState?.(true);
     if (!local) return null;
     return {
       type: 'profile',
@@ -187,31 +206,70 @@ export class StateSync {
   }
 
   update(dt) {
+    const local = this.#getLocalState ? this.#getLocalState(false) : null;
+    const localPos = local?.pos || null;
     for (const rp of this.#remotePlayers.values()) {
-      rp.update(dt);
+      rp.update(dt, localPos);
     }
 
-    if (!this.#peerManager.isMultiplayerActive() || !this.#getLocalState) return;
+    if (!this.#peerManager.isMultiplayerActive() || !local) return;
     this.#sendTimer += dt;
-    if (this.#sendTimer >= 0.066) {
-      this.#sendTimer = 0;
-      const local = this.#getLocalState();
-      if (!local) return;
-      this.#peerManager.broadcast({
+    this.#keepaliveTimer += dt;
+    this.#appearanceSyncTimer += dt;
+
+    if (this.#sendTimer >= SEND_INTERVAL) {
+      this.#sendTimer = Math.min(this.#sendTimer - SEND_INTERVAL, SEND_INTERVAL);
+
+      const apKey = getAppearanceKey(local.appearance);
+      const apChanged = apKey !== this.#lastAppearanceKey;
+      const needsAppearanceSync = apChanged || this.#appearanceSyncTimer >= 3.0;
+      const emoteSeq = local.emote ? local.emote.seq : -1;
+      const casino = local.casinoStation || null;
+
+      const changed =
+        Number.isNaN(this.#lastSentX) ||
+        Math.abs(local.pos.x - this.#lastSentX) >= 0.004 ||
+        Math.abs(local.pos.y - this.#lastSentY) >= 0.004 ||
+        Math.abs(local.pos.z - this.#lastSentZ) >= 0.004 ||
+        Math.abs(local.yaw - this.#lastSentYaw) >= 0.004 ||
+        local.anim !== this.#lastSentAnim ||
+        emoteSeq !== this.#lastSentEmoteSeq ||
+        casino !== this.#lastSentCasino ||
+        local.name !== this.#lastSentName ||
+        apChanged;
+
+      if (!changed && this.#keepaliveTimer < 0.5 && !needsAppearanceSync) return;
+
+      const packet = {
         type: 'state',
         name: local.name,
         pos: [
-          Number(local.pos.x.toFixed(2)),
-          Number(local.pos.y.toFixed(2)),
-          Number(local.pos.z.toFixed(2))
+          Math.round(local.pos.x * 100) / 100,
+          Math.round(local.pos.y * 100) / 100,
+          Math.round(local.pos.z * 100) / 100
         ],
-        yaw: Number(local.yaw.toFixed(2)),
+        yaw: Math.round(local.yaw * 100) / 100,
         anim: local.anim,
         // Emote activo {id, seq}: los compañeros lo reproducen al ver un seq nuevo
         emote: local.emote ? { id: local.emote.id, seq: local.emote.seq } : null,
-        appearance: local.appearance,
-        casinoStation: local.casinoStation || null
-      });
+        casinoStation: casino
+      };
+      if (needsAppearanceSync) {
+        packet.appearance = local.appearance;
+        this.#lastAppearanceKey = apKey;
+        this.#appearanceSyncTimer = 0;
+      }
+
+      this.#peerManager.broadcast(packet);
+      this.#lastSentX = local.pos.x;
+      this.#lastSentY = local.pos.y;
+      this.#lastSentZ = local.pos.z;
+      this.#lastSentYaw = local.yaw;
+      this.#lastSentAnim = local.anim;
+      this.#lastSentEmoteSeq = emoteSeq;
+      this.#lastSentCasino = casino;
+      this.#lastSentName = local.name;
+      this.#keepaliveTimer = 0;
     }
   }
 
