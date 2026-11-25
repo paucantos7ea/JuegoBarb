@@ -84,6 +84,7 @@ class ReinoRosaApp {
     this.#engine.applyTheme(theme);
     this.#preview?.castle?.applyTheme(theme);
     this.#preview?.decor?.applyTheme(theme);
+    this.#preview?.fauna?.applyTheme?.(theme);
     this.#preview?.arena?.applyTheme(theme);
     this.#preview?.casinoDome?.applyTheme(theme);
   }

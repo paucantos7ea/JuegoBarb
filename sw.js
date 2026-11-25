@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v16';
-const CACHE_ASSETS = 'reino-rosa-assets-v16';
+const CACHE_STATIC = 'reino-rosa-static-v17';
+const CACHE_ASSETS = 'reino-rosa-assets-v17';
 
 const PRECACHE_URLS = [
   './',
@@ -21,6 +21,7 @@ const PRECACHE_URLS = [
   './js/core/SpringValue.js',
   './js/core/TextureFactory.js',
   './js/world/ArenaBuilder.js',
+  './js/world/BotanicalFlora.js',
   './js/world/CasinoDomeBuilder.js',
   './js/world/CasinoGames.js',
   './js/world/CastleBuilder.js',
@@ -32,6 +33,8 @@ const PRECACHE_URLS = [
   './js/world/HorseSystem.js',
   './js/world/Minigames.js',
   './js/world/Quests.js',
+  './js/world/StarrySkySystem.js',
+  './js/world/WaterSystem.js',
   './js/world/WorldDecor.js',
   './js/world/WorldThemes.js',
   './js/characters/CharacterAnimator.js',

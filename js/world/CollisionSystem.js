@@ -6,7 +6,7 @@ export class CollisionSystem {
   #boxGrid = new Map();
   #surfaceGrid = new Map();
   #queryStamp = 0;
-  #worldBounds = { minX: -88, maxX: 215, minZ: -84, maxZ: 64 };
+  #worldBounds = { minX: -88, maxX: 222, minZ: -84, maxZ: 64 };
 
   init() {
     this.clear();
@@ -305,10 +305,23 @@ export class CollisionSystem {
     }
     if (pos.x < -27 && pos.z > -18 && pos.z < 28) return 'Gran Pasarela de Moda';
     if (pos.x > 13 && pos.x < 28 && pos.z > 8 && pos.z < 22) return 'Arena de Carrera Real';
+    if (pos.x >= 14 && pos.x <= 26 && pos.z >= -14.5 && pos.z <= -6.5) return 'Establos Reales';
     if (pos.x > 36 && pos.z < -28 && pos.z > -44) return 'Terraza Real de Baile';
     if (pos.z > 36 && Math.abs(pos.x) < 12) return 'Mirador del Lago Imperial';
     if (Math.hypot(pos.x - 162, pos.z) <= 36.5) return 'Gran Cúpula del Casino Real';
-    if (pos.x >= 42 && pos.x <= 128 && Math.abs(pos.z) <= 10) return 'Paseo Real del Casino';
+    if (Math.hypot(pos.x - 208, pos.z + 22) <= 7.0 || Math.hypot(pos.x - 208, pos.z - 22) <= 7.0) {
+      return 'Glorieta Mirador del Casino';
+    }
+    if (Math.hypot(pos.x - 162, pos.z) <= 66.0) return 'Jardines VIP del Casino';
+    if (pos.x >= 92 && pos.x <= 103 && Math.abs(pos.z) <= 5.2) return 'Puente Imperial del Río';
+    if (pos.x >= 42 && pos.x <= 128 && Math.abs(pos.z) <= 10) return 'Bulevar Imperial del Casino';
+    const dxSwan = (pos.x - 106) / 25.0;
+    const dzSwan = (pos.z - 45) / 16.0;
+    if (dxSwan * dxSwan + dzSwan * dzSwan <= 1.0) return 'Lago de los Cisnes';
+    if (pos.z >= -78 && pos.z <= 38) {
+      const rcx = 97.5 + Math.sin(pos.z * 0.07) * 7.5 * Math.min(1, (pos.z * pos.z) / 144);
+      if (Math.abs(pos.x - rcx) <= 11.5) return 'Ribera del Río Cristalino';
+    }
     if (Math.hypot(pos.x, pos.z) < 15) return 'Plaza de la Gran Fuente';
     return 'Jardines y Bosques Reales';
   }

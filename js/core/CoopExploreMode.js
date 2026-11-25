@@ -115,7 +115,7 @@ export class CoopExploreMode {
     this.#localBubble = new ChatBubble({ y: 2.82 });
     this.#player.getRig()?.getRoot()?.add(this.#localBubble.sprite);
 
-    this.#npcs = new NPCManager(scene, context.textures);
+    this.#npcs = new NPCManager(scene, context.textures, this.#collision);
     this.#npcs.init();
 
     this.#quests = new QuestSystem(scene, context.audio, (snapshot, msg) => {
@@ -142,6 +142,7 @@ export class CoopExploreMode {
       callbacks: {
         onToggleWardrobe: () => this.#toggleWardrobe(),
         onCycleWorld: () => this.#cycleWorld(),
+        onSelectWorld: (worldId) => this.#selectWorld(worldId),
         onReturnToMenu: () => context.onReturnToMenu?.(),
         onStartMinigame: (id) => this.#launchMinigame(id),
         onSendChat: (text) => this.#sendChat(text),
@@ -286,13 +287,20 @@ export class CoopExploreMode {
     this.#ctx.engine.applyTheme(theme);
     this.#castle?.applyTheme(theme);
     this.#decor?.applyTheme(theme);
+    this.#fauna?.applyTheme?.(theme);
     this.#arena?.applyTheme(theme);
     this.#casinoDome?.applyTheme(theme);
-    this.#hud?.setWorldInfo(theme.name, this.#collision.getZoneName(this.#player.getPosition()));
+    this.#hud?.setWorldInfo(theme.name, this.#collision.getZoneName(this.#player.getPosition()), worldId);
     if (broadcast) {
       this.#stateSync?.broadcastWorld(worldId);
       this.#hud?.showToast(`✨ Reino cambiado a ${theme.name}`);
     }
+  }
+
+  #selectWorld(worldId) {
+    if (!worldId || worldId === this.#worldId) return;
+    this.#ctx.audio?.playSparkle();
+    this.#applyWorldTheme(worldId, true);
   }
 
   #cycleWorld() {

@@ -14,6 +14,29 @@ const QUALITY_LABELS = {
   low: 'Bajo'
 };
 
+const WORLD_AMBIENCE_OPTIONS = [
+  {
+    id: 'gala_imperial',
+    label: '🌙 Gala Estrellada',
+    title: 'Noche Estrellada · Gala Imperial',
+    featured: true
+  },
+  {
+    id: 'palacio_cristal',
+    label: '🌸 Día Real',
+    title: 'Hora Dorada · Palacio de Cristal',
+    featured: false
+  },
+  {
+    id: 'jardines_perla',
+    label: '🌅 Atardecer',
+    title: 'Atardecer Rosa · Jardines de Perla',
+    featured: false
+  }
+];
+
+const WORLD_CYCLE_ORDER = ['palacio_cristal', 'jardines_perla', 'gala_imperial'];
+
 export class HudUI {
   #engine = null;
   #callbacks;
@@ -34,6 +57,8 @@ export class HudUI {
   #qualityPopoverOpen = false;
   #fpsBadgeEl = null;
   #fpsVisible = false;
+  #currentWorldId = 'palacio_cristal';
+  #worldSwitcherEl = null;
 
   constructor({ engine = null, peerManager, audio, callbacks }) {
     this.#engine = engine || document.getElementById('canvas-container')?.__engine || null;
@@ -49,8 +74,10 @@ export class HudUI {
 
     this.#quality = this.#resolveInitialQuality();
     this.#ensureCoinCounterUI();
+    this.#ensureWorldSelectorUI();
     this.#ensureQualityAndFpsUI();
     this.#syncMuteButton();
+    this.#syncWorldButtons();
     this.#syncQualityButtons();
 
     this.#on('btn-hud-wardrobe', 'click', () => this.#callbacks.onToggleWardrobe?.());
@@ -222,6 +249,7 @@ export class HudUI {
 
   show() {
     this.#syncMuteButton();
+    this.#syncWorldButtons();
     this.#syncQualityButtons();
     this.#hudEl.classList.remove('hidden');
   }
@@ -238,9 +266,26 @@ export class HudUI {
     input?.focus();
   }
 
-  setWorldInfo(worldName, zoneName) {
-    this.#el('hud-world-name').textContent = worldName;
-    if (zoneName) this.#el('hud-zone-name').textContent = zoneName;
+  setWorldInfo(worldName, zoneName, worldId = null) {
+    const worldNameEl = this.#el('hud-world-name');
+    if (worldNameEl && worldName) worldNameEl.textContent = worldName;
+    if (zoneName) {
+      const zoneNameEl = this.#el('hud-zone-name');
+      if (zoneNameEl) zoneNameEl.textContent = zoneName;
+    }
+    const detectedId = this.#resolveWorldId(worldName, worldId);
+    if (detectedId) {
+      this.#currentWorldId = detectedId;
+      this.#syncWorldButtons();
+    }
+  }
+
+  setActiveWorld(worldId) {
+    const detectedId = this.#resolveWorldId(worldId, worldId);
+    if (detectedId) {
+      this.#currentWorldId = detectedId;
+      this.#syncWorldButtons();
+    }
   }
 
   setZoneName(zoneName) {
@@ -429,6 +474,34 @@ export class HudUI {
     ctx.ellipse(pond.x, pond.y, 12 * scale, 9.5 * scale, 0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(110, 210, 250, 0.45)';
     ctx.fill();
+
+    // Río Cristalino Real (z ∈ [-78, 38]) y Lago de los Cisnes (106, 45)
+    ctx.beginPath();
+    for (let rz = -78; rz <= 38; rz += 6) {
+      const rcx = 97.5 + Math.sin(rz * 0.07) * 7.5 * Math.min(1, (rz * rz) / 144);
+      const rpt = toRadar(rcx, rz);
+      if (rz === -78) ctx.moveTo(rpt.x, rpt.y);
+      else ctx.lineTo(rpt.x, rpt.y);
+    }
+    ctx.strokeStyle = 'rgba(110, 215, 255, 0.48)';
+    ctx.lineWidth = Math.max(2, 6.8 * scale);
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    const swanLake = toRadar(106, 45);
+    ctx.beginPath();
+    ctx.ellipse(swanLake.x, swanLake.y, 21 * scale, 12.5 * scale, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(110, 215, 255, 0.46)';
+    ctx.fill();
+
+    // Fuentes Laterales VIP del Casino (162, ±48)
+    for (const fz of [-48, 48]) {
+      const vipF = toRadar(162, fz);
+      ctx.beginPath();
+      ctx.arc(vipF.x, vipF.y, 5.2 * scale, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(140, 228, 255, 0.55)';
+      ctx.fill();
+    }
 
     // Castillo (0, -45) + ábside del Trono
     const castleMain = toRadar(-36, -54);
@@ -833,6 +906,199 @@ export class HudUI {
     if (host) {
       host.prepend(badge);
     }
+  }
+
+  #resolveWorldId(worldName = '', explicitWorldId = null) {
+    if (explicitWorldId && WORLD_CYCLE_ORDER.includes(explicitWorldId)) {
+      return explicitWorldId;
+    }
+    const norm = String(worldName || '').trim().toLowerCase();
+    if (!norm) return null;
+    if (WORLD_CYCLE_ORDER.includes(norm)) return norm;
+    if (norm.includes('gala') || norm.includes('estrellada') || norm.includes('noche')) {
+      return 'gala_imperial';
+    }
+    if (norm.includes('perla') || norm.includes('atardecer')) {
+      return 'jardines_perla';
+    }
+    if (norm.includes('cristal') || norm.includes('día') || norm.includes('dia')) {
+      return 'palacio_cristal';
+    }
+    return null;
+  }
+
+  #ensureWorldSelectorUI() {
+    if (!document.getElementById('hud-world-switcher-style')) {
+      const style = document.createElement('style');
+      style.id = 'hud-world-switcher-style';
+      style.textContent = `
+        #btn-hud-world {
+          display: none !important;
+        }
+        #hud-world-switcher {
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          padding: 3px;
+          border-radius: 999px;
+          background: rgba(255, 246, 252, 0.84);
+          border: 1px solid rgba(229, 184, 105, 0.68);
+          box-shadow: 0 4px 14px rgba(52, 16, 40, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          pointer-events: auto;
+        }
+        .hud-world-opt {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 5px 10px;
+          border-radius: 999px;
+          border: 1px solid transparent;
+          background: transparent;
+          color: var(--rose-600, #a72f6b);
+          font-size: 0.76rem;
+          font-weight: 700;
+          line-height: 1.1;
+          white-space: nowrap;
+          cursor: pointer;
+          transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.14s ease;
+        }
+        .hud-world-opt:hover {
+          background: rgba(255, 255, 255, 0.9);
+          transform: translateY(-1px);
+        }
+        .hud-world-opt--gala {
+          background: linear-gradient(135deg, rgba(44, 24, 92, 0.12), rgba(146, 86, 198, 0.18));
+          color: #462174;
+          border-color: rgba(162, 122, 224, 0.42);
+        }
+        .hud-world-opt--gala:hover {
+          background: linear-gradient(135deg, rgba(52, 28, 106, 0.2), rgba(168, 100, 218, 0.26));
+          border-color: rgba(218, 174, 92, 0.65);
+        }
+        .hud-world-opt.active[data-world="gala_imperial"] {
+          background: linear-gradient(135deg, #1b1142 0%, #482478 56%, #7d388b 100%);
+          color: #ffeaa8;
+          border-color: rgba(248, 208, 118, 0.92);
+          box-shadow: 0 3px 12px rgba(54, 22, 104, 0.42), inset 0 1px 0 rgba(255, 238, 184, 0.35);
+          text-shadow: 0 1px 4px rgba(10, 5, 26, 0.72);
+        }
+        .hud-world-opt.active[data-world="palacio_cristal"] {
+          background: linear-gradient(135deg, #f374ae 0%, #e2a452 100%);
+          color: #ffffff;
+          border-color: rgba(255, 238, 196, 0.92);
+          box-shadow: 0 3px 10px rgba(212, 77, 143, 0.32);
+          text-shadow: 0 1px 2px rgba(96, 24, 58, 0.35);
+        }
+        .hud-world-opt.active[data-world="jardines_perla"] {
+          background: linear-gradient(135deg, #e88468 0%, #d85c9e 56%, #88549b 100%);
+          color: #fff8ed;
+          border-color: rgba(255, 218, 168, 0.9);
+          box-shadow: 0 3px 10px rgba(188, 78, 136, 0.32);
+          text-shadow: 0 1px 2px rgba(68, 20, 52, 0.4);
+        }
+        body.casino-open #hud-world-switcher {
+          display: none !important;
+        }
+        @media (max-width: 1260px) {
+          .hud-world-opt {
+            padding: 4px 8px;
+            font-size: 0.72rem;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+      this.#injectedNodes.push(style);
+    }
+
+    const hudActions = this.#hudEl?.querySelector('.hud-actions');
+    if (!hudActions) return;
+
+    const initialName = this.#el('hud-world-name')?.textContent || '';
+    const detected = this.#resolveWorldId(initialName);
+    if (detected) this.#currentWorldId = detected;
+
+    let switcher = this.#el('hud-world-switcher');
+    if (!switcher) {
+      switcher = document.createElement('div');
+      switcher.id = 'hud-world-switcher';
+      switcher.className = 'hud-world-switcher glass-chip';
+      switcher.setAttribute('role', 'group');
+      switcher.setAttribute('aria-label', 'Selector rápido de ambiente');
+      switcher.innerHTML = WORLD_AMBIENCE_OPTIONS.map((opt) => `
+        <button
+          type="button"
+          class="hud-world-opt${opt.featured ? ' hud-world-opt--gala' : ''}"
+          data-world="${opt.id}"
+          title="${opt.title}"
+          aria-pressed="false"
+        >${opt.label}</button>
+      `).join('');
+
+      const legacyWorldBtn = this.#el('btn-hud-world');
+      if (legacyWorldBtn && legacyWorldBtn.parentNode === hudActions) {
+        hudActions.insertBefore(switcher, legacyWorldBtn);
+      } else {
+        hudActions.appendChild(switcher);
+      }
+      this.#injectedNodes.push(switcher);
+
+      const onSwitcherClick = (e) => {
+        const btn = e.target.closest?.('.hud-world-opt');
+        if (!btn) return;
+        btn.blur?.();
+        const worldId = btn.dataset.world;
+        if (worldId) this.#handleSelectWorld(worldId);
+      };
+      switcher.addEventListener('click', onSwitcherClick);
+      this.#boundCleanups.push(() => switcher.removeEventListener('click', onSwitcherClick));
+    }
+    this.#worldSwitcherEl = switcher;
+  }
+
+  #syncWorldButtons() {
+    if (!this.#worldSwitcherEl) return;
+    this.#worldSwitcherEl.querySelectorAll('.hud-world-opt').forEach((btn) => {
+      const isActive = btn.dataset.world === this.#currentWorldId;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-pressed', String(isActive));
+    });
+  }
+
+  #handleSelectWorld(worldId) {
+    if (!worldId || !WORLD_CYCLE_ORDER.includes(worldId)) return;
+    const prevWorldId = this.#currentWorldId;
+    const hasSelectCallback = typeof this.#callbacks?.onSelectWorld === 'function';
+
+    if (hasSelectCallback) {
+      this.#currentWorldId = worldId;
+      this.#syncWorldButtons();
+      this.#callbacks.onSelectWorld(worldId);
+      window.dispatchEvent(new CustomEvent('reino:select-world', { detail: { worldId } }));
+      return;
+    }
+
+    const ev = new CustomEvent('reino:select-world', { detail: { worldId }, cancelable: true });
+    window.dispatchEvent(ev);
+
+    // Fallback seguro si ni onSelectWorld ni un listener de reino:select-world aplicaron el cambio
+    if (!ev.defaultPrevented && this.#currentWorldId === prevWorldId && prevWorldId !== worldId) {
+      if (typeof this.#callbacks?.onCycleWorld === 'function') {
+        const fromIdx = WORLD_CYCLE_ORDER.indexOf(prevWorldId);
+        const toIdx = WORLD_CYCLE_ORDER.indexOf(worldId);
+        const steps = (fromIdx >= 0 && toIdx >= 0)
+          ? (toIdx - fromIdx + WORLD_CYCLE_ORDER.length) % WORLD_CYCLE_ORDER.length
+          : 1;
+        for (let i = 0; i < steps; i++) {
+          this.#callbacks.onCycleWorld();
+          if (this.#currentWorldId === worldId) break;
+        }
+      }
+    }
+
+    this.#currentWorldId = worldId;
+    this.#syncWorldButtons();
   }
 
   #getEngine() {
@@ -1242,6 +1508,7 @@ export class HudUI {
     this.#injectedNodes.length = 0;
     this.#qualityPopoverEl = null;
     this.#fpsBadgeEl = null;
+    this.#worldSwitcherEl = null;
     this.#qualityPopoverOpen = false;
     this.#fpsVisible = false;
     this.hide();

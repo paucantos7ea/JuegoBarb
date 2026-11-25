@@ -5,6 +5,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { WorldThemes } from '../world/WorldThemes.js';
+import { StarrySkySystem } from '../world/StarrySkySystem.js';
 
 const QUALITY_STORAGE_KEY = 'reino_rosa_quality_v1';
 
@@ -67,8 +68,7 @@ export class Engine {
   #envRT = null;
   #hemiLight = null;
   #sunLight = null;
-  #skyDome = null;
-  #starField = null;
+  #starrySky = null;
   #motes = null;
   #moteVelocities = null;
   #moteDrawCount = 150;
@@ -183,64 +183,11 @@ export class Engine {
   }
 
   #setupSkyAndParticles(profile) {
-    const skyGeo = new THREE.SphereGeometry(240, 32, 20);
-    const skyMat = new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      depthWrite: false,
-      uniforms: {
-        uTopColor: { value: new THREE.Color(0x88b4f8) },
-        uMidColor: { value: new THREE.Color(0xffcde2) },
-        uBottomColor: { value: new THREE.Color(0xfff3dc) }
-      },
-      vertexShader: `
-        varying vec3 vLocalPos;
-        void main() {
-          vLocalPos = position;
-          vec4 wp = modelMatrix * vec4(position, 1.0);
-          gl_Position = projectionMatrix * viewMatrix * wp;
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 uTopColor;
-        uniform vec3 uMidColor;
-        uniform vec3 uBottomColor;
-        varying vec3 vLocalPos;
-        void main() {
-          float h = normalize(vLocalPos).y;
-          vec3 col = mix(uBottomColor, uMidColor, smoothstep(-0.08, 0.25, h));
-          col = mix(col, uTopColor, smoothstep(0.22, 0.85, h));
-          gl_FragColor = vec4(col, 1.0);
-        }
-      `
+    this.#starrySky = new StarrySkySystem(this.#scene, {
+      quality: this.#quality,
+      pixelRatio: this.#renderer.getPixelRatio()
     });
-    this.#skyDome = new THREE.Mesh(skyGeo, skyMat);
-    this.#skyDome.frustumCulled = false;
-    this.#scene.add(this.#skyDome);
-
-    // Campo estelar para Gala Imperial
-    const starCount = 420;
-    const starPos = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(0.18 + Math.random() * 0.82);
-      const r = 215;
-      starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      starPos[i * 3 + 1] = r * Math.cos(phi);
-      starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-    }
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-    const starMat = new THREE.PointsMaterial({
-      color: 0xfff5d6,
-      size: 1.5,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false
-    });
-    this.#starField = new THREE.Points(starGeo, starMat);
-    this.#starField.frustumCulled = false;
-    this.#starField.visible = false;
-    this.#scene.add(this.#starField);
+    this.#starrySky.init();
 
     // Partículas ambientales flotantes (motas doradas / pétalos / luciérnagas)
     const moteCount = 240;
@@ -317,7 +264,8 @@ export class Engine {
     const width = this.#container.clientWidth || window.innerWidth;
     const height = this.#container.clientHeight || window.innerHeight;
 
-    this.#renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, profile.maxPixelRatio));
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, profile.maxPixelRatio);
+    this.#renderer.setPixelRatio(pixelRatio);
     this.#renderer.setSize(width, height);
     this.#composer?.setSize(width, height);
     this.#updateBloomSize(width, height);
@@ -326,6 +274,9 @@ export class Engine {
       this.#camera.far = profile.far;
       this.#camera.updateProjectionMatrix();
     }
+
+    this.#starrySky?.setQuality(quality, pixelRatio);
+    this.#starrySky?.syncToCamera(this.#camera);
 
     if (this.#scene.fog) {
       const baseDensity = this.#currentTheme?.fogDensity ?? 0.0048;
@@ -404,10 +355,7 @@ export class Engine {
     this.#currentTheme = theme;
     const profile = QUALITY_PROFILES[this.#quality];
 
-    const u = this.#skyDome.material.uniforms;
-    u.uTopColor.value.setHex(theme.skyTop);
-    u.uMidColor.value.setHex(theme.skyMid);
-    u.uBottomColor.value.setHex(theme.skyBottom);
+    this.#starrySky?.applyTheme(theme);
 
     this.#scene.fog.color.setHex(theme.fogColor);
     this.#scene.fog.density = theme.fogDensity * profile.fogBoost;
@@ -421,7 +369,7 @@ export class Engine {
     this.#sunLight.position.set(...theme.sunPosition);
 
     this.#renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.#renderer.toneMappingExposure = Math.min(0.90, theme.exposure ?? 0.90);
+    this.#renderer.toneMappingExposure = THREE.MathUtils.clamp(theme.exposure ?? 0.90, 0.80, 0.96);
     // three r160 no soporta scene.environmentIntensity (llegó en r163):
     // lo aplicamos material a material con envMapIntensity.
     this.#envIntensity = Math.min(theme.envIntensity ?? 0.56, 0.60);
@@ -431,12 +379,10 @@ export class Engine {
     this.#lastSceneChildCount = this.#scene.children.length;
     this.#calibrateSceneMaterials();
 
-    this.#bloomPass.threshold = Math.max(0.96, theme.bloomThreshold ?? 0.96);
-    this.#bloomPass.strength = Math.min(0.20, theme.bloomStrength ?? 0.20);
-    this.#bloomPass.radius = theme.bloomRadius ?? 0.30;
+    this.#bloomPass.threshold = THREE.MathUtils.clamp(theme.bloomThreshold ?? 0.96, 0.84, 0.98);
+    this.#bloomPass.strength = THREE.MathUtils.clamp(theme.bloomStrength ?? 0.20, 0.12, 0.34);
+    this.#bloomPass.radius = THREE.MathUtils.clamp(theme.bloomRadius ?? 0.30, 0.20, 0.55);
 
-    this.#starField.material.opacity = theme.starsOpacity;
-    this.#starField.visible = theme.starsOpacity > 0.01;
     this.#motes.material.color.setHex(theme.moteColor);
     this.#motes.material.size = theme.moteSize;
   }
@@ -547,18 +493,12 @@ export class Engine {
       }
       pos.needsUpdate = true;
     }
-    if (this.#starField && this.#starField.visible && this.#starField.material.opacity > 0.05) {
-      this.#starField.rotation.y += dt * 0.006;
-    }
+    this.#starrySky?.update(dt);
   }
 
   render() {
-    if (this.#camera && this.#skyDome && this.#starField) {
-      const skyScale = (this.#camera.far * 0.82) / 240;
-      this.#skyDome.position.copy(this.#camera.position);
-      this.#skyDome.scale.setScalar(skyScale);
-      this.#starField.position.copy(this.#camera.position);
-      this.#starField.scale.setScalar(skyScale);
+    if (this.#camera) {
+      this.#starrySky?.syncToCamera(this.#camera);
     }
 
     const bloomActive = this.#isBloomActive();
@@ -633,6 +573,10 @@ export class Engine {
   #handleResize() {
     const width = this.#container.clientWidth || window.innerWidth;
     const height = this.#container.clientHeight || window.innerHeight;
+    const profile = QUALITY_PROFILES[this.#quality];
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, profile.maxPixelRatio);
+    this.#renderer.setPixelRatio(pixelRatio);
+    this.#starrySky?.setPixelRatio(pixelRatio);
     this.#camera.aspect = width / height;
     this.#camera.updateProjectionMatrix();
     this.#renderer.setSize(width, height);
@@ -651,10 +595,8 @@ export class Engine {
       delete this.#container.__engine;
     }
     this.#statsListener = null;
-    this.#skyDome?.geometry.dispose();
-    this.#skyDome?.material.dispose();
-    this.#starField?.geometry.dispose();
-    this.#starField?.material.dispose();
+    this.#starrySky?.dispose();
+    this.#starrySky = null;
     this.#motes?.geometry.dispose();
     this.#motes?.material.dispose();
     this.#envRT?.dispose();
