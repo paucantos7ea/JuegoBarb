@@ -312,12 +312,14 @@ export class CollisionSystem {
     if (Math.hypot(pos.x - 208, pos.z + 22) <= 7.0 || Math.hypot(pos.x - 208, pos.z - 22) <= 7.0) {
       return 'Glorieta Mirador del Casino';
     }
-    if (Math.hypot(pos.x - 162, pos.z) <= 66.0) return 'Jardines VIP del Casino';
     if (pos.x >= 92 && pos.x <= 103 && Math.abs(pos.z) <= 5.2) return 'Puente Imperial del Río';
-    if (pos.x >= 42 && pos.x <= 128 && Math.abs(pos.z) <= 10) return 'Bulevar Imperial del Casino';
+    if (pos.x >= 99 && pos.x <= 110 && pos.z >= 24.5 && pos.z <= 29.5) return 'Puente de los Cisnes';
+    if (pos.x >= 88.5 && pos.x <= 99.5 && pos.z >= -40.5 && pos.z <= -35.5) return 'Puente Norte de los Cerezos';
+    if (pos.x >= 42 && pos.x <= 126.5 && Math.abs(pos.z) <= 10) return 'Bulevar Imperial del Casino';
     const dxSwan = (pos.x - 106) / 25.0;
     const dzSwan = (pos.z - 45) / 16.0;
     if (dxSwan * dxSwan + dzSwan * dzSwan <= 1.0) return 'Lago de los Cisnes';
+    if (Math.hypot(pos.x - 162, pos.z) <= 68.0) return 'Jardines VIP del Casino';
     if (pos.z >= -78 && pos.z <= 38) {
       const rcx = 97.5 + Math.sin(pos.z * 0.07) * 7.5 * Math.min(1, (pos.z * pos.z) / 144);
       if (Math.abs(pos.x - rcx) <= 11.5) return 'Ribera del Río Cristalino';

@@ -194,7 +194,7 @@ export class Engine {
     const motePos = new Float32Array(moteCount * 3);
     this.#moteVelocities = new Float32Array(moteCount * 3);
     for (let i = 0; i < moteCount; i++) {
-      motePos[i * 3] = Math.random() * 280 - 85;
+      motePos[i * 3] = Math.random() * 305 - 85;
       motePos[i * 3 + 1] = 1 + Math.random() * 20;
       motePos[i * 3 + 2] = (Math.random() - 0.5) * 160 - 8;
       this.#moteVelocities[i * 3] = (Math.random() - 0.5) * 0.45;
@@ -485,8 +485,8 @@ export class Engine {
         let y = pos.getY(i) + this.#moteVelocities[i * 3 + 1] * dt;
         let z = pos.getZ(i) + this.#moteVelocities[i * 3 + 2] * dt;
         if (y > 22) y = 0.8;
-        if (x > 195) x = -85;
-        if (x < -85) x = 195;
+        if (x > 220) x = -85;
+        if (x < -85) x = 220;
         if (z > 72) z = -88;
         if (z < -88) z = 72;
         pos.setXYZ(i, x, y, z);
