@@ -20,7 +20,17 @@ export const GraphicsSync = {
   uSkyHorizon: { value: new THREE.Color(0x8e4276) },
   uFogColor: { value: new THREE.Color(0x1f133e) },
   uFogDensity: { value: 0.0022 },
-  uNightFactor: { value: 1.0 }
+  uNightFactor: { value: 1.0 },
+  uWindDir: { value: new THREE.Vector2(0.82, 0.57).normalize() },
+  uWindStrength: { value: 0.65 },
+  uGrassActors: {
+    value: [
+      new THREE.Vector4(0, -100, 0, 0),
+      new THREE.Vector4(0, -100, 0, 0),
+      new THREE.Vector4(0, -100, 0, 0),
+      new THREE.Vector4(0, -100, 0, 0)
+    ]
+  }
 };
 
 const IS_LOW_CORE_DEVICE =
@@ -125,7 +135,7 @@ const ENV_THEME_PRESETS = {
 
 let _sharedContactShadowTex = null;
 
-function getSharedContactShadowTexture() {
+export function getSharedContactShadowTexture() {
   if (_sharedContactShadowTex) return _sharedContactShadowTex;
   const size = 128;
   const canvas = document.createElement('canvas');

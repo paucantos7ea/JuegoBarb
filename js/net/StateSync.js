@@ -264,6 +264,26 @@ export class StateSync {
     return this.#remotePlayers.size;
   }
 
+  getNearestRemotePosition(refPos, outVec) {
+    if (!refPos || !outVec || this.#remotePlayers.size === 0) return false;
+    const list = this.getRemoteList();
+    let bestDistSq = Infinity;
+    let found = false;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i].pos;
+      const dx = p.x - refPos.x;
+      const dy = p.y - refPos.y;
+      const dz = p.z - refPos.z;
+      const dSq = dx * dx + dy * dy + dz * dz;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        outVec.copy(p);
+        found = true;
+      }
+    }
+    return found;
+  }
+
   update(dt) {
     const local = this.#getLocalState ? this.#getLocalState(false) : null;
     const localPos = local?.pos || null;

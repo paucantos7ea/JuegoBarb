@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SpringValue } from '../core/SpringValue.js';
+import { GraphicsSync } from '../core/Engine.js';
 import { RIDER_POSE } from '../world/HorseAnatomy.js';
 import { RIDER_LEAN_RANGE } from './RidingDrape.js';
 
@@ -296,14 +297,16 @@ class SpringMotion {
 
   update(dt, m) {
     const falling = Math.max(0, -m.vy);
-    const skirtX = clamp(m.fwd * 0.011, -0.08, 0.13);
-    const skirtZ = clamp(-m.yawRate * 0.05 - m.side * 0.012, -0.2, 0.2) + m.sway * 0.035;
+    const windFwd = m.windFwd || 0;
+    const windSide = m.windSide || 0;
+    const skirtX = clamp(m.fwd * 0.011 + windFwd * 0.028, -0.09, 0.14);
+    const skirtZ = clamp(-m.yawRate * 0.05 - m.side * 0.012 + windSide * 0.032, -0.22, 0.22) + m.sway * 0.035;
     this.#skirt.step(skirtX, skirtZ, dt);
 
     const hairCap = m.riding ? 0.52 : 0.36;
-    const flutter = m.riding ? Math.sin(m.t * 9.5) * 0.035 * clamp(m.fwd / 15, 0, 1) : 0;
-    const hairX = clamp(m.fwd * (m.riding ? 0.032 : 0.028) + falling * 0.022 + flutter, -0.06, hairCap);
-    const hairZ = clamp(-m.yawRate * 0.07 - m.side * 0.025, -0.24, 0.24);
+    const flutter = m.riding ? Math.sin(m.t * 9.5) * 0.035 * clamp(m.fwd / 15, 0, 1) : Math.sin(m.t * 2.1) * 0.014 * (m.windStr || 0);
+    const hairX = clamp(m.fwd * (m.riding ? 0.032 : 0.028) + falling * 0.022 + flutter + windFwd * 0.048, -0.06, hairCap);
+    const hairZ = clamp(-m.yawRate * 0.07 - m.side * 0.025 + windSide * 0.055, -0.26, 0.26);
     this.#hair.step(hairX, hairZ, dt);
 
     this.#flare.step(clamp(m.flare + falling * 0.012 + Math.abs(m.yawRate) * 0.012, 0, 0.2), 0, dt);
@@ -348,7 +351,8 @@ export class CharacterAnimator {
   #prevYaw = 0; #yawRate = 0; #hasPrev = false; #spinAngle = 0; #smoothYaw = 0; #breath = 0;
   #torsoBase = new THREE.Vector3(1, 1, 1); #shoulderY = 0;
   #motionOut = { fwd: 0, side: 0, vy: 0, spinRate: 0 };
-  #springIn = { fwd: 0, side: 0, vy: 0, yawRate: 0, sway: 0, flare: 0, riding: false, t: 0 };
+  #springIn = { fwd: 0, side: 0, vy: 0, yawRate: 0, sway: 0, flare: 0, riding: false, t: 0, windFwd: 0, windSide: 0, windStr: 0 };
+  #wading = false;
   // Montura: transición de la falda, muelle vertical del jinete, inclinación y pesos de la tela
   #ride = { on: false, k: 0, T: 0, hopT: 1, data: null, resetY: true };
   #rideState = { residual: 0, hop: 0, lean: 0, inLean: 0, bank: 0, speed: 0 };
@@ -369,6 +373,7 @@ export class CharacterAnimator {
   }
 
   setBaseArmZ(z) { this.#baseZ = z; }
+  setWading(active) { this.#wading = Boolean(active); }
 
   /**
    * Activa/desactiva el modo montura. `horseData` es el objeto prealocado del caballo
@@ -453,6 +458,10 @@ export class CharacterAnimator {
     this.#applyLook(dt, p);
     if (state === 'walk' || state === 'run') {
       p.bodyRotZ += clamp(-this.#yawRate * (state === 'run' ? 0.055 : 0.04), -0.17, 0.17);
+      if (this.#wading) {
+        p.lShinX += 0.22;
+        p.rShinX += 0.22;
+      }
     }
     if (state !== 'jump' && state !== 'riding' && runFar) this.#plantFeet(p);
 
@@ -460,6 +469,11 @@ export class CharacterAnimator {
     if (runMid) this.#updateBlink(dt);
     if (runFar) {
       const si = this.#springIn;
+      const yaw = this.#b.root.rotation.y;
+      const sinY = Math.sin(yaw);
+      const cosY = Math.cos(yaw);
+      const wd = GraphicsSync.uWindDir.value;
+      const ws = GraphicsSync.uWindStrength.value * (0.75 + 0.25 * Math.sin(t * 1.15));
       si.fwd = motion.fwd;
       si.side = motion.side;
       si.vy = motion.vy;
@@ -468,6 +482,9 @@ export class CharacterAnimator {
       si.flare = p.flare;
       si.riding = riding;
       si.t = t;
+      si.windFwd = (wd.x * sinY + wd.y * cosY) * ws;
+      si.windSide = (wd.x * cosY - wd.y * sinY) * ws;
+      si.windStr = ws;
       this.#springs.update(dt, si);
       this.#springs.apply(this.#b.skirtPivot, this.#b.hairSwing, this.#ride.T);
     }

@@ -168,15 +168,11 @@ export class WaterSystem {
   // Puentes barrocos
   #bridges = [];
 
-  // Cascada & Fuentes VIP del Casino
+  // Cascada Norte
   #waterfallTex = null;
   #waterfallMat = null;
   #crystalPinkMat = null;
   #crystalTurquoiseMat = null;
-  #vipCrystals = [];
-  #vipHalos = [];
-  #vipDrops = null;
-  #vipDropData = null;
   #waterfallSpray = null;
   #waterfallSprayData = null;
   #foamInst = null;
@@ -234,13 +230,6 @@ export class WaterSystem {
     this.#buildRoyalRiverAndWaterfall(mats, shoreStones, foamSpecs, rippleEmitters);
     this.#buildSwanLake(mats, shoreStones, foamSpecs, rippleEmitters);
     this.#buildLegacyPondsStreamsAndSouthLake(mats, shoreStones);
-    this.#buildCasinoVipFountains(mats, rippleEmitters);
-
-    rippleEmitters.push(
-      { x: 0.0, y: 0.68, z: 0.0, minR: 1.55, maxR: 5.05, speed: 0.42 },
-      { x: 80.0, y: 0.50, z: -10.5, minR: 0.65, maxR: 2.42, speed: 0.52 },
-      { x: 80.0, y: 0.50, z: 10.5, minR: 0.65, maxR: 2.42, speed: 0.52 }
-    );
 
     this.#flushStaticBuckets();
     this.#buildOrganicBanksInstanced(mats, shoreStones);
@@ -2031,89 +2020,6 @@ export class WaterSystem {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Fuentes VIP del Casino (162, ±48)
-  // ---------------------------------------------------------------------------
-
-  #buildCasinoVipFountains(mats, rippleEmitters) {
-    const specs = [
-      { fx: 162.0, fz: -48.0, crystalMat: mats.crystalPink, phase: 0.0 },
-      { fx: 162.0, fz: 48.0, crystalMat: mats.crystalTurquoise, phase: Math.PI }
-    ];
-
-    const dropsPerFountain = 96;
-    const totalDrops = specs.length * dropsPerFountain;
-    const dropPos = new Float32Array(totalDrops * 3);
-    this.#vipDropData = new Float32Array(totalDrops * 5);
-
-    specs.forEach((sp, fIdx) => {
-      const { fx, fz, crystalMat, phase } = sp;
-
-      this.#addStaticMesh(new THREE.CylinderGeometry(4.0, 4.28, 0.68, 36), mats.marble, fx, 0.34, fz, true, true);
-      this.#addStaticMesh(new THREE.CylinderGeometry(3.68, 3.68, 0.12, 32), mats.pondBed, fx, 0.16, fz, false, true);
-      this.#addStaticMesh(new THREE.TorusGeometry(4.0, 0.15, 10, 48), mats.roseGold, fx, 0.7, fz, true, true, Math.PI / 2);
-      this.#addStaticMesh(new THREE.CylinderGeometry(3.75, 3.75, 0.1, 36), mats.crystalTurquoise, fx, 0.61, fz, false, false);
-
-      this.#addStaticMesh(new THREE.CylinderGeometry(0.75, 1.05, 1.65, 20), mats.marble, fx, 1.4, fz, true, true);
-      this.#addStaticMesh(new THREE.CylinderGeometry(2.35, 0.9, 0.46, 28), mats.marble, fx, 2.28, fz, true, true);
-      this.#addStaticMesh(new THREE.TorusGeometry(2.35, 0.11, 10, 40), mats.roseGold, fx, 2.52, fz, false, true, Math.PI / 2);
-      this.#addStaticMesh(new THREE.CylinderGeometry(2.15, 2.15, 0.08, 28), mats.crystalTurquoise, fx, 2.48, fz, false, false);
-
-      this.#addStaticMesh(new THREE.CylinderGeometry(0.38, 0.56, 1.32, 16), mats.roseGold, fx, 3.15, fz, true, true);
-      this.#addStaticMesh(new THREE.CylinderGeometry(1.25, 0.48, 0.36, 24), mats.marble, fx, 3.85, fz, true, true);
-      this.#addStaticMesh(new THREE.TorusGeometry(1.25, 0.08, 8, 32), mats.roseGold, fx, 4.04, fz, false, true, Math.PI / 2);
-      this.#addStaticMesh(new THREE.CylinderGeometry(1.1, 1.1, 0.06, 24), mats.crystalTurquoise, fx, 4.0, fz, false, false);
-
-      this.#addStaticMesh(new THREE.CylinderGeometry(0.18, 0.28, 0.72, 14), mats.marble, fx, 4.38, fz, true, true);
-
-      const crystal = this.#addMesh(new THREE.OctahedronGeometry(0.54, 0), crystalMat, fx, 5.25, fz, false, false);
-      crystal.scale.set(0.95, 1.32, 0.95);
-      const halo = this.#addMesh(new THREE.TorusGeometry(0.84, 0.052, 8, 28), mats.roseGold, fx, 5.25, fz, false, false);
-
-      this.#vipCrystals.push({ mesh: crystal, baseY: 5.25, phase });
-      this.#vipHalos.push({ mesh: halo, baseY: 5.25, phase });
-
-      this.#collision.addCylinderCollider(fx, fz, 4.1, 0, 5.2);
-
-      rippleEmitters.push({
-        x: fx,
-        y: 0.64,
-        z: fz,
-        minR: 1.05,
-        maxR: 3.62,
-        speed: 0.48
-      });
-
-      const baseOffset = fIdx * dropsPerFountain;
-      for (let i = 0; i < dropsPerFountain; i++) {
-        const idx5 = (baseOffset + i) * 5;
-        const tier = i < 38 ? 0 : 1;
-        this.#vipDropData[idx5] = fx;
-        this.#vipDropData[idx5 + 1] = fz;
-        this.#vipDropData[idx5 + 2] = pseudoRand(idx5 * 1.7 + 3) * Math.PI * 2;
-        this.#vipDropData[idx5 + 3] = pseudoRand(idx5 * 2.9 + 7);
-        this.#vipDropData[idx5 + 4] = (tier === 0 ? 1 : -1) * (0.72 + pseudoRand(idx5 * 4.1) * 0.42);
-      }
-    });
-
-    const vipDropGeo = this.#trackGeo(new THREE.BufferGeometry());
-    vipDropGeo.setAttribute('position', new THREE.BufferAttribute(dropPos, 3));
-    const vipDropMat = this.#trackMat(
-      new THREE.PointsMaterial({
-        color: 0xdff8ff,
-        size: 0.21,
-        transparent: true,
-        opacity: 0.84,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      })
-    );
-    this.#vipDrops = new THREE.Points(vipDropGeo, vipDropMat);
-    this.#vipDrops.matrixAutoUpdate = false;
-    this.#vipDrops.updateMatrix();
-    this.#root.add(this.#vipDrops);
-  }
-
   #buildSplashDropPool(mats) {
     const geo = new THREE.SphereGeometry(0.045, 6, 5);
     this.#splashInst = this.#createInstanced(geo, mats.splashMat, SPLASH_DROP_COUNT, false, false);
@@ -2444,46 +2350,6 @@ export class WaterSystem {
       this.#waterfallTex.offset.y = (t * 1.45) % 1;
     }
 
-    // Cristales flotantes giratorios y cascadas de las Fuentes VIP del Casino
-    for (let i = 0; i < this.#vipCrystals.length; i++) {
-      const c = this.#vipCrystals[i];
-      c.mesh.rotation.y += dt * 1.25;
-      c.mesh.position.y = c.baseY + Math.sin(t * 2.3 + c.phase) * 0.09;
-    }
-    for (let i = 0; i < this.#vipHalos.length; i++) {
-      const h = this.#vipHalos[i];
-      h.mesh.rotation.y -= dt * 0.9;
-      h.mesh.rotation.x = Math.sin(t * 1.2 + h.phase) * 0.38;
-      h.mesh.position.y = h.baseY + Math.sin(t * 2.3 + h.phase) * 0.09;
-    }
-
-    if (this.#vipDrops && this.#vipDropData) {
-      const pos = this.#vipDrops.geometry.attributes.position;
-      const count = pos.count;
-      for (let i = 0; i < count; i++) {
-        const base = i * 5;
-        const fx = this.#vipDropData[base];
-        const fz = this.#vipDropData[base + 1];
-        const angle = this.#vipDropData[base + 2];
-        const rawSpeed = this.#vipDropData[base + 4];
-        const speed = rawSpeed > 0 ? rawSpeed : -rawSpeed;
-        const phase = (this.#vipDropData[base + 3] + dt * speed) % 1;
-        this.#vipDropData[base + 3] = phase;
-
-        let r;
-        let y;
-        if (rawSpeed > 0) {
-          r = 1.2 + phase * 0.95;
-          y = 4.02 + Math.sin(phase * Math.PI) * 0.28 - phase * 1.52;
-        } else {
-          r = 2.3 + phase * 1.32;
-          y = 2.5 + Math.sin(phase * Math.PI) * 0.32 - phase * 1.86;
-        }
-        pos.setXYZ(i, fx + Math.cos(angle) * r, y, fz + Math.sin(angle) * r);
-      }
-      pos.needsUpdate = true;
-    }
-
     if (this.#waterfallSpray && this.#waterfallSprayData) {
       const pos = this.#waterfallSpray.geometry.attributes.position;
       const count = pos.count;
@@ -2627,10 +2493,6 @@ export class WaterSystem {
     this.#staticBuckets.clear();
     this.#bridges.length = 0;
 
-    this.#vipCrystals.length = 0;
-    this.#vipHalos.length = 0;
-    this.#vipDrops = null;
-    this.#vipDropData = null;
     this.#waterfallSpray = null;
     this.#waterfallSprayData = null;
     this.#foamInst = null;

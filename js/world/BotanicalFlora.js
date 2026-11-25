@@ -194,6 +194,10 @@ export class BotanicalFlora {
     this.#collision = collisionSystem;
   }
 
+  getTreeRecords() {
+    return this.#treeRecords;
+  }
+
   init() {
     if (this.#built) return;
     this.#built = true;

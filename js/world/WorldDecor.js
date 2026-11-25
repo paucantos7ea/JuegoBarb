@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { WaterSystem, getRiverCenterX } from './WaterSystem.js';
 import { BotanicalFlora } from './BotanicalFlora.js';
+import { FountainSystem } from './FountainSystem.js';
+import { FoliageSystem } from './FoliageSystem.js';
 
 function swapAttr3(attr, a, b) {
   const x = attr.getX(a);
@@ -96,6 +98,9 @@ export class WorldDecor {
   #collision;
   #waterSystem = null;
   #flora = null;
+  #fountainSystem = null;
+  #foliageSystem = null;
+  #lanternPositions = [];
   #root = null;
   #geometries = [];
   #materials = [];
@@ -152,24 +157,34 @@ export class WorldDecor {
     // Fusionar toda la arquitectura estática por material en mínimas draw calls
     this.#flushStaticBuckets();
 
-    // 7. InstancedMeshes de bancos, flores de jardineras, senderos curvos, farolas, rocas con musgo y ~4.250 hierbas/tréboles
+    // 7. InstancedMeshes de bancos, flores de jardineras, senderos curvos, farolas y rocas con musgo
     this.#buildBenchesInstanced(mats, benchSpecs);
     this.#buildPlanterFlowersInstanced(mats, planterFlowers);
     this.#buildCurvedStonePaths(mats);
     this.#buildLanterns(mats);
     this.#buildMossyRocksInstanced(mats);
-    this.#buildGrassAndCloversInstanced(mats);
 
     this.#root.matrixAutoUpdate = false;
     this.#root.updateMatrix();
     this.#scene.add(this.#root);
 
-    // 8. Sistemas delegados especializados: Ríos/Lagos/Puentes y Botánica
+    // 8. Sistemas delegados especializados: Ríos/Lagos/Puentes, Fuentes Barrocas, Botánica y Pradera GPU
     this.#waterSystem = new WaterSystem(this.#scene, this.#textures, this.#collision);
     this.#waterSystem.init();
 
+    this.#fountainSystem = new FountainSystem(this.#scene, this.#collision);
+    this.#fountainSystem.init();
+
     this.#flora = new BotanicalFlora(this.#scene, this.#textures, this.#collision);
     this.#flora.init();
+
+    this.#foliageSystem = new FoliageSystem(this.#scene, {
+      worldDecor: this,
+      waterSystem: this.#waterSystem,
+      fountainSystem: this.#fountainSystem,
+      flora: this.#flora
+    });
+    this.#foliageSystem.init();
 
     // Liberar rejilla temporal de construcción de caminos
     this.#pathGrid.clear();
@@ -552,63 +567,10 @@ export class WorldDecor {
   }
 
   #buildMonumentalFountain(mats) {
-    // Plaza circular de mármol r = 14.5 con borde oro-rosa
+    // Plaza circular de mármol r = 14.5 con borde oro-rosa (la fuente barroca monumental vive en FountainSystem)
     this.#addStaticMesh(new THREE.CylinderGeometry(14.5, 14.8, 0.1, 48), mats.plazaFloor, 0, 0.02, 0, false, true);
     this.#addStaticMesh(new THREE.TorusGeometry(14.48, 0.15, 10, 64), mats.roseGold, 0, 0.08, 0, false, true, Math.PI / 2);
     this.#addStaticMesh(new THREE.TorusGeometry(8.8, 0.08, 8, 48), mats.roseGold, 0, 0.075, 0, false, true, Math.PI / 2);
-
-    // Vaso inferior (r = 5.6)
-    this.#addStaticMesh(new THREE.CylinderGeometry(5.6, 5.9, 0.72, 36), mats.marble, 0, 0.39, 0, true, true);
-    this.#addStaticMesh(new THREE.CylinderGeometry(5.1, 5.1, 0.12, 32), mats.pondBed, 0, 0.15, 0, false, true);
-    this.#addStaticMesh(new THREE.TorusGeometry(5.6, 0.18, 12, 48), mats.roseGold, 0, 0.76, 0, true, true, Math.PI / 2);
-    this.#addStaticMesh(new THREE.CylinderGeometry(5.32, 5.32, 0.1, 36), mats.water, 0, 0.65, 0, false, false);
-
-    this.#collision.addCylinderCollider(0, 0, 5.65, 0, 5.5);
-
-    // Pedestal central inferior -> Copa intermedia (r = 3.3)
-    this.#addStaticMesh(new THREE.CylinderGeometry(0.95, 1.35, 1.9, 20), mats.marble, 0, 1.55, 0, true, true);
-    this.#addStaticMesh(new THREE.CylinderGeometry(3.3, 1.15, 0.52, 28), mats.marble, 0, 2.55, 0, true, true);
-    this.#addStaticMesh(new THREE.TorusGeometry(3.3, 0.12, 10, 40), mats.roseGold, 0, 2.82, 0, false, true, Math.PI / 2);
-    this.#addStaticMesh(new THREE.CylinderGeometry(3.05, 3.05, 0.08, 28), mats.water, 0, 2.77, 0, false, false);
-
-    // Pedestal medio -> Copa superior (r = 1.7)
-    this.#addStaticMesh(new THREE.CylinderGeometry(0.5, 0.72, 1.65, 16), mats.roseGold, 0, 3.6, 0, true, true);
-    this.#addStaticMesh(new THREE.CylinderGeometry(1.7, 0.65, 0.42, 24), mats.marble, 0, 4.45, 0, true, true);
-    this.#addStaticMesh(new THREE.TorusGeometry(1.7, 0.09, 8, 32), mats.roseGold, 0, 4.66, 0, false, true, Math.PI / 2);
-    this.#addStaticMesh(new THREE.CylinderGeometry(1.5, 1.5, 0.06, 24), mats.water, 0, 4.62, 0, false, false);
-
-    // Pedestal superior y remate de cristal giratorio en Y = 6.2
-    this.#addStaticMesh(new THREE.CylinderGeometry(0.24, 0.36, 1.1, 14), mats.marble, 0, 5.2, 0, true, true);
-    this.#fountainCrystal = this.#addMesh(new THREE.OctahedronGeometry(0.58, 0), mats.crystalFinial, 0, 6.2, 0, false, false);
-    this.#fountainHalo = this.#addMesh(new THREE.TorusGeometry(0.85, 0.055, 8, 28), mats.roseGold, 0, 6.2, 0, false, false);
-
-    // Sistema de 180 gotas en cascada de 3 niveles
-    const dropCount = 180;
-    const pos = new Float32Array(dropCount * 3);
-    this.#dropData = new Float32Array(dropCount * 4);
-    for (let i = 0; i < dropCount; i++) {
-      const tier = i < 44 ? 0 : i < 108 ? 1 : 2;
-      this.#dropData[i * 4] = this.#pseudoRand(i * 3.7 + 1) * Math.PI * 2;
-      this.#dropData[i * 4 + 1] = this.#pseudoRand(i * 7.3 + 2);
-      this.#dropData[i * 4 + 2] = 0.65 + this.#pseudoRand(i * 11.1 + 5) * 0.45;
-      this.#dropData[i * 4 + 3] = tier;
-    }
-    const dropGeo = this.#trackGeo(new THREE.BufferGeometry());
-    dropGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const dropMat = this.#trackMat(
-      new THREE.PointsMaterial({
-        color: 0xdaf6ff,
-        size: 0.22,
-        transparent: true,
-        opacity: 0.84,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      })
-    );
-    this.#fountainDrops = new THREE.Points(dropGeo, dropMat);
-    this.#fountainDrops.matrixAutoUpdate = false;
-    this.#fountainDrops.updateMatrix();
-    this.#root.add(this.#fountainDrops);
   }
 
   #buildSouthMirador(mats) {
@@ -1408,6 +1370,7 @@ export class WorldDecor {
     const haloGeo = new THREE.OctahedronGeometry(0.75, 1);
 
     const postInst = this.#createInstanced(postGeo, mats.roseGold, positions.length, false, false);
+    this.#lanternPositions = positions;
     const baseInst = this.#createInstanced(baseGeo, mats.marble, positions.length, false, true);
     const capInst = this.#createInstanced(capGeo, mats.roseGold, positions.length, false, false);
     const bulbInst = this.#createInstanced(bulbGeo, mats.lantern, positions.length, false, false);
@@ -1758,6 +1721,26 @@ export class WorldDecor {
     return this.#waterSystem;
   }
 
+  getFountainSystem() {
+    return this.#fountainSystem;
+  }
+
+  getFoliageSystem() {
+    return this.#foliageSystem;
+  }
+
+  getLanternPositions() {
+    return this.#lanternPositions;
+  }
+
+  isExcludedZone(x, z, margin = 0.8) {
+    return this.#isExcludedZone(x, z, margin);
+  }
+
+  isNearStonePath(x, z) {
+    return this.#isNearStonePath(x, z);
+  }
+
   applyTheme(theme) {
     if (!theme) return;
     if (this.#lanternMat) {
@@ -1767,68 +1750,32 @@ export class WorldDecor {
       this.#lanternHaloMat.opacity = Math.min(0.42, 0.14 + (theme.lanternIntensity ?? 1) * 0.14);
     }
     this.#waterSystem?.applyTheme?.(theme);
+    this.#fountainSystem?.applyTheme?.(theme);
     this.#flora?.applyTheme?.(theme);
+    this.#foliageSystem?.applyTheme?.(theme);
   }
 
   update(dt) {
     const delta = Math.min(dt, 0.1);
     this.#elapsed += delta;
 
-    // Agua de la Gran Fuente Central y el Abrevadero Real
-    if (this.#waterMat?.map) {
-      this.#waterMat.map.offset.x = (this.#elapsed * 0.045) % 1;
-      this.#waterMat.map.offset.y = (this.#elapsed * 0.03) % 1;
-    }
-
-    // Cristal giratorio del remate de la Gran Fuente Central
-    if (this.#fountainCrystal) {
-      this.#fountainCrystal.rotation.y += delta * 1.15;
-      this.#fountainCrystal.position.y = 6.2 + Math.sin(this.#elapsed * 2.2) * 0.08;
-    }
-    if (this.#fountainHalo) {
-      this.#fountainHalo.rotation.y -= delta * 0.8;
-      this.#fountainHalo.rotation.x = Math.sin(this.#elapsed * 1.1) * 0.35;
-    }
-
-    // Cascada de gotas de 3 niveles en la Gran Fuente Central (GC-Free)
-    if (this.#fountainDrops && this.#dropData) {
-      const pos = this.#fountainDrops.geometry.attributes.position;
-      const count = pos.count;
-      for (let i = 0; i < count; i++) {
-        const angle = this.#dropData[i * 4];
-        const speed = this.#dropData[i * 4 + 2];
-        const tier = this.#dropData[i * 4 + 3];
-        const phase = (this.#dropData[i * 4 + 1] + delta * speed) % 1;
-        this.#dropData[i * 4 + 1] = phase;
-
-        let r;
-        let y;
-        if (tier === 0) {
-          r = 0.15 + phase * 1.25;
-          y = 6.05 + Math.sin(phase * Math.PI) * 0.65 - phase * 1.4;
-        } else if (tier === 1) {
-          r = 1.65 + phase * 1.25;
-          y = 4.62 + Math.sin(phase * Math.PI) * 0.32 - phase * 1.85;
-        } else {
-          r = 3.25 + phase * 1.65;
-          y = 2.8 + Math.sin(phase * Math.PI) * 0.36 - phase * 2.12;
-        }
-
-        pos.setXYZ(i, Math.cos(angle) * r, y, Math.sin(angle) * r);
-      }
-      pos.needsUpdate = true;
-    }
-
     // Actualizar sistemas delegados (GC-Free)
     this.#waterSystem?.update?.(delta, this.#elapsed);
+    this.#fountainSystem?.update?.(delta, this.#elapsed);
     this.#flora?.update?.(delta, this.#elapsed);
+    this.#foliageSystem?.update?.(delta, this.#elapsed);
   }
 
   dispose() {
+    this.#foliageSystem?.dispose?.();
+    this.#foliageSystem = null;
+    this.#fountainSystem?.dispose?.();
+    this.#fountainSystem = null;
     this.#waterSystem?.dispose?.();
     this.#waterSystem = null;
     this.#flora?.dispose?.();
     this.#flora = null;
+    this.#lanternPositions = [];
 
     if (this.#root) {
       this.#scene.remove(this.#root);

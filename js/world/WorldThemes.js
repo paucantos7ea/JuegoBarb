@@ -43,7 +43,9 @@ export class WorldThemes {
       moteColor: 0xffe8a3,
       moteSize: 0.34,
       lanternIntensity: 3.4,
-      crystalEmissive: 1.25
+      crystalEmissive: 1.25,
+      windDir: [0.82, 0.57],
+      windStrength: 0.65
     },
     {
       id: 'palacio_cristal',
@@ -80,7 +82,9 @@ export class WorldThemes {
       moteColor: 0xffe7a8,
       moteSize: 0.28,
       lanternIntensity: 0.9,
-      crystalEmissive: 0.35
+      crystalEmissive: 0.35,
+      windDir: [0.76, 0.65],
+      windStrength: 0.52
     },
     {
       id: 'jardines_perla',
@@ -117,7 +121,9 @@ export class WorldThemes {
       moteColor: 0xffb8df,
       moteSize: 0.32,
       lanternIntensity: 2.1,
-      crystalEmissive: 0.65
+      crystalEmissive: 0.65,
+      windDir: [0.88, 0.47],
+      windStrength: 0.74
     }
   ];
 
@@ -146,6 +152,11 @@ export class WorldThemes {
     if (Array.isArray(theme.moonDir) && theme.moonDir.length === 3) {
       GraphicsSync.uMoonDir.value.set(theme.moonDir[0], theme.moonDir[1], theme.moonDir[2]).normalize();
     }
+
+    if (Array.isArray(theme.windDir) && theme.windDir.length === 2) {
+      GraphicsSync.uWindDir.value.set(theme.windDir[0], theme.windDir[1]).normalize();
+    }
+    GraphicsSync.uWindStrength.value = theme.windStrength ?? 0.65;
 
     if (directionalLight) {
       directionalLight.color.setHex(theme.sunColor ?? 0xdce6ff);

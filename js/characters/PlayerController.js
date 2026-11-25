@@ -340,14 +340,21 @@ export class PlayerController {
 
     // Sombra de contacto pegada al suelo/puente (100% GC-Free)
     if (this.#contactShadow) {
-      const heightAbove = Math.max(0, this.#position.y - groundY);
-      const shadowScale = (mounted ? 1.45 : 1.0) * Math.max(0.45, 1.0 - heightAbove * 0.14);
-      this.#contactShadow.position.set(this.#position.x, groundY + 0.025, this.#position.z);
-      this.#contactShadow.scale.setScalar(shadowScale);
-      this.#contactShadow.material.opacity = 0.48 * Math.max(0.25, 1.0 - heightAbove * 0.22);
+      if (mounted) {
+        this.#contactShadow.visible = false;
+      } else {
+        this.#contactShadow.visible = true;
+        const heightAbove = Math.max(0, this.#position.y - groundY);
+        const shadowScale = Math.max(0.45, 1.0 - heightAbove * 0.14);
+        this.#contactShadow.position.set(this.#position.x, groundY + 0.025, this.#position.z);
+        this.#contactShadow.scale.setScalar(shadowScale);
+        const waterFade = this.#waterPhys.inWater ? 0.32 : 1.0;
+        this.#contactShadow.material.opacity = 0.48 * waterFade * Math.max(0.25, 1.0 - heightAbove * 0.22);
+      }
     }
 
     // Estado de animación y modelo 3D
+    this.#rig.setWading?.(!mounted && this.#waterPhys.inWater);
     const root = this.#rig.getRoot();
     if (mounted) {
       const horseAnim = !this.#isGrounded ? 'jump' : isMoving ? (isSprinting ? 'run' : 'walk') : 'idle';

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Engine } from './core/Engine.js';
+import { Engine, GraphicsSync } from './core/Engine.js';
 import { InputManager } from './core/InputManager.js';
 import { AudioManager } from './core/AudioManager.js';
 import { TextureFactory } from './core/TextureFactory.js';
@@ -143,6 +143,11 @@ class ReinoRosaApp {
     if (this.#inGame) {
       this.#session?.update(dt);
     } else {
+      const actors = GraphicsSync.uGrassActors.value;
+      actors[0].set(0, -100, 0, 0);
+      actors[1].set(0, -100, 0, 0);
+      actors[2].set(0, -100, 0, 0);
+      actors[3].set(0, -100, 0, 0);
       this.#orbitAngle += dt * 0.14;
       const cam = this.#engine.getCamera();
       cam.position.set(

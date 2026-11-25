@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
+import { createContactShadow } from '../core/Engine.js';
 
 const TAU = Math.PI * 2;
 const LABEL_HIDE_SQ = 32 * 32;   // 1024: oculta etiquetas lejanas para mantener limpio el horizonte
@@ -27,6 +28,7 @@ export class NPCManager {
   #scene;
   #textures;
   #collision;
+  #waterSystem = null;
   #npcs = [];
   #positionsView = [];
   #sharedRingGeo = null;
@@ -684,6 +686,10 @@ export class NPCManager {
       // Pose inicial relajada para que luzca natural incluso antes de entrar en radio activo
       rig.update(0.016, 'idle', 0, 1);
 
+      const shadow = createContactShadow(0.68, 0.44);
+      shadow.position.set(startX, startY + 0.025, startZ);
+      this.#scene.add(shadow);
+
       this.#scene.add(root);
 
       const pos = new THREE.Vector3(startX, startY, startZ);
@@ -694,6 +700,7 @@ export class NPCManager {
         def,
         rig,
         root,
+        shadow,
         label,
         ring,
         pos,
@@ -800,13 +807,24 @@ export class NPCManager {
     return 0;
   }
 
+  setWaterSystem(waterSystem) {
+    this.#waterSystem = waterSystem || null;
+  }
+
   #sampleGroundY(x, z, curY, baseY) {
     const analyticY = this.#getAnalyticalGroundY(x, z, baseY);
+    let bestY = analyticY;
     if (this.#collision) {
       const colY = this.#collision.getGroundHeight(x, z, curY, 1.2);
-      return colY > 0 ? colY : analyticY;
+      if (colY > 0) bestY = colY;
     }
-    return analyticY;
+    if (this.#waterSystem) {
+      const bridgeY = this.#waterSystem.getBridgeHeightAt(x, z);
+      if (bridgeY !== null && bridgeY <= curY + 1.2 && bridgeY >= bestY) {
+        bestY = bridgeY;
+      }
+    }
+    return bestY;
   }
 
   #findNearestEntry(playerPos, maxDist = 4.2) {
@@ -962,6 +980,9 @@ export class NPCManager {
       }
 
       npc.root.position.copy(npc.pos);
+      if (npc.shadow) {
+        npc.shadow.position.set(npc.pos.x, npc.pos.y + 0.025, npc.pos.z);
+      }
       const travelYaw = Math.atan2(dirX, dirZ);
       npc.root.rotation.y = stepAngle(npc.root.rotation.y, travelYaw, 5.2, stepDt);
       npc.curSpeed = speed;
@@ -1108,11 +1129,35 @@ export class NPCManager {
     }
   }
 
+  getNearestNpcPosition(refPos, outVec) {
+    if (!refPos || !outVec || this.#npcs.length === 0) return false;
+    let bestDistSq = Infinity;
+    let found = false;
+    for (let i = 0; i < this.#npcs.length; i++) {
+      const p = this.#npcs[i].pos;
+      const dx = p.x - refPos.x;
+      const dy = p.y - refPos.y;
+      const dz = p.z - refPos.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        outVec.copy(p);
+        found = true;
+      }
+    }
+    return found;
+  }
+
   dispose() {
     for (let i = 0; i < this.#npcs.length; i++) {
       const npc = this.#npcs[i];
       npc.label.material.map?.dispose();
       npc.label.material.dispose();
+      if (npc.shadow) {
+        this.#scene.remove(npc.shadow);
+        npc.shadow.material?.dispose();
+        npc.shadow = null;
+      }
       this.#scene.remove(npc.root);
       npc.rig.dispose();
     }

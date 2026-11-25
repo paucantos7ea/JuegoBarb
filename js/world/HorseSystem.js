@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SpringValue } from '../core/SpringValue.js';
+import { GraphicsSync, createContactShadow } from '../core/Engine.js';
 import {
   HORSE_BODY_Y,
   TORSO_Z_MIN,
@@ -931,24 +932,59 @@ function releaseSharedGeometries() {
 // ---------------------------------------------------------------------------
 
 const _matCache = new Map();
+let _horseCoatTex = null;
+
+function getHorseCoatTexture() {
+  if (_horseCoatTex) return _horseCoatTex;
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 160; i++) {
+    const s = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+    const rx = (s - Math.floor(s)) * size;
+    const s2 = Math.sin(i * 39.346 + 11.135) * 43758.5453;
+    const ry = (s2 - Math.floor(s2)) * size;
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(255, 255, 255, 0.14)' : 'rgba(220, 210, 224, 0.12)';
+    ctx.beginPath();
+    ctx.ellipse(rx, ry, 10, 7, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 2);
+  tex.needsUpdate = true;
+  _horseCoatTex = tex;
+  return tex;
+}
 
 function acquireMaterials(variant) {
   let entry = _matCache.get(variant.id);
   if (!entry) {
     const std = (o) => new THREE.MeshStandardMaterial(o);
+    const coatTex = getHorseCoatTexture();
+    const gemMat = std({ color: variant.eye, emissive: variant.eye, emissiveIntensity: 1.45, roughness: 0.16, metalness: 0.25 });
+    gemMat.userData.preserveRoughness = true;
+    const coatMat = std({ map: coatTex, color: variant.coat, roughness: 0.40, metalness: 0.04 });
+    coatMat.userData.preserveRoughness = true;
     entry = {
       refs: 0,
       mats: {
-        coat: std({ color: variant.coat, roughness: 0.55, metalness: 0.03 }),
-        muzzle: std({ color: variant.muzzle, roughness: 0.66, metalness: 0.0 }),
-        mane: std({ color: variant.mane, roughness: 0.46, metalness: 0.06, side: THREE.DoubleSide }),
-        hooves: std({ color: variant.hooves, roughness: 0.24, metalness: 0.42 }),
+        coat: coatMat,
+        muzzle: std({ color: variant.muzzle, roughness: 0.62, metalness: 0.0 }),
+        mane: std({ color: variant.mane, roughness: 0.38, metalness: 0.06, side: THREE.DoubleSide }),
+        hooves: std({ color: variant.hooves, roughness: 0.20, metalness: 0.38 }),
         saddle: std({ color: variant.saddle, roughness: 0.48, metalness: 0.06, side: THREE.DoubleSide }),
         leather: std({ color: variant.leather, roughness: 0.38, metalness: 0.08 }),
-        trim: std({ color: variant.trim, roughness: 0.24, metalness: 0.82 }),
-        gem: std({ color: variant.eye, emissive: variant.eye, emissiveIntensity: 0.55, roughness: 0.16, metalness: 0.25 }),
+        trim: std({ color: variant.trim, roughness: 0.22, metalness: 0.88 }),
+        gem: gemMat,
         eyeWhite: std({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.18, roughness: 0.18 }),
-        iris: std({ color: variant.eye, emissive: variant.eye, emissiveIntensity: 0.30, roughness: 0.15, metalness: 0.08 }),
+        iris: std({ color: variant.eye, emissive: variant.eye, emissiveIntensity: 0.35, roughness: 0.15, metalness: 0.08 }),
         dark: std({ color: 0x18121c, roughness: 0.22, metalness: 0.05 }),
         earInner: std({ color: 0xf6b6c8, roughness: 0.7, metalness: 0.0 })
       }
@@ -1406,9 +1442,17 @@ export function animateHorseModel(model, animState = 'idle', dt = 0.016, speedRa
     const amp = animState === 'idle' ? 0.012 : 0.007;
     b.torso.scale.set(1 + br * amp, 1 + br * amp * 0.65, 1);
 
-    // Cola: cadena de 3 muelles con retardo (latigazo natural)
-    const sway = animState === 'idle' ? Math.sin(a.idleT * 1.3) * 0.12 + Math.sin(a.idleT * 3.1) * 0.03 : 0;
-    const tx1 = TAIL_REST[0] + clamp(a.speed * 0.03, 0, 0.46) + falling * 0.6;
+    // Cola y crin sincronizadas con viento global (GraphicsSync) + movimiento (GC-Free)
+    const yaw = model.root.rotation.y;
+    const sinY = Math.sin(yaw);
+    const cosY = Math.cos(yaw);
+    const wd = GraphicsSync.uWindDir.value;
+    const ws = GraphicsSync.uWindStrength.value;
+    const windSide = (wd.x * cosY - wd.y * sinY) * ws;
+    const windFwd = (wd.x * sinY + wd.y * cosY) * ws;
+
+    const sway = (animState === 'idle' ? Math.sin(a.idleT * 1.3) * 0.12 + Math.sin(a.idleT * 3.1) * 0.03 : 0) + windSide * 0.16;
+    const tx1 = TAIL_REST[0] + clamp(a.speed * 0.03, 0, 0.46) + falling * 0.6 + Math.max(-0.08, -windFwd * 0.12);
     const tz1 = clamp(-a.yawRate * 0.16, -0.4, 0.4) + sway;
     const t1x = a.tail1x.stepClamped(tx1, dt, -0.2, 1.6);
     const t1z = a.tail1z.stepClamped(tz1, dt, -0.6, 0.6);
@@ -1421,9 +1465,9 @@ export function animateHorseModel(model, animState = 'idle', dt = 0.016, speedRa
     b.tail3.rotation.set(t3x, 0, t3z);
 
     // Crin y flequillo (morph targets por mechón): viento, giros y caída de saltos
-    const flowT = clamp(a.speed / 17, 0, 1) * 0.95 + falling * 0.7 + (animState === 'idle' ? 0.05 + Math.sin(a.idleT * 0.7) * 0.04 : 0);
+    const flowT = clamp(a.speed / 17, 0, 1) * 0.95 + falling * 0.7 + ws * 0.14 + (animState === 'idle' ? 0.05 + Math.sin(a.idleT * 0.7) * 0.04 : 0);
     const flow = a.maneFlow.stepClamped(flowT, dt, 0, 1.2);
-    const swayT = clamp(-a.yawRate * 0.35, -1, 1) + (animState === 'run' ? Math.sin(a.phase * TAU) * 0.25 : animState === 'idle' ? sway * 0.8 : 0);
+    const swayT = clamp(-a.yawRate * 0.35 + windSide * 0.25, -1, 1) + (animState === 'run' ? Math.sin(a.phase * TAU) * 0.25 : animState === 'idle' ? sway * 0.8 : 0);
     const mSway = a.maneSway.stepClamped(swayT, dt, -1, 1);
     const mi = model.mane.morphTargetInfluences;
     if (mi) {
@@ -1573,6 +1617,8 @@ export class HorseSystem {
   #scene;
   #collision;
   #audio;
+  #waterSystem = null;
+  #waterSample = { inWater: false, surfaceY: 0, depth: 0, flowX: 0, flowZ: 0, distToBank: 99 };
   #root = null;
   #horses = [];
   #positionsCache = [];
@@ -1584,6 +1630,34 @@ export class HorseSystem {
     this.#scene = scene;
     this.#collision = collisionSystem;
     this.#audio = audioManager;
+  }
+
+  setWaterSystem(waterSystem) {
+    this.#waterSystem = waterSystem || null;
+  }
+
+  /** Escribe en outVec la posición del caballo montado o el libre más cercano (GC-Free). */
+  getNearestHorsePosition(refPos, outVec) {
+    if (!this.#horses.length || !refPos) return false;
+    let best = null;
+    let bestSq = Infinity;
+    for (let i = 0; i < this.#horses.length; i++) {
+      const h = this.#horses[i];
+      if (h.mounted) {
+        outVec.set(h.x, h.y, h.z);
+        return true;
+      }
+      const dx = h.x - refPos.x;
+      const dz = h.z - refPos.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < bestSq) {
+        bestSq = dSq;
+        best = h;
+      }
+    }
+    if (!best) return false;
+    outVec.set(best.x, best.y, best.z);
+    return true;
   }
 
   init() {
@@ -1615,6 +1689,12 @@ export class HorseSystem {
       halo.rotation.x = -Math.PI * 0.5;
       halo.position.y = 0.03;
       model.root.add(halo);
+
+      const shadow = createContactShadow(1.15, 0.46);
+      shadow.position.set(cfg.x, groundY + 0.024, cfg.z);
+      shadow.rotation.y = cfg.yaw;
+      shadow.scale.set(0.76, 1, 1.38);
+      this.#root.add(shadow);
       this.#root.add(model.root);
 
       const horse = {
@@ -1629,6 +1709,7 @@ export class HorseSystem {
         model,
         root: model.root,
         halo,
+        shadow,
         lodFrame: i,
         lodAcc: 0
       };
@@ -1709,6 +1790,27 @@ export class HorseSystem {
     horse.root.position.set(pos.x, pos.y, pos.z);
     horse.root.rotation.y = yaw;
     animateHorseModel(horse.model, animState, dt, speedRatio, true);
+
+    if (horse.shadow) {
+      let groundY = this.#collision?.getGroundHeight?.(pos.x, pos.z, pos.y, 1.15) ?? 0;
+      let inDeepWater = false;
+      if (this.#waterSystem) {
+        const bridgeY = this.#waterSystem.getBridgeHeightAt(pos.x, pos.z);
+        if (bridgeY !== null && bridgeY <= pos.y + 1.15 && bridgeY >= groundY) {
+          groundY = bridgeY;
+        } else {
+          this.#waterSystem.sampleWater(pos.x, pos.z, this.#waterSample);
+          inDeepWater = this.#waterSample.inWater && this.#waterSample.depth > 0.25;
+        }
+      }
+      const heightAbove = Math.max(0, pos.y - groundY);
+      const jumpScale = Math.max(0.45, 1.0 - heightAbove * 0.12);
+      horse.shadow.position.set(pos.x, groundY + 0.024, pos.z);
+      horse.shadow.rotation.y = yaw;
+      horse.shadow.scale.set(0.76 * jumpScale, 1, 1.38 * jumpScale);
+      horse.shadow.material.opacity = inDeepWater ? 0.0 : 0.46 * Math.max(0.22, 1.0 - heightAbove * 0.22);
+    }
+
     return horse.model.mount;
   }
 
@@ -1773,7 +1875,14 @@ export class HorseSystem {
       this.#scene?.remove(this.#root);
       this.#root = null;
     }
-    for (let i = 0; i < this.#horses.length; i++) this.#horses[i].model.dispose();
+    for (let i = 0; i < this.#horses.length; i++) {
+      const h = this.#horses[i];
+      if (h.shadow) {
+        h.shadow.geometry?.dispose();
+        h.shadow.material?.dispose();
+      }
+      h.model.dispose();
+    }
     for (let i = 0; i < this.#haloMats.length; i++) this.#haloMats[i].dispose();
     if (this.#hasSharedRef) {
       releaseSharedGeometries();

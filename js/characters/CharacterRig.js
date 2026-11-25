@@ -13,6 +13,120 @@ const WAIST_Y = 1.04;  // Pivote del vuelo de la falda
 const HAIR_PIVOT = new THREE.Vector3(0, 0.1, -0.06); // Nuca: origen del balanceo del pelo largo
 const _box = new THREE.Box3();
 
+let _silkBrocadeTex = null;
+let _pearlLaceTex = null;
+let _irisDetailTex = null;
+
+function _pseudoRand(seed) {
+  const s = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+function getSilkBrocadeTexture() {
+  if (_silkBrocadeTex) return _silkBrocadeTex;
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+
+  // Seda imperial con trama fina y filigranas de damasco sutiles
+  ctx.strokeStyle = 'rgba(232, 212, 224, 0.38)';
+  ctx.lineWidth = 1.2;
+  for (let y = 0; y < size; y += 16) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(size, y);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(255, 240, 212, 0.42)';
+  ctx.lineWidth = 1.5;
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 4; col++) {
+      const cx = (col + (row % 2) * 0.5) * 64;
+      const cy = row * 64 + 32;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 16, 22, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3, 3);
+  tex.needsUpdate = true;
+  _silkBrocadeTex = tex;
+  return tex;
+}
+
+function getPearlLaceTexture() {
+  if (_pearlLaceTex) return _pearlLaceTex;
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(235, 220, 232, 0.45)';
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < 16; i++) {
+    const pos = i * 16;
+    ctx.beginPath();
+    ctx.moveTo(pos, 0);
+    ctx.lineTo(pos, size);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(pos + 8, (i % 2) * 16 + 120, 10, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(4, 2);
+  tex.needsUpdate = true;
+  _pearlLaceTex = tex;
+  return tex;
+}
+
+function getIrisDetailTexture() {
+  if (_irisDetailTex) return _irisDetailTex;
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const c = size * 0.5;
+  const grad = ctx.createRadialGradient(c, c, 6, c, c, c);
+  grad.addColorStop(0, '#9ad8ff');
+  grad.addColorStop(0.45, '#ffffff');
+  grad.addColorStop(0.85, '#b8d0f5');
+  grad.addColorStop(1, '#5878b8');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2 + _pseudoRand(i) * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(c + Math.cos(a) * 12, c + Math.sin(a) * 12);
+    ctx.lineTo(c + Math.cos(a) * 58, c + Math.sin(a) * 58);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  _irisDetailTex = tex;
+  return tex;
+}
+
 /**
  * Rig 3D estilizado de personaje con esqueleto articulado propio (cadera, columna, cabeza,
  * brazos y piernas), pivotes con física secundaria para falda y pelo largo, y cambio
@@ -295,20 +409,21 @@ export class CharacterRig {
     m.blush = new THREE.MeshBasicMaterial({ color: 0xf498b4, transparent: true, opacity: 0.42, depthWrite: false });
     m.eyelid = new THREE.MeshStandardMaterial({ color: 0xc88a96, roughness: 0.55, metalness: 0.02 });
     m.sclera = new THREE.MeshStandardMaterial({ color: 0xf6f8fc, roughness: 0.22, metalness: 0.02 });
-    m.eyeIris = new THREE.MeshStandardMaterial({ color: 0x2d78e6, roughness: 0.16, metalness: 0.08 });
+    m.eyeIris = new THREE.MeshStandardMaterial({ map: getIrisDetailTexture(), color: 0x2d78e6, roughness: 0.16, metalness: 0.08 });
     m.eyeRing = new THREE.MeshStandardMaterial({ color: 0x164296, roughness: 0.25, metalness: 0.05 });
-    m.eyeGlow = new THREE.MeshStandardMaterial({ color: 0x8ad6ff, emissive: 0x5ab4ff, emissiveIntensity: 0.25, roughness: 0.14 });
+    m.eyeGlow = new THREE.MeshStandardMaterial({ color: 0x8ad6ff, emissive: 0x5ab4ff, emissiveIntensity: 0.35, roughness: 0.14 });
     m.pupil = new THREE.MeshStandardMaterial({ color: 0x100a16, roughness: 0.10, metalness: 0.05 });
     m.catchlight = new THREE.MeshBasicMaterial({ color: 0xffffff });
     m.lash = new THREE.MeshStandardMaterial({ color: 0x1b0f1b, roughness: 0.45, metalness: 0.04 });
     m.brow = new THREE.MeshStandardMaterial({ color: 0x9c743a, roughness: 0.48, metalness: 0.04 });
-    m.lips = new THREE.MeshStandardMaterial({ color: 0xe86a80, roughness: 0.55, metalness: 0.0 });
-    m.hair = new THREE.MeshStandardMaterial({ color: 0xf0c975, roughness: 0.45, metalness: 0.04, side: THREE.DoubleSide });
+    m.lips = new THREE.MeshStandardMaterial({ color: 0xe86a80, roughness: 0.52, metalness: 0.0 });
+    m.hair = new THREE.MeshStandardMaterial({ color: 0xf0c975, roughness: 0.36, metalness: 0.08, side: THREE.DoubleSide });
     m.hair.userData.preserveRoughness = true;
-    m.primary = new THREE.MeshStandardMaterial({ color: 0xf18bb8, roughness: 0.36, metalness: 0.08 });
-    m.secondary = new THREE.MeshStandardMaterial({ color: 0xffdce9, roughness: 0.38, metalness: 0.08, side: THREE.DoubleSide });
-    m.roseGold = new THREE.MeshStandardMaterial({ color: 0xf0be74, metalness: 0.84, roughness: 0.22 });
-    m.crystal = new THREE.MeshStandardMaterial({ color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 0.42, roughness: 0.12, metalness: 0.15 });
+    m.primary = new THREE.MeshStandardMaterial({ map: getSilkBrocadeTexture(), color: 0xf18bb8, roughness: 0.50, metalness: 0.08 });
+    m.secondary = new THREE.MeshStandardMaterial({ map: getPearlLaceTexture(), color: 0xffdce9, roughness: 0.46, metalness: 0.08, side: THREE.DoubleSide });
+    m.roseGold = new THREE.MeshStandardMaterial({ color: 0xf0be74, metalness: 0.88, roughness: 0.22 });
+    m.crystal = new THREE.MeshStandardMaterial({ color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 1.45, roughness: 0.12, metalness: 0.15 });
+    m.crystal.userData.preserveRoughness = true;
     m.shawl = new THREE.MeshStandardMaterial({ color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.18, roughness: 0.14, transparent: true, opacity: 0.52, side: THREE.DoubleSide });
     m.dark = new THREE.MeshStandardMaterial({ color: 0x221520, roughness: 0.30, metalness: 0.28 });
     this.#sharedMats = new Set(Object.values(m));
@@ -329,29 +444,43 @@ export class CharacterRig {
   }
 
   #buildPrincessBody() {
-    const torsoPts = [[0.01, 0.86], [0.14, 0.90], [0.102, 1.05], [0.132, 1.19], [0.152, 1.28], [0.124, 1.36], [0.048, 1.39]];
-    const torso = new THREE.Mesh(this.#track(new THREE.LatheGeometry(torsoPts.map(([x, y]) => new THREE.Vector2(x, y)), 22)), this.#materials.primary);
+    const torsoPts = [[0.01, 0.86], [0.142, 0.90], [0.100, 1.05], [0.134, 1.19], [0.154, 1.28], [0.124, 1.36], [0.048, 1.39]];
+    const torso = new THREE.Mesh(this.#track(new THREE.LatheGeometry(torsoPts.map(([x, y]) => new THREE.Vector2(x, y)), 24)), this.#materials.primary);
     torso.scale.set(1.06, 1, 0.74); torso.castShadow = true;
-    const neck = new THREE.Mesh(this.#track(new THREE.CylinderGeometry(0.042, 0.048, 0.148, 14)), this.#materials.skin);
+    const neckPts = [[0.049, -0.074], [0.044, -0.02], [0.041, 0.04], [0.043, 0.074]];
+    const neck = new THREE.Mesh(this.#track(new THREE.LatheGeometry(neckPts.map(([x, y]) => new THREE.Vector2(x, y)), 16)), this.#materials.skin);
     neck.position.y = 1.41; neck.castShadow = true;
     this.#spineInner.add(torso, neck);
     this.#torso = torso;
 
     this.#leftLeg = new THREE.Group(); this.#rightLeg = new THREE.Group();
     this.#leftLeg.position.set(0.095, 0.92, 0); this.#rightLeg.position.set(-0.095, 0.92, 0);
-    const thighGeo = this.#track(new THREE.CylinderGeometry(0.064, 0.046, 0.44, 14));
-    const shinGeo = this.#track(new THREE.CylinderGeometry(0.045, 0.032, 0.42, 14));
-    const footGeo = this.#track(new THREE.BoxGeometry(0.068, 0.048, 0.165));
-    const heelGeo = this.#track(new THREE.CylinderGeometry(0.014, 0.010, 0.068, 8));
+    // Muslo y pantorrilla esculpidos con LatheGeometry orgánica (longitud exacta: 0.44 y 0.42)
+    const thighPts = [[0.001, -0.44], [0.045, -0.43], [0.052, -0.32], [0.062, -0.18], [0.065, -0.06], [0.056, 0.0], [0.001, 0.0]];
+    const thighGeo = this.#track(new THREE.LatheGeometry(thighPts.map(([x, y]) => new THREE.Vector2(x, y)), 14));
+    const shinPts = [[0.001, -0.42], [0.031, -0.41], [0.035, -0.30], [0.047, -0.16], [0.045, -0.05], [0.043, 0.0], [0.001, 0.0]];
+    const shinGeo = this.#track(new THREE.LatheGeometry(shinPts.map(([x, y]) => new THREE.Vector2(x, y)), 14));
+    const kneeGeo = this.#track(new THREE.SphereGeometry(0.044, 10, 8));
+    // Zapato real esculpido (cápsula estilizada en lugar de BoxGeometry)
+    const footGeo = this.#track(new THREE.CapsuleGeometry(0.034, 0.095, 6, 10));
+    footGeo.rotateX(Math.PI / 2);
+    footGeo.scale(1.0, 0.72, 1.0);
+    const heelGeo = this.#track(new THREE.LatheGeometry([
+      new THREE.Vector2(0.001, -0.034),
+      new THREE.Vector2(0.011, -0.034),
+      new THREE.Vector2(0.014, 0.0),
+      new THREE.Vector2(0.017, 0.034)
+    ], 10));
 
     [this.#leftLeg, this.#rightLeg].forEach((leg, i) => {
-      const thigh = new THREE.Mesh(thighGeo, this.#materials.skin); thigh.position.y = -0.22; thigh.castShadow = true; leg.add(thigh);
+      const thigh = new THREE.Mesh(thighGeo, this.#materials.skin); thigh.castShadow = true; leg.add(thigh);
       const shinGroup = new THREE.Group(); shinGroup.position.y = -0.44;
-      const shin = new THREE.Mesh(shinGeo, this.#materials.skin); shin.position.y = -0.21; shin.castShadow = true; shinGroup.add(shin);
-      const shoe = new THREE.Mesh(footGeo, this.#materials.roseGold); shoe.position.set(0, -0.43, 0.035); shoe.castShadow = true; shinGroup.add(shoe);
-      const heel = new THREE.Mesh(heelGeo, this.#materials.roseGold); heel.position.set(0, -0.45, -0.032); heel.castShadow = false; shinGroup.add(heel);
+      const knee = new THREE.Mesh(kneeGeo, this.#materials.skin); shinGroup.add(knee);
+      const shin = new THREE.Mesh(shinGeo, this.#materials.skin); shin.castShadow = true; shinGroup.add(shin);
+      const shoe = new THREE.Mesh(footGeo, this.#materials.roseGold); shoe.position.set(0, -0.43, 0.036); shoe.castShadow = true; shinGroup.add(shoe);
+      const heel = new THREE.Mesh(heelGeo, this.#materials.roseGold); heel.position.set(0, -0.445, -0.030); heel.castShadow = false; shinGroup.add(heel);
       leg.add(shinGroup); this.#bodyGroup.add(leg);
-      this.#thighMeshes.push(thigh); this.#shinMeshes.push(shin); this.#shoeMeshes.push(shoe);
+      this.#thighMeshes.push(thigh, knee); this.#shinMeshes.push(shin); this.#shoeMeshes.push(shoe);
       if (i === 0) this.#leftShin = shinGroup; else this.#rightShin = shinGroup;
     });
 
@@ -360,9 +489,17 @@ export class CharacterRig {
     const shGeo = this.#track(new THREE.SphereGeometry(0.046, 12, 10));
     const puffGeo = this.#track(new THREE.SphereGeometry(0.080, 16, 12));
     const cuffGeo = this.#track(new THREE.TorusGeometry(0.048, 0.008, 8, 16));
-    const upGeo = this.#track(new THREE.CylinderGeometry(0.038, 0.032, 0.27, 12));
-    const loGeo = this.#track(new THREE.CylinderGeometry(0.031, 0.024, 0.25, 12));
-    const hdGeo = this.#track(new THREE.SphereGeometry(0.032, 10, 10));
+    // Brazo y antebrazo perfilados con LatheGeometry (longitudes 0.27 y 0.25)
+    const upGeo = this.#track(new THREE.LatheGeometry([
+      new THREE.Vector2(0.001, -0.27), new THREE.Vector2(0.031, -0.265), new THREE.Vector2(0.035, -0.14),
+      new THREE.Vector2(0.039, -0.02), new THREE.Vector2(0.001, 0.0)
+    ], 12));
+    const loGeo = this.#track(new THREE.LatheGeometry([
+      new THREE.Vector2(0.001, -0.25), new THREE.Vector2(0.023, -0.245), new THREE.Vector2(0.029, -0.12),
+      new THREE.Vector2(0.032, -0.01), new THREE.Vector2(0.001, 0.0)
+    ], 12));
+    const elbowGeo = this.#track(new THREE.SphereGeometry(0.030, 10, 8));
+    const hdGeo = this.#track(new THREE.CapsuleGeometry(0.024, 0.038, 5, 8));
 
     [this.#leftShoulder, this.#rightShoulder].forEach((arm, i) => {
       const sh = new THREE.Mesh(shGeo, this.#materials.skin); arm.add(sh);
@@ -373,13 +510,14 @@ export class CharacterRig {
       cuff.rotation.x = Math.PI / 2; cuff.position.set(i === 0 ? 0.005 : -0.005, -0.095, 0);
       puffGroup.add(puff, cuff); arm.add(puffGroup); this.#puffSleeves.push(puffGroup);
 
-      const upper = new THREE.Mesh(upGeo, this.#materials.skin); upper.position.y = -0.14; upper.castShadow = true; arm.add(upper);
+      const upper = new THREE.Mesh(upGeo, this.#materials.skin); upper.castShadow = true; arm.add(upper);
       const forearm = new THREE.Group(); forearm.position.y = -0.27;
       forearm.rotation.set(-0.22, 0, i === 0 ? 0.08 : -0.08);
-      const lower = new THREE.Mesh(loGeo, this.#materials.skin); lower.position.y = -0.125; lower.castShadow = true; forearm.add(lower);
-      const hand = new THREE.Mesh(hdGeo, this.#materials.skin); hand.scale.set(0.85, 1.38, 0.62); hand.position.y = -0.265; hand.castShadow = false; forearm.add(hand);
+      const elbow = new THREE.Mesh(elbowGeo, this.#materials.skin); forearm.add(elbow);
+      const lower = new THREE.Mesh(loGeo, this.#materials.skin); lower.castShadow = true; forearm.add(lower);
+      const hand = new THREE.Mesh(hdGeo, this.#materials.skin); hand.scale.set(0.95, 1.0, 0.65); hand.position.y = -0.265; hand.castShadow = false; forearm.add(hand);
       arm.add(forearm); this.#spineInner.add(arm);
-      this.#armMeshes.push(sh, upper, lower);
+      this.#armMeshes.push(sh, upper, elbow, lower);
       if (i === 0) this.#leftForearm = forearm; else this.#rightForearm = forearm;
     });
 
@@ -482,6 +620,9 @@ export class CharacterRig {
     const wideSkirt = ['ballgown', 'tiered_gown'].includes(this.#outfitStyle);
     return wideSkirt ? 0.35 : 0.32;
   }
+
+  /** Activa pasos elevados al vadear en agua somera. */
+  setWading(active) { this.#animator?.setWading?.(active); }
 
   /** Avanza la animación (idle, walk, run, jump, dance, pose, talk, riding) y la física secundaria. */
   update(dt, animState = 'idle', speed = 0, lod = 0) {

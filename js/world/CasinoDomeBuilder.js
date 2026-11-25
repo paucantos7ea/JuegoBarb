@@ -1066,11 +1066,7 @@ export class CasinoDomeBuilder {
     this.#finalizeStaticInstanced(haloInst, false, false);
     group.add(baseInst, postInst, collarInst, bulbInst, capInst, haloInst);
 
-    // 2 fuentes ornamentales flanqueando el paseo en (80, 0, -10.5) y (80, 0, 10.5)
-    for (const fz of [-10.5, 10.5]) {
-      this.#buildOrnamentalFountain(group, buckets, 80.0, 0.0, fz, 2.75, 2.8);
-    }
-
+    // Las 2 fuentes barrocas exteriores del paseo (80, ±10.5) viven ahora en FountainSystem
     group.matrixAutoUpdate = false;
     group.updateMatrix();
     this.#root.add(group);

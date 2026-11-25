@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
+import { createContactShadow } from '../core/Engine.js';
 import { createHorseModel, animateHorseModel, placeRiderOnHorse, updateHorseReins } from '../world/HorseSystem.js';
 import { NameTag, ChatBubble } from './SpeechBubble.js';
 
@@ -47,6 +48,7 @@ export class RemotePlayer {
   #mountAnim = 'idle';
   #horseLodAcc = 0;
   #horseLodFrame = 0;
+  #contactShadow = null;
 
   constructor(scene, peerId, profile = {}, textureFactory = null) {
     this.#scene = scene;
@@ -67,6 +69,10 @@ export class RemotePlayer {
     root.add(this.#nameTag.sprite);
     this.#chatBubble = new ChatBubble({ y: 2.82 });
     root.add(this.#chatBubble.sprite);
+
+    this.#contactShadow = createContactShadow(0.72, 0.46);
+    this.#contactShadow.position.set(this.#currentPos.x, this.#currentPos.y + 0.025, this.#currentPos.z);
+    this.#scene.add(this.#contactShadow);
   }
 
   setProfile(name, rawAppearance) {
@@ -302,6 +308,11 @@ export class RemotePlayer {
       this.#rig.update(dt, this.#animState, 0, lod);
     }
 
+    if (this.#contactShadow) {
+      this.#contactShadow.position.set(this.#currentPos.x, this.#currentPos.y + 0.025, this.#currentPos.z);
+      this.#contactShadow.scale.setScalar(this.#horseModel ? 1.55 : 1.0);
+    }
+
     this.#chatBubble?.update(dt);
   }
 
@@ -312,6 +323,11 @@ export class RemotePlayer {
     this.#nameTag = null;
     this.#chatBubble?.dispose();
     this.#chatBubble = null;
+    if (this.#contactShadow) {
+      this.#scene.remove(this.#contactShadow);
+      this.#contactShadow.material?.dispose();
+      this.#contactShadow = null;
+    }
     if (this.#horseModel) {
       this.#scene.remove(this.#horseModel.root);
       this.#horseModel.dispose();

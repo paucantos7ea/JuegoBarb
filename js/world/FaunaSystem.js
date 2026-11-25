@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getSharedContactShadowTexture } from '../core/Engine.js';
 
 const NEAR_LOD_DIST_SQ = 45 * 45; // 2025: < 45u anima a 60 Hz
 const FAR_LOD_DIST_SQ = 85 * 85;  // 7225: 45-85u a 1/3 fotogramas; > 85u en pausa
@@ -58,12 +59,16 @@ export class FaunaSystem {
   #deerNoseInst = null;
   #deerAntlerInst = null;
   #deerLegInst = null;
+  #deerShadowInst = null;
 
   #bunnies = [];
   #bunnyBodyInst = null;
   #bunnyTailInst = null;
   #bunnyNoseInst = null;
   #bunnyEarInst = null;
+  #bunnyShadowInst = null;
+  #shadowGeo = null;
+  #shadowMat = null;
 
   #squirrels = [];
   #squirrelBodyInst = null;
@@ -92,6 +97,7 @@ export class FaunaSystem {
   #tmpXZ2 = { x: 0, z: 0 };
   #waterSystem = null;
   #buoyOut = { y: 0, pitch: 0, roll: 0 };
+  #waterSample = { inWater: false, surfaceY: 0, depth: 0, flowX: 0, flowZ: 0, distToBank: 99 };
 
   constructor(scene) {
     this.#scene = scene;
@@ -99,6 +105,24 @@ export class FaunaSystem {
 
   setWaterSystem(waterSystem) {
     this.#waterSystem = waterSystem || null;
+  }
+
+  getNearestDeerPosition(refPos, outVec) {
+    if (!refPos || !outVec || this.#deer.length === 0) return false;
+    let bestDistSq = Infinity;
+    let found = false;
+    for (let i = 0; i < this.#deer.length; i++) {
+      const d = this.#deer[i];
+      const dx = d.x - refPos.x;
+      const dz = d.z - refPos.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        outVec.set(d.x, 0, d.z);
+        found = true;
+      }
+    }
+    return found;
   }
 
   init() {
@@ -161,6 +185,27 @@ export class FaunaSystem {
   #trackInst(inst) {
     this.#instancedMeshes.push(inst);
     return inst;
+  }
+
+  #getFaunaShadowAssets() {
+    if (!this.#shadowGeo) {
+      const g = new THREE.PlaneGeometry(1, 1);
+      g.rotateX(-Math.PI / 2);
+      this.#shadowGeo = this.#trackGeo(g);
+    }
+    if (!this.#shadowMat) {
+      this.#shadowMat = this.#trackMat(new THREE.MeshBasicMaterial({
+        map: getSharedContactShadowTexture(),
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.44,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
+      }));
+    }
+    return { geo: this.#shadowGeo, mat: this.#shadowMat };
   }
 
   #mergeGeometries(pieces) {
@@ -1144,10 +1189,13 @@ export class FaunaSystem {
     this.#deerNoseInst = this.#trackInst(new THREE.InstancedMesh(deerNoseGeo, noseMat, count));
     this.#deerAntlerInst = this.#trackInst(new THREE.InstancedMesh(deerAntlerGeo, antlerMat, count));
     this.#deerLegInst = this.#trackInst(new THREE.InstancedMesh(legGeo, coatMat, count * 4));
+    const deerShadowAssets = this.#getFaunaShadowAssets();
+    this.#deerShadowInst = this.#trackInst(new THREE.InstancedMesh(deerShadowAssets.geo, deerShadowAssets.mat, count));
 
     for (const inst of [
       this.#deerTorsoInst, this.#deerTailInst, this.#deerSpotsInst,
-      this.#deerHeadInst, this.#deerNoseInst, this.#deerAntlerInst, this.#deerLegInst
+      this.#deerHeadInst, this.#deerNoseInst, this.#deerAntlerInst, this.#deerLegInst,
+      this.#deerShadowInst
     ]) {
       inst.frustumCulled = false;
       inst.castShadow = inst === this.#deerTorsoInst;
@@ -1241,6 +1289,21 @@ export class FaunaSystem {
       dummy.updateMatrix();
       this.#deerLegInst.setMatrixAt(legBase + l, dummy.matrix);
     }
+
+    if (this.#deerShadowInst) {
+      let shadowScale = s * 1.18;
+      if (this.#waterSystem) {
+        this.#waterSystem.sampleWater(d.x, d.z, this.#waterSample);
+        if (this.#waterSample.inWater && this.#waterSample.depth > 0.25) {
+          shadowScale = 0;
+        }
+      }
+      dummy.position.set(d.x, 0.025, d.z);
+      dummy.rotation.set(0, d.yaw, 0, 'YXZ');
+      dummy.scale.set(shadowScale, 1, shadowScale * 1.25);
+      dummy.updateMatrix();
+      this.#deerShadowInst.setMatrixAt(idx, dummy.matrix);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1304,8 +1367,10 @@ export class FaunaSystem {
     this.#bunnyTailInst = this.#trackInst(new THREE.InstancedMesh(tailGeo, tailMat, count));
     this.#bunnyNoseInst = this.#trackInst(new THREE.InstancedMesh(noseGeo, pinkNoseMat, count));
     this.#bunnyEarInst = this.#trackInst(new THREE.InstancedMesh(earGeo, coatMat, count * 2));
+    const bunnyShadowAssets = this.#getFaunaShadowAssets();
+    this.#bunnyShadowInst = this.#trackInst(new THREE.InstancedMesh(bunnyShadowAssets.geo, bunnyShadowAssets.mat, count));
 
-    for (const inst of [this.#bunnyBodyInst, this.#bunnyTailInst, this.#bunnyNoseInst, this.#bunnyEarInst]) {
+    for (const inst of [this.#bunnyBodyInst, this.#bunnyTailInst, this.#bunnyNoseInst, this.#bunnyEarInst, this.#bunnyShadowInst]) {
       inst.frustumCulled = false;
       inst.castShadow = false;
       inst.receiveShadow = false;
@@ -1373,6 +1438,15 @@ export class FaunaSystem {
     dummy.rotation.set(b.earRX + b.bodyPitch, b.yaw, -0.16, 'YXZ');
     dummy.updateMatrix();
     this.#bunnyEarInst.setMatrixAt(idx * 2 + 1, dummy.matrix);
+
+    if (this.#bunnyShadowInst) {
+      const bunnyScale = Math.max(0.45, 1.0 - b.y * 0.85) * 0.44;
+      dummy.position.set(b.x, 0.022, b.z);
+      dummy.rotation.set(0, b.yaw, 0, 'YXZ');
+      dummy.scale.set(bunnyScale, 1, bunnyScale * 1.15);
+      dummy.updateMatrix();
+      this.#bunnyShadowInst.setMatrixAt(idx, dummy.matrix);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2460,6 +2534,15 @@ export class FaunaSystem {
             d.x += (dx / dist) * step;
             d.z += (dz / dist) * step;
 
+            if (d.rippleCooldown > 0) d.rippleCooldown -= stepDt;
+            if (this.#waterSystem && (!d.rippleCooldown || d.rippleCooldown <= 0)) {
+              this.#waterSystem.sampleWater(d.x, d.z, this.#waterSample);
+              if (this.#waterSample.inWater && this.#waterSample.depth < 0.7) {
+                this.#waterSystem.spawnRipple(d.x, d.z, 0.55);
+                d.rippleCooldown = 0.36;
+              }
+            }
+
             d.neckRotX = THREE.MathUtils.lerp(d.neckRotX, 0.04, Math.min(1, stepDt * 6));
             const gaitFreq = d.state === 'flee' ? 11.5 : 6.2;
             const swing = Math.sin(t * gaitFreq + d.phase) * 0.44;
@@ -2485,6 +2568,7 @@ export class FaunaSystem {
       this.#deerNoseInst.instanceMatrix.needsUpdate = true;
       this.#deerAntlerInst.instanceMatrix.needsUpdate = true;
       this.#deerLegInst.instanceMatrix.needsUpdate = true;
+      if (this.#deerShadowInst) this.#deerShadowInst.instanceMatrix.needsUpdate = true;
     }
 
     // 6. Conejitos pastel (saltitos, orejas vivas y pausa para olfatear)
@@ -2604,6 +2688,7 @@ export class FaunaSystem {
       this.#bunnyTailInst.instanceMatrix.needsUpdate = true;
       this.#bunnyNoseInst.instanceMatrix.needsUpdate = true;
       this.#bunnyEarInst.instanceMatrix.needsUpdate = true;
+      if (this.#bunnyShadowInst) this.#bunnyShadowInst.instanceMatrix.needsUpdate = true;
     }
 
     // 7. Ardillas reales estilizadas (saltitos ágiles y cola esponjosa agitándose rítmicamente)
@@ -2824,10 +2909,14 @@ export class FaunaSystem {
     this.#deerNoseInst = null;
     this.#deerAntlerInst = null;
     this.#deerLegInst = null;
+    this.#deerShadowInst = null;
     this.#bunnyBodyInst = null;
     this.#bunnyTailInst = null;
     this.#bunnyNoseInst = null;
     this.#bunnyEarInst = null;
+    this.#bunnyShadowInst = null;
+    this.#shadowGeo = null;
+    this.#shadowMat = null;
     this.#squirrelBodyInst = null;
     this.#squirrelBellyInst = null;
     this.#squirrelDarkInst = null;

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GraphicsSync } from './Engine.js';
 import { CollisionSystem } from '../world/CollisionSystem.js';
 import { QuestSystem } from '../world/Quests.js';
 import { MinigameManager } from '../world/Minigames.js';
@@ -51,6 +52,7 @@ export class CoopExploreMode {
   #currentHotspot = null;
   #hudRefreshTimer = 0.05;
   #lastZoneName = '';
+  #tmpActorVec = new THREE.Vector3();
 
   #hotspots = [
     { id: 'wardrobe_room', label: 'Usar Vestidor Real', pos: new THREE.Vector3(-22, 1.0, -35), radius: 3.6 },
@@ -114,6 +116,7 @@ export class CoopExploreMode {
     if (waterSys) {
       this.#player.setWaterSystem(waterSys);
       this.#fauna.setWaterSystem?.(waterSys);
+      this.#horses.setWaterSystem?.(waterSys);
     }
 
     // Burbuja de chat 3D sobre la cabeza del jugador local (sprite reutilizado)
@@ -121,6 +124,7 @@ export class CoopExploreMode {
     this.#player.getRig()?.getRoot()?.add(this.#localBubble.sprite);
 
     this.#npcs = new NPCManager(scene, context.textures, this.#collision);
+    if (waterSys) this.#npcs.setWaterSystem?.(waterSys);
     this.#npcs.init();
 
     this.#quests = new QuestSystem(scene, context.audio, (snapshot, msg) => {
@@ -525,6 +529,32 @@ export class CoopExploreMode {
     this.#localBubble?.update(dt);
 
     const pos = this.#player.getPosition();
+    const actors = GraphicsSync.uGrassActors.value;
+    const mountedHorse = this.#player.getMountedHorse?.();
+    actors[0].set(pos.x, pos.y, pos.z, mountedHorse ? 1.35 : 0.90);
+
+    if (mountedHorse) {
+      actors[1].set(pos.x, pos.y, pos.z, 1.35);
+    } else if (this.#horses?.getNearestHorsePosition?.(pos, this.#tmpActorVec)) {
+      actors[1].set(this.#tmpActorVec.x, this.#tmpActorVec.y, this.#tmpActorVec.z, 1.35);
+    } else {
+      actors[1].set(0, -100, 0, 0);
+    }
+
+    if (this.#stateSync?.getNearestRemotePosition?.(pos, this.#tmpActorVec)) {
+      actors[2].set(this.#tmpActorVec.x, this.#tmpActorVec.y, this.#tmpActorVec.z, 0.85);
+    } else if (this.#npcs?.getNearestNpcPosition?.(pos, this.#tmpActorVec)) {
+      actors[2].set(this.#tmpActorVec.x, this.#tmpActorVec.y, this.#tmpActorVec.z, 0.85);
+    } else {
+      actors[2].set(0, -100, 0, 0);
+    }
+
+    if (this.#fauna?.getNearestDeerPosition?.(pos, this.#tmpActorVec)) {
+      actors[3].set(this.#tmpActorVec.x, this.#tmpActorVec.y, this.#tmpActorVec.z, 0.95);
+    } else {
+      actors[3].set(0, -100, 0, 0);
+    }
+
     this.#ctx.engine.updateShadowTarget(pos);
     this.#horses?.update(dt, pos);
     this.#fauna?.update(dt, this.#ctx.engine.getElapsed(), pos, this.#ctx.input.isSprinting());

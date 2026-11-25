@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v18';
-const CACHE_ASSETS = 'reino-rosa-assets-v18';
+const CACHE_STATIC = 'reino-rosa-static-v19';
+const CACHE_ASSETS = 'reino-rosa-assets-v19';
 
 const PRECACHE_URLS = [
   './',
@@ -29,6 +29,8 @@ const PRECACHE_URLS = [
   './js/world/CoinSystem.js',
   './js/world/CollisionSystem.js',
   './js/world/FaunaSystem.js',
+  './js/world/FoliageSystem.js',
+  './js/world/FountainSystem.js',
   './js/world/HorseAnatomy.js',
   './js/world/HorseSystem.js',
   './js/world/Minigames.js',
