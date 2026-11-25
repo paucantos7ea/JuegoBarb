@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v14';
-const CACHE_ASSETS = 'reino-rosa-assets-v14';
+const CACHE_STATIC = 'reino-rosa-static-v15';
+const CACHE_ASSETS = 'reino-rosa-assets-v15';
 
 const PRECACHE_URLS = [
   './',

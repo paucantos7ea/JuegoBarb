@@ -267,13 +267,13 @@ export class CasinoGames {
     canvas.height = H;
     const ctx = canvas.getContext('2d');
     const isRed = suit === '♥' || suit === '♦';
-    const ink = isRed ? '#c2183f' : '#1c1422';
+    const ink = isRed ? '#b3001b' : '#0d0d0d';
     const suitFont = (px) => `${px}px "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", Arial, sans-serif`;
 
     // Marfil cálido + borde dorado sutil (doble filete)
-    ctx.fillStyle = '#fdf8ee';
+    ctx.fillStyle = '#e2dcd0';
     ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = '#d6aa58';
+    ctx.strokeStyle = '#8a6a2a';
     ctx.lineWidth = 6;
     ctx.strokeRect(9, 9, W - 18, H - 18);
     ctx.strokeStyle = 'rgba(214, 170, 88, 0.5)';
@@ -287,14 +287,14 @@ export class CasinoGames {
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(rot);
-      ctx.font = `bold ${rank === '10' ? 50 : 60}px Georgia, "Times New Roman", serif`;
+      ctx.font = `bold ${rank === '10' ? 62 : 74}px Georgia, "Times New Roman", serif`;
       ctx.fillText(rank, 0, 0);
-      ctx.font = suitFont(46);
-      ctx.fillText(suit, 0, 52);
+      ctx.font = 'bold ' + suitFont(56);
+      ctx.fillText(suit, 0, 62);
       ctx.restore();
     };
-    corner(46, 54, 0);
-    corner(W - 46, H - 54, Math.PI);
+    corner(48, 58, 0);
+    corner(W - 48, H - 58, Math.PI);
 
     // Palo grande y nítido en el centro (figuras con corona dorada)
     const face = rank === 'J' || rank === 'Q' || rank === 'K';
@@ -308,9 +308,9 @@ export class CasinoGames {
       ctx.font = suitFont(58);
       ctx.fillText('♛', W / 2, 150);
       ctx.fillStyle = ink;
-      ctx.font = 'bold 74px Georgia, "Times New Roman", serif';
+      ctx.font = 'bold 90px Georgia, "Times New Roman", serif';
       ctx.fillText(rank, W / 2, 222);
-      ctx.font = suitFont(64);
+      ctx.font = 'bold ' + suitFont(78);
       ctx.fillText(suit, W / 2, 290);
     } else {
       if (rank === 'A') {
@@ -320,13 +320,13 @@ export class CasinoGames {
         ctx.arc(W / 2, H / 2, 84, 0, Math.PI * 2);
         ctx.stroke();
       }
-      ctx.font = suitFont(rank === 'A' ? 150 : 132);
+      ctx.font = 'bold ' + suitFont(rank === 'A' ? 180 : 160);
       ctx.fillText(suit, W / 2, H / 2 + 6);
     }
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 8;
+    tex.anisotropy = 4;
     tex.needsUpdate = true;
     return tex;
   }
@@ -903,7 +903,7 @@ export class CasinoGames {
     let entry = this.#cardCache.get(key);
     if (!entry) {
       const texture = this.#createCardFrontTexture(card.suit, card.rank);
-      const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.42, metalness: 0.02 });
+      const material = new THREE.MeshBasicMaterial({ map: texture, color: 0xd8d4cc });
       material.userData.preserveRoughness = true;
       entry = { texture, material };
       this.#cardCache.set(key, entry);
@@ -919,7 +919,7 @@ export class CasinoGames {
       const mesh = new THREE.Mesh(this.#cardGeometry, mats);
       mesh.name = 'BlackjackCard';
       mesh.castShadow = false;
-      mesh.receiveShadow = true;
+      mesh.receiveShadow = false;
       mesh.visible = false;
       this.#cardPool.push({
         mesh,
