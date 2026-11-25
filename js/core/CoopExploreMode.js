@@ -21,7 +21,7 @@ import { DialogueUI } from '../ui/DialogueUI.js';
 export class CoopExploreMode {
   #active = false;
   #ctx = null;
-  #worldId = 'palacio_cristal';
+  #worldId = 'gala_imperial';
   #playerName = 'Estrella Real';
   #collision = null;
   #castle = null;
@@ -64,7 +64,7 @@ export class CoopExploreMode {
 
   async init(context) {
     this.#ctx = context;
-    this.#worldId = context.profile.worldId || 'palacio_cristal';
+    this.#worldId = context.profile.worldId || 'gala_imperial';
     this.#playerName = context.profile.name || 'Estrella Real';
 
     const scene = context.engine.getScene();
@@ -110,6 +110,11 @@ export class CoopExploreMode {
     this.#player = new PlayerController(scene, camera, context.input, this.#collision, context.audio, context.textures);
     this.#player.init(CatalogData.getDefaultAppearance(context.profile.avatarId));
     this.#player.setHorseSystem(this.#horses);
+    const waterSys = this.#decor.getWaterSystem?.();
+    if (waterSys) {
+      this.#player.setWaterSystem(waterSys);
+      this.#fauna.setWaterSystem?.(waterSys);
+    }
 
     // Burbuja de chat 3D sobre la cabeza del jugador local (sprite reutilizado)
     this.#localBubble = new ChatBubble({ y: 2.82 });
@@ -520,6 +525,7 @@ export class CoopExploreMode {
     this.#localBubble?.update(dt);
 
     const pos = this.#player.getPosition();
+    this.#ctx.engine.updateShadowTarget(pos);
     this.#horses?.update(dt, pos);
     this.#fauna?.update(dt, this.#ctx.engine.getElapsed(), pos, this.#ctx.input.isSprinting());
     this.#npcs?.update(dt, pos, Boolean(this.#dialogue?.isOpen()));

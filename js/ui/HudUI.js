@@ -35,7 +35,7 @@ const WORLD_AMBIENCE_OPTIONS = [
   }
 ];
 
-const WORLD_CYCLE_ORDER = ['palacio_cristal', 'jardines_perla', 'gala_imperial'];
+const WORLD_CYCLE_ORDER = ['gala_imperial', 'palacio_cristal', 'jardines_perla'];
 
 export class HudUI {
   #engine = null;
@@ -57,7 +57,7 @@ export class HudUI {
   #qualityPopoverOpen = false;
   #fpsBadgeEl = null;
   #fpsVisible = false;
-  #currentWorldId = 'palacio_cristal';
+  #currentWorldId = 'gala_imperial';
   #worldSwitcherEl = null;
 
   constructor({ engine = null, peerManager, audio, callbacks }) {

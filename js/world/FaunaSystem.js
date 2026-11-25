@@ -90,9 +90,15 @@ export class FaunaSystem {
   #tmpColor = new THREE.Color();
   #tmpXZ = { x: 0, z: 0 };
   #tmpXZ2 = { x: 0, z: 0 };
+  #waterSystem = null;
+  #buoyOut = { y: 0, pitch: 0, roll: 0 };
 
   constructor(scene) {
     this.#scene = scene;
+  }
+
+  setWaterSystem(waterSystem) {
+    this.#waterSystem = waterSystem || null;
   }
 
   init() {
@@ -2132,24 +2138,33 @@ export class FaunaSystem {
       if (dx * dx + dz * dz > 1e-6) {
         s.yaw = Math.atan2(dx, dz);
       }
-      const sy = s.waterY + Math.sin(t * 2.0 + s.phase) * 0.012;
+      let sy = s.waterY + Math.sin(t * 2.0 + s.phase) * 0.012;
+      let pitch = 0;
+      let roll = 0;
+      if (this.#waterSystem) {
+        this.#waterSystem.applyBuoyancy(this.#buoyOut, nx, nz, t, 1.0);
+        sy = this.#buoyOut.y + 0.025;
+        pitch = this.#buoyOut.pitch;
+        roll = this.#buoyOut.roll;
+      }
       const neckX = Math.sin(t * 1.4 + s.phase) * 0.085;
       const neckYaw = s.yaw + Math.cos(t * 0.95 + s.phase) * 0.06;
 
       dummy.position.set(nx, sy, nz);
-      dummy.rotation.set(0, s.yaw, 0, 'YXZ');
+      dummy.rotation.set(pitch, s.yaw, roll, 'YXZ');
       dummy.scale.setScalar(1);
       dummy.updateMatrix();
       this.#swanBodyInst.setMatrixAt(i, dummy.matrix);
 
-      dummy.rotation.set(neckX, neckYaw, 0, 'YXZ');
+      dummy.rotation.set(neckX + pitch * 0.5, neckYaw, roll * 0.5, 'YXZ');
       dummy.updateMatrix();
       this.#swanNeckInst.setMatrixAt(i, dummy.matrix);
       this.#swanBeakInst.setMatrixAt(i, dummy.matrix);
       this.#swanEyeInst.setMatrixAt(i, dummy.matrix);
 
       if (emitWake && !isMidLod) {
-        this.#spawnWake(nx, s.waterY + 0.016, nz, 1.15);
+        this.#spawnWake(nx, sy, nz, 1.15);
+        this.#waterSystem?.spawnRipple?.(nx, nz, 0.36);
       }
       s.lastX = nx;
       s.lastZ = nz;

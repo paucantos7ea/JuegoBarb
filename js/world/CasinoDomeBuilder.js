@@ -952,18 +952,22 @@ export class CasinoDomeBuilder {
     const carpetMat = this.#sharedCarpetMat;
     const buckets = this.#staticBuckets;
 
-    // Calzada de mármol desde X = 42 hasta X = 127 (Z ∈ [-4.4, 4.4], Y = 0.015)
-    this.#addBucketMesh(buckets, new THREE.BoxGeometry(85.0, 0.06, 8.8), roadMat, 84.5, 0.015, 0, false, true);
+    // Calzada de mármol dividida en 2 tramos para respetar el arco hueco del Puente Imperial (X ∈ [92.4, 102.6])
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(50.4, 0.06, 8.8), roadMat, 67.2, 0.015, 0, false, true);
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(24.4, 0.06, 8.8), roadMat, 114.8, 0.015, 0, false, true);
 
-    // Bordillos oro rosa en Z = ±4.45 a lo largo del paseo (X = 42..112)
+    // Bordillos oro rosa en Z = ±4.45 a lo largo del paseo (Oeste 42..92.4, Este 102.6..112)
     for (const sz of [-4.45, 4.45]) {
-      this.#addBucketMesh(buckets, new THREE.BoxGeometry(70.0, 0.08, 0.16), roseGoldMat, 77.0, 0.02, sz, false, true);
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(50.4, 0.08, 0.16), roseGoldMat, 67.2, 0.02, sz, false, true);
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(9.4, 0.08, 0.16), roseGoldMat, 107.3, 0.02, sz, false, true);
     }
 
-    // Alfombra real central rosa/burdeos en Z ∈ [-1.6, 1.6] a Y = 0.05 (X = 42..121.6)
-    this.#addBucketMesh(buckets, new THREE.BoxGeometry(79.6, 0.018, 3.2), carpetMat, 81.8, 0.05, 0, false, true);
+    // Alfombra real central rosa/burdeos en Z ∈ [-1.6, 1.6] a Y = 0.05 (Oeste 42..92.4, Este 102.6..121.6)
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(50.4, 0.018, 3.2), carpetMat, 67.2, 0.05, 0, false, true);
+    this.#addBucketMesh(buckets, new THREE.BoxGeometry(19.0, 0.018, 3.2), carpetMat, 112.1, 0.05, 0, false, true);
     for (const tz of [-1.63, 1.63]) {
-      this.#addBucketMesh(buckets, new THREE.BoxGeometry(79.6, 0.02, 0.08), roseGoldMat, 81.8, 0.052, tz, false, true);
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(50.4, 0.02, 0.08), roseGoldMat, 67.2, 0.052, tz, false, true);
+      this.#addBucketMesh(buckets, new THREE.BoxGeometry(19.0, 0.02, 0.08), roseGoldMat, 112.1, 0.052, tz, false, true);
     }
 
     // Explanada de llegada X ∈ [112, 130], Z ∈ [-15, 15] (recibe al jugador y deja sitio a los caballos)

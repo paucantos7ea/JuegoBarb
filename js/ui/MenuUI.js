@@ -23,7 +23,7 @@ export class MenuUI {
 
   #overlayEl;
   #selectedAvatar = 'aurora';
-  #selectedWorld = 'palacio_cristal';
+  #selectedWorld = 'gala_imperial';
   #defaultName = 'Princesa';
   #multiplayerUI = null;
   #cleanups = [];

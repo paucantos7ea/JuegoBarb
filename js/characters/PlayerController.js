@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
+import { createContactShadow } from '../core/Engine.js';
 
 export class PlayerController {
   #scene;
@@ -9,12 +10,15 @@ export class PlayerController {
   #audio;
   #textures;
   #rig = null;
+  #contactShadow = null;
+  #waterSystem = null;
+  #waterPhys = { inWater: false, speedScale: 1.0, pushX: 0, pushZ: 0, surfaceY: 0 };
   #position = new THREE.Vector3(0, 0, 15);
   #velocityY = 0;
   #isGrounded = true;
   #facingYaw = Math.PI; // Mirando hacia -Z (Castillo)
   #cameraYaw = 0;
-  #cameraPitch = 0.34;
+  #cameraPitch = -0.09;
   #cameraDistance = 7.8;
   #animState = 'idle';
   #externalControl = false;
@@ -48,6 +52,10 @@ export class PlayerController {
     root.rotation.y = this.#facingYaw;
     this.#scene.add(root);
 
+    this.#contactShadow = createContactShadow(0.72, 0.48);
+    this.#contactShadow.position.set(this.#position.x, 0.025, this.#position.z);
+    this.#scene.add(this.#contactShadow);
+
     this.#unsubJump = this.#input.onAction('jump', () => {
       if (!this.#externalControl && this.#isGrounded) {
         if (this.#mountedHorse) {
@@ -65,6 +73,10 @@ export class PlayerController {
 
   setHorseSystem(horseSystem) {
     this.#horseSystem = horseSystem || null;
+  }
+
+  setWaterSystem(waterSystem) {
+    this.#waterSystem = waterSystem || null;
   }
 
   isMounted() {
@@ -196,19 +208,26 @@ export class PlayerController {
 
   /** Calcula la posición y punto de mira deseados de la cámara en tercera persona. */
   getThirdPersonCameraPose(outPos, outLookAt) {
-    const groundY = this.#collision.getGroundHeight(this.#position.x, this.#position.z, this.#position.y, 1.15);
+    let groundY = this.#collision.getGroundHeight(this.#position.x, this.#position.z, this.#position.y, 1.15);
+    if (this.#waterSystem) {
+      const bridgeY = this.#waterSystem.getBridgeHeightAt(this.#position.x, this.#position.z);
+      if (bridgeY !== null && bridgeY <= this.#position.y + 1.15 && bridgeY > groundY) {
+        groundY = bridgeY;
+      }
+    }
     const targetX = this.#position.x;
-    const targetY = this.#position.y + 1.55 + this.#camHeightExtra;
+    const targetY = this.#position.y + 1.85 + this.#camHeightExtra;
     const targetZ = this.#position.z;
 
     const camDist = this.#cameraDistance + this.#camDistExtra;
     const horizDist = Math.cos(this.#cameraPitch) * camDist;
     const camX = targetX + Math.sin(this.#cameraYaw) * horizDist;
-    const camY = Math.max(groundY + 0.65, targetY + Math.sin(this.#cameraPitch) * camDist);
+    const camY = Math.max(groundY + 0.85, targetY + Math.sin(this.#cameraPitch) * camDist);
     const camZ = targetZ + Math.cos(this.#cameraYaw) * horizDist;
+    const lookUpBoost = Math.max(0, -this.#cameraPitch) * 3.2;
 
     outPos.set(camX, camY, camZ);
-    outLookAt.set(targetX, targetY, targetZ);
+    outLookAt.set(targetX, targetY + lookUpBoost, targetZ);
   }
 
   update(dt) {
@@ -228,7 +247,7 @@ export class PlayerController {
     const pitchSens = look.pointerLocked ? 0.0022 : 0.004;
     this.#cameraYaw -= look.x * yawSens;
     this.#cameraYaw += this.#input.getCameraKeyTurn() * dt * 2.1;
-    this.#cameraPitch = Math.max(0.08, Math.min(1.12, this.#cameraPitch + look.y * pitchSens));
+    this.#cameraPitch = Math.max(-0.40, Math.min(1.12, this.#cameraPitch + look.y * pitchSens));
     this.#cameraDistance = Math.max(4.4, Math.min(13.5, this.#cameraDistance + look.zoom));
 
     // Suavizado de distancia y altura extra de cámara al montar
@@ -236,12 +255,23 @@ export class PlayerController {
     this.#camDistExtra += ((this.#mountedHorse ? 2.6 : 0) - this.#camDistExtra) * camAlpha;
     this.#camHeightExtra += ((this.#mountedHorse ? 0.72 : 0) - this.#camHeightExtra) * camAlpha;
 
-    // Movimiento relativo a la cámara
+    // Movimiento relativo a la cámara + física del agua
     const mounted = Boolean(this.#mountedHorse);
     const move = this.#input.getMoveVector();
     const isMoving = move.x !== 0 || move.z !== 0;
     const isSprinting = this.#input.isSprinting();
-    const speed = mounted ? (isSprinting ? 18.5 : 11.5) : (isSprinting ? 10.6 : 6.4);
+    const baseSpeed = mounted ? (isSprinting ? 18.5 : 11.5) : (isSprinting ? 10.6 : 6.4);
+
+    if (this.#waterSystem) {
+      this.#waterSystem.applyPlayerWaterPhysics(this.#position, isMoving, mounted, dt, this.#waterPhys);
+    } else {
+      this.#waterPhys.inWater = false;
+      this.#waterPhys.speedScale = 1.0;
+      this.#waterPhys.pushX = 0;
+      this.#waterPhys.pushZ = 0;
+    }
+
+    const speed = baseSpeed * this.#waterPhys.speedScale;
 
     if (isMoving) {
       const len = Math.hypot(move.x, move.z) || 1;
@@ -266,6 +296,11 @@ export class PlayerController {
       this.#facingYaw += diff * Math.min(1, dt * (mounted ? 7.5 : 12));
     }
 
+    if (this.#waterPhys.inWater) {
+      this.#position.x += this.#waterPhys.pushX;
+      this.#position.z += this.#waterPhys.pushZ;
+    }
+
     // Colisiones horizontales
     if (mounted) {
       this.#collision.resolveHorizontal(this.#position, 0.68, 2.1);
@@ -273,8 +308,20 @@ export class PlayerController {
       this.#collision.resolveHorizontal(this.#position, 0.42, 1.75);
     }
 
-    // Física vertical + escaleras/suelos
-    const groundY = this.#collision.getGroundHeight(this.#position.x, this.#position.z, this.#position.y, 1.15);
+    // Física vertical + escaleras/suelos + puentes barrocos exactos
+    let groundY = this.#collision.getGroundHeight(this.#position.x, this.#position.z, this.#position.y, 1.15);
+    let onBridge = false;
+    if (this.#waterSystem) {
+      const bridgeY = this.#waterSystem.getBridgeHeightAt(this.#position.x, this.#position.z);
+      if (bridgeY !== null && bridgeY <= this.#position.y + 1.15 && bridgeY >= groundY) {
+        groundY = bridgeY;
+        onBridge = true;
+      }
+    }
+    if (this.#waterPhys.inWater && !onBridge && groundY <= 0.001) {
+      groundY = -0.18;
+    }
+
     this.#velocityY -= 19.5 * dt;
     this.#position.y += this.#velocityY * dt;
 
@@ -283,12 +330,21 @@ export class PlayerController {
       this.#velocityY = 0;
       this.#isGrounded = true;
     } else if (this.#position.y - groundY < 0.24 && this.#velocityY <= 0) {
-      // Pegado suave al bajar escaleras
+      // Pegado suave al bajar escaleras o arco de puente
       this.#position.y = groundY;
       this.#velocityY = 0;
       this.#isGrounded = true;
     } else {
       this.#isGrounded = false;
+    }
+
+    // Sombra de contacto pegada al suelo/puente (100% GC-Free)
+    if (this.#contactShadow) {
+      const heightAbove = Math.max(0, this.#position.y - groundY);
+      const shadowScale = (mounted ? 1.45 : 1.0) * Math.max(0.45, 1.0 - heightAbove * 0.14);
+      this.#contactShadow.position.set(this.#position.x, groundY + 0.025, this.#position.z);
+      this.#contactShadow.scale.setScalar(shadowScale);
+      this.#contactShadow.material.opacity = 0.48 * Math.max(0.25, 1.0 - heightAbove * 0.22);
     }
 
     // Estado de animación y modelo 3D
@@ -340,9 +396,16 @@ export class PlayerController {
   dispose() {
     this.#mountedHorse = null;
     this.#horseSystem = null;
+    this.#waterSystem = null;
     if (this.#unsubJump) {
       this.#unsubJump();
       this.#unsubJump = null;
+    }
+    if (this.#contactShadow) {
+      this.#scene.remove(this.#contactShadow);
+      this.#contactShadow.geometry?.dispose();
+      this.#contactShadow.material?.dispose();
+      this.#contactShadow = null;
     }
     if (this.#rig) {
       this.#scene.remove(this.#rig.getRoot());

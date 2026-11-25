@@ -1,25 +1,29 @@
 import * as THREE from 'three';
+import { GraphicsSync } from '../core/Engine.js';
 
-const BASE_RADIUS = 200;
-const DISTANT_STAR_COUNT = 2500;
-const BRIGHT_STAR_COUNT = 350;
-const SHOOTING_POOL_SIZE = 3;
+const SKY_RADIUS = 480;
+const STAR_RADIUS = 455;
+const CONSTELLATION_RADIUS = 450;
+const SHOOTING_RADIUS = 430;
+const MOON_DIST = 410;
+const STAR_COUNT = 3200;
+const SHOOTING_POOL_SIZE = 4;
 const RIBBON_SEGMENTS = 16;
 
 const STAR_PALETTE = [
-  [1.0, 1.0, 1.0],       // Blanco diamante (#ffffff)
-  [0.749, 0.902, 1.0],   // Azul hielo (#bfe6ff)
-  [1.0, 0.902, 0.659],   // Dorado cálido (#ffe6a8)
-  [1.0, 0.820, 0.918]    // Rosa pálido (#ffd1ea)
+  [1.0, 1.0, 1.0],         // Blanco diamante (#ffffff)
+  [0.659, 0.831, 1.0],     // Azul zafiro (#a8d4ff)
+  [1.0, 0.902, 0.690],     // Oro champán (#ffe6b0)
+  [1.0, 0.761, 0.886]      // Rosa estrella (#ffc2e2)
 ];
 
 const QUALITY_STAR_COUNTS = {
-  low: 1650,
-  medium: 2200,
-  high: DISTANT_STAR_COUNT
+  low: 1800,
+  medium: 2600,
+  high: STAR_COUNT
 };
 
-// Semilla determinista Mulberry32 para que todos los jugadores vean el mismo firmamento
+// Semilla determinista Mulberry32 para que todos los jugadores compartan el mismo cielo
 function createSeededRandom(seed = 0x524f5341) {
   let s = seed >>> 0;
   return () => {
@@ -35,50 +39,44 @@ function smoothstepJS(edge0, edge1, x) {
   return t * t * (3 - 2 * t);
 }
 
-// Conversión aproximada sRGB -> Linear para atributos de color en shaders
 function srgbToLinear(c) {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
 /**
- * Sistema de bóveda celeste animada ("Noche Estrellada - Gala Imperial").
- * Incluye SkyDome con Vía Láctea pastel, Luna Creciente Imperial con halo,
- * 3 capas de estrellas GPU (lejanas, brillantes en cruz y 3 constelaciones reales)
- * y pool GC-Free de 3 estrellas fugaces.
+ * Bóveda celeste nocturna cinematográfica:
+ * - SkyDome GLSL de 4 paradas + scattering Mie lunar + Vía Láctea FBM 4 octavas + nubes cirrus + IGN dithering.
+ * - Luna Creciente SDF monumental (410 u, plano 155x155) con mares lunares, luz cenicienta y corona multicapa.
+ * - Campo estelar GPU (3.200 estrellas con picos en cruz para estrellas héroe) + 3 constelaciones reales.
+ * - Pool GC-Free de 4 estrellas fugaces.
  */
 export class StarrySkySystem {
   #scene;
-  #quality = 'medium';
+  #quality = 'high';
   #pixelRatio = 1;
   #root = null;
   #celestialSpinner = null;
   #skyDome = null;
   #moonGroup = null;
-  #moonMesh = null;
-  #moonHalo = null;
-  #moonTex = null;
-  #haloTex = null;
-  #distantStars = null;
-  #brightStars = null;
+  #moonDiscMesh = null;
+  #moonCoronaMesh = null;
+  #starsPoints = null;
   #constellationStars = null;
   #constellationLines = null;
   #shootingRibbonGeo = null;
   #shootingPool = [];
 
   #elapsed = 0;
-  #starsOpacity = 0;
-  #moonOpacity = 0;
-  #nightMix = 0;
-  #lastCameraScale = -1;
-  #shootingCooldown = 5.2;
+  #starsOpacity = 1.0;
+  #moonOpacity = 1.0;
+  #nightMix = 1.0;
+  #shootingCooldown = 3.8;
 
-  // Vectores preasignados (GC-Free absoluto en update/render)
-  #moonDir = new THREE.Vector3(0.556, 0.742, -0.451).normalize();
-  #defaultTwilightMoonDir = new THREE.Vector3(0.556, 0.725, -0.451).normalize();
+  // Scratchpads preasignados (100% GC-Free)
   #tmpMoonPos = new THREE.Vector3();
   #tmpOrigin = new THREE.Vector3(0, 0, 0);
 
-  constructor(scene, { quality = 'medium', pixelRatio = 1 } = {}) {
+  constructor(scene, { quality = 'high', pixelRatio = 1 } = {}) {
     this.#scene = scene;
     this.#quality = quality;
     this.#pixelRatio = pixelRatio;
@@ -93,8 +91,8 @@ export class StarrySkySystem {
     this.#celestialSpinner.frustumCulled = false;
 
     this.#buildSkyDome();
-    this.#buildMoon();
-    this.#buildStarLayers();
+    this.#buildCrescentMoon();
+    this.#buildStarfield();
     this.#buildConstellations();
     this.#buildShootingStarPool();
 
@@ -102,39 +100,50 @@ export class StarrySkySystem {
     this.#scene.add(this.#root);
 
     this.setQuality(this.#quality, this.#pixelRatio);
+    this.#updateMoonPlacement();
     this.#syncVisibility();
   }
 
   #buildSkyDome() {
-    const geo = new THREE.SphereGeometry(BASE_RADIUS, 36, 24);
+    const geo = new THREE.SphereGeometry(SKY_RADIUS, 48, 32);
     const mat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
+      depthTest: true,
       fog: false,
       uniforms: {
-        uTopColor: { value: new THREE.Color(0x7cb2f8) },
-        uMidColor: { value: new THREE.Color(0xffd2e5) },
-        uBottomColor: { value: new THREE.Color(0xfff3d8) },
-        uNightMix: { value: 0.0 },
-        uTime: { value: 0.0 },
+        uTime: GraphicsSync.uTime,
+        uMoonDir: GraphicsSync.uMoonDir,
+        uMoonColor: GraphicsSync.uMoonColor,
+        uSkyZenith: GraphicsSync.uSkyZenith,
+        uSkyMid: GraphicsSync.uSkyMid,
+        uSkyHorizon: GraphicsSync.uSkyHorizon,
+        uNightFactor: GraphicsSync.uNightFactor,
+        uSkyMidHigh: { value: new THREE.Color(0x171042) },
+        uMoonOpacity: { value: 1.0 },
         uSpinYaw: { value: 0.0 }
       },
       vertexShader: /* glsl */ `
-        varying vec3 vLocalPos;
+        varying vec3 vWorldDir;
         void main() {
-          vLocalPos = position;
+          vWorldDir = normalize(position);
           vec4 wp = modelMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * viewMatrix * wp;
         }
       `,
       fragmentShader: /* glsl */ `
-        uniform vec3 uTopColor;
-        uniform vec3 uMidColor;
-        uniform vec3 uBottomColor;
-        uniform float uNightMix;
         uniform float uTime;
+        uniform vec3 uMoonDir;
+        uniform vec3 uMoonColor;
+        uniform vec3 uSkyZenith;
+        uniform vec3 uSkyMid;
+        uniform vec3 uSkyHorizon;
+        uniform vec3 uSkyMidHigh;
+        uniform float uNightFactor;
+        uniform float uMoonOpacity;
         uniform float uSpinYaw;
-        varying vec3 vLocalPos;
+
+        varying vec3 vWorldDir;
 
         float hash31(vec3 p) {
           p = fract(p * 0.1031);
@@ -161,59 +170,118 @@ export class StarrySkySystem {
           );
         }
 
-        float fbm3(vec3 p) {
-          float v = 0.52 * noise3(p);
-          p = p * 2.07 + vec3(11.3, 5.7, -8.1);
-          v += 0.31 * noise3(p);
-          p = p * 2.03 + vec3(-4.9, 13.1, 7.4);
-          v += 0.17 * noise3(p);
-          return v;
+        // FBM 3D de 4 octavas con índice constante
+        float fbm4(vec3 p) {
+          float sum = 0.0;
+          float amp = 0.5;
+          for (int i = 0; i < 4; i++) {
+            sum += amp * noise3(p);
+            p = p * 2.03 + vec3(11.3, 5.7, -8.1);
+            amp *= 0.5;
+          }
+          return sum;
+        }
+
+        float hash21(vec2 p) {
+          p = fract(p * vec2(123.34, 456.21));
+          p += dot(p, p + 45.32);
+          return fract(p.x * p.y);
+        }
+
+        float noise2(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          float a = hash21(i);
+          float b = hash21(i + vec2(1.0, 0.0));
+          float c = hash21(i + vec2(0.0, 1.0));
+          float d = hash21(i + vec2(1.0, 1.0));
+          return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        }
+
+        float fbm2(vec2 p) {
+          float sum = 0.0;
+          float amp = 0.5;
+          for (int i = 0; i < 4; i++) {
+            sum += amp * noise2(p);
+            p = p * 2.05 + vec2(7.3, -4.1);
+            amp *= 0.5;
+          }
+          return sum;
+        }
+
+        // Interleaved Gradient Noise para anti-banding de 8 bits
+        float ign(vec2 xy) {
+          return fract(52.9829189 * fract(dot(xy, vec2(0.06711056, 0.00583715))));
         }
 
         void main() {
-          vec3 dir = normalize(vLocalPos);
-          float h = dir.y;
+          vec3 dir = normalize(vWorldDir);
+          float h = clamp(dir.y, 0.0, 1.0);
 
-          vec3 col = mix(uBottomColor, uMidColor, smoothstep(-0.08, 0.28, h));
-          col = mix(col, uTopColor, smoothstep(0.22, 0.88, h));
+          // 1. Degradado Atmosférico Imperial de 4 Paradas
+          vec3 horizonWarm = uSkyHorizon + vec3(0.055, 0.028, 0.014) * exp(-h * 22.0) * uNightFactor;
+          vec3 col = mix(horizonWarm, uSkyMid, smoothstep(0.0, 0.18, h));
+          col = mix(col, uSkyMidHigh, smoothstep(0.18, 0.48, h));
+          col = mix(col, uSkyZenith, smoothstep(0.48, 0.92, h));
 
-          if (uNightMix > 0.005) {
+          // Oscurecimiento suave bajo la línea de horizonte
+          float below = clamp(-dir.y, 0.0, 1.0);
+          col = mix(col, uSkyZenith * 0.45, smoothstep(0.0, 0.25, below));
+
+          // 2. Scattering Atmosférico (Mie) alrededor de la Luna
+          float moonDot = max(dot(dir, normalize(uMoonDir)), 0.0);
+          vec3 moonGlowColor = mix(vec3(0.55, 0.34, 0.72), uMoonColor, 0.48);
+          float moonScatter = (pow(moonDot, 8.0) * 0.28 * length(moonGlowColor) * 0.58)
+            + pow(moonDot, 64.0) * 0.45;
+          col += (pow(moonDot, 8.0) * 0.28 * moonGlowColor + pow(moonDot, 64.0) * 0.45 * vec3(1.0, 0.95, 0.85))
+            * max(uMoonOpacity, uNightFactor * 0.65);
+
+          // 3. Vía Láctea y Nebulosa Pastel Procedural (GLSL FBM 4 octavas)
+          if (uNightFactor > 0.005) {
             float cy = cos(uSpinYaw);
             float sy = sin(uSpinYaw);
             vec3 skyDir = vec3(dir.x * cy - dir.z * sy, dir.y, dir.x * sy + dir.z * cy);
 
-            // Plano inclinado de la Vía Láctea Imperial cruzando el arco celeste
-            vec3 galNormal = normalize(vec3(0.41, 0.38, -0.829));
-            float galDist = dot(skyDir, galNormal);
+            // Inclinación galáctica ~38° cruzando en diagonal tras Luna y Palacio
+            mat3 galTilt = mat3(
+              0.788, -0.456, 0.413,
+              0.616,  0.583, -0.529,
+              0.000,  0.672, 0.741
+            );
+            vec3 gDir = normalize(galTilt * skyDir);
 
-            float n1 = fbm3(skyDir * 2.75 + vec3(0.0, uTime * 0.0025, 0.0));
-            float n2 = fbm3(skyDir * 5.6 - vec3(n1 * 0.75));
-            float warpedDist = galDist + (n1 - 0.5) * 0.16;
+            float band = exp(-abs(gDir.y) * 5.2) * smoothstep(0.02, 0.25, h);
+            float nMain = fbm4(gDir * 3.5);
+            float dustRift = smoothstep(0.35, 0.65, fbm4(gDir * 7.5 + vec3(4.2)));
+            float fineDetail = fbm4(gDir * 6.2 - vec3(nMain * 0.9));
 
-            float mainBand = exp(-warpedDist * warpedDist * 13.5);
-            float wideVeil = exp(-warpedDist * warpedDist * 4.2) * 0.42;
-            float dustRift = smoothstep(0.42, 0.76, n2) * exp(-warpedDist * warpedDist * 52.0);
-            float horizonFade = smoothstep(0.02, 0.30, h);
+            vec3 nebPink = vec3(0.878, 0.416, 0.698);     // #e06ab2 magenta-rosa pastel
+            vec3 nebCyan = vec3(0.408, 0.690, 1.000);     // #68b0ff cian etéreo
+            vec3 nebLav  = vec3(0.557, 0.420, 1.000);     // #8e6bff lavanda
 
-            // Tonos lavanda real, rosa pálido y polvo estelar azulado (en espacio lineal suave)
-            vec3 lavenderCol = vec3(0.058, 0.036, 0.135);
-            vec3 roseNebulaCol = vec3(0.098, 0.034, 0.086);
-            vec3 stardustBlueCol = vec3(0.042, 0.068, 0.148);
+            vec3 nebCol = mix(nebLav, nebPink, smoothstep(0.28, 0.70, nMain));
+            nebCol = mix(nebCol, nebCyan, smoothstep(0.45, 0.82, fineDetail) * 0.55);
 
-            vec3 nebCol = mix(lavenderCol, roseNebulaCol, smoothstep(0.28, 0.72, n1));
-            nebCol = mix(nebCol, stardustBlueCol, smoothstep(0.42, 0.85, n2) * 0.68);
-
-            float bandIntensity = (mainBand * (0.52 + 0.68 * n1) + wideVeil * n2) * (1.0 - 0.40 * dustRift);
-            col += nebCol * bandIntensity * horizonFade * uNightMix;
-
-            // Resplandor sedoso rosado-dorado junto al horizonte nocturno
-            float horizonGlow = exp(-max(0.0, h + 0.02) * 8.5) * smoothstep(-0.18, 0.02, h);
-            col += vec3(0.055, 0.024, 0.048) * horizonGlow * uNightMix;
+            float riftMask = 1.0 - dustRift * 0.62 * exp(-abs(gDir.y) * 9.0);
+            float nebStrength = band * (0.28 + 0.72 * smoothstep(0.22, 0.78, nMain)) * riftMask;
+            col += nebCol * nebStrength * 0.22 * uNightFactor;
           }
 
-          // Micro-dithering sutil para evitar bandas de color de 8 bits en el cielo nocturno
-          float dither = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
-          col = max(vec3(0.0), col + dither);
+          // 4. Nubes Cirrus Nocturnas Sutiles con silver lining lunar
+          if (dir.y > 0.01) {
+            vec2 cloudUV = dir.xz / (dir.y + 0.18) * 0.85 + vec2(uTime * 0.004, uTime * 0.002);
+            float c1 = fbm2(cloudUV * 1.45);
+            float c2 = fbm2(cloudUV * 2.9 - vec2(c1 * 0.55));
+            float cirrus = smoothstep(0.48, 0.82, c1 * 0.65 + c2 * 0.35) * smoothstep(0.02, 0.24, dir.y);
+            float silverLining = pow(moonDot, 4.0);
+            vec3 cloudTint = mix(vec3(0.11, 0.07, 0.20), vec3(0.85, 0.76, 0.96), silverLining * 0.78);
+            cloudTint = mix(vec3(0.88, 0.74, 0.86), cloudTint, uNightFactor);
+            col = mix(col, col + cloudTint * (0.14 + 0.26 * silverLining), cirrus * 0.55);
+          }
+
+          // 5. Anti-Banding Dithering (IGN)
+          col = max(vec3(0.0), col + (ign(gl_FragCoord.xy) - 0.5) / 255.0);
 
           gl_FragColor = vec4(col, 1.0);
           #include <tonemapping_fragment>
@@ -225,225 +293,203 @@ export class StarrySkySystem {
 
     this.#skyDome = new THREE.Mesh(geo, mat);
     this.#skyDome.frustumCulled = false;
-    this.#skyDome.renderOrder = -100;
+    this.#skyDome.renderOrder = -1000;
     this.#root.add(this.#skyDome);
   }
 
-  #createMoonCrescentTexture() {
-    const size = 256;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(size, size);
-    const data = img.data;
-
-    const cx = 128;
-    const cy = 128;
-    const outerR = 84;
-    // Círculo de sombra desplazado arriba-izquierda para esculpir una creciente elegante
-    const sx = cx - 29;
-    const sy = cy - 18;
-    const shadowR = 76.5;
-
-    for (let y = 0; y < size; y++) {
-      const dy = y + 0.5 - cy;
-      const sdy = y + 0.5 - sy;
-      for (let x = 0; x < size; x++) {
-        const dx = x + 0.5 - cx;
-        const sdx = x + 0.5 - sx;
-
-        const distOuter = Math.hypot(dx, dy);
-        const distShadow = Math.hypot(sdx, sdy);
-
-        const dOuter = distOuter - outerR;
-        const dShadow = distShadow - shadowR;
-
-        // Silueta anti-aliased de la Luna Creciente
-        const outerCov = smoothstepJS(1.25, -1.25, dOuter);
-        const innerCov = smoothstepJS(-2.4, 3.2, dShadow);
-        const crescentAlpha = outerCov * innerCov;
-
-        // Suave aureola perlada pegada al creciente (se extingue antes del borde del lienzo)
-        const sdfCrescent = Math.max(dOuter, -dShadow);
-        const canvasEdgeFade = smoothstepJS(124, 92, distOuter);
-        const innerBloom = Math.exp(-Math.max(0, sdfCrescent) * 0.16) * 0.24 * canvasEdgeFade;
-
-        const alpha = Math.min(1, crescentAlpha + innerBloom * (1 - crescentAlpha * 0.65));
-        if (alpha <= 0.002) continue;
-
-        // Textura lunar sutil (mares perlados muy delicados)
-        const nx = dx / outerR;
-        const ny = dy / outerR;
-        const mare =
-          0.5 +
-          0.25 * Math.sin(nx * 5.2 + ny * 3.4) +
-          0.25 * Math.cos(nx * 8.6 - ny * 6.8 + 1.1);
-        const surfaceDetail = 0.965 + 0.035 * mare;
-
-        // Degradado blanco-perlado en el limbo exterior hacia champán/rosa suave interior
-        const limbFactor = smoothstepJS(26, 0, Math.max(0, -dOuter));
-        const termFactor = smoothstepJS(0, 22, Math.max(0, dShadow));
-
-        let r = 247 + 8 * limbFactor;
-        let g = 228 + 20 * termFactor * 0.6 + 16 * limbFactor * 0.55;
-        let b = 224 + 22 * limbFactor - 12 * (1 - termFactor) * 0.4;
-
-        r = Math.min(255, Math.round(r * surfaceDetail));
-        g = Math.min(255, Math.round(g * surfaceDetail));
-        b = Math.min(255, Math.round(b * surfaceDetail));
-
-        const idx = (y * size + x) * 4;
-        data[idx] = r;
-        data[idx + 1] = g;
-        data[idx + 2] = b;
-        data[idx + 3] = Math.round(alpha * 255);
-      }
-    }
-
-    ctx.putImageData(img, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.needsUpdate = true;
-    return tex;
-  }
-
-  #createMoonHaloTexture() {
-    const size = 128;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(size, size);
-    const data = img.data;
-    const half = size * 0.5;
-
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const dx = (x + 0.5 - half) / half;
-        const dy = (y + 0.5 - half) / half;
-        const r = Math.hypot(dx, dy);
-        if (r >= 1.0) continue;
-
-        const edgeZero = (1 - r * r) * (1 - r * r);
-        const innerCore = Math.exp(-r * r * 6.8) * 0.62;
-        const outerCorona = Math.exp(-r * r * 2.4) * 0.34;
-        const a = Math.min(1, (innerCore + outerCorona) * edgeZero);
-
-        // De champán perlado en el centro a lavanda/rosa imperial hacia fuera
-        const tLav = smoothstepJS(0.08, 0.55, r);
-        const tRose = smoothstepJS(0.45, 0.92, r);
-
-        let cr = 255 * (1 - tLav) + 216 * tLav;
-        let cg = 244 * (1 - tLav) + 198 * tLav;
-        let cb = 222 * (1 - tLav) + 255 * tLav;
-
-        cr = cr * (1 - tRose * 0.35) + 245 * (tRose * 0.35);
-        cg = cg * (1 - tRose * 0.35) + 178 * (tRose * 0.35);
-        cb = cb * (1 - tRose * 0.35) + 228 * (tRose * 0.35);
-
-        const idx = (y * size + x) * 4;
-        data[idx] = Math.round(cr);
-        data[idx + 1] = Math.round(cg);
-        data[idx + 2] = Math.round(cb);
-        data[idx + 3] = Math.round(a * 255);
-      }
-    }
-
-    ctx.putImageData(img, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.needsUpdate = true;
-    return tex;
-  }
-
-  #buildMoon() {
+  #buildCrescentMoon() {
     this.#moonGroup = new THREE.Group();
     this.#moonGroup.frustumCulled = false;
 
-    this.#moonTex = this.#createMoonCrescentTexture();
-    this.#haloTex = this.#createMoonHaloTexture();
+    const planeGeo = new THREE.PlaneGeometry(155, 155);
 
-    const haloMat = new THREE.SpriteMaterial({
-      map: this.#haloTex,
-      color: 0xf2eaff,
+    const moonVertex = /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    // Pasada 1: Disco lunar SDF con media luna, mares y luz cenicienta (NormalBlending)
+    const discMat = new THREE.ShaderMaterial({
       transparent: true,
-      opacity: 0,
+      depthWrite: false,
+      fog: false,
+      blending: THREE.NormalBlending,
+      uniforms: {
+        uOpacity: { value: 1.0 },
+        uMoonColor: GraphicsSync.uMoonColor
+      },
+      vertexShader: moonVertex,
+      fragmentShader: /* glsl */ `
+        uniform float uOpacity;
+        uniform vec3 uMoonColor;
+        varying vec2 vUv;
+
+        float hash21(vec2 p) {
+          p = fract(p * vec2(127.1, 311.7));
+          p += dot(p, p + 34.23);
+          return fract(p.x * p.y);
+        }
+
+        float noise2(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+            mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x),
+            f.y
+          );
+        }
+
+        float fbm3(vec2 p) {
+          float sum = 0.0;
+          float amp = 0.5;
+          for (int i = 0; i < 3; i++) {
+            sum += amp * noise2(p);
+            p = p * 2.07 + vec2(3.7, -5.2);
+            amp *= 0.5;
+          }
+          return sum;
+        }
+
+        void main() {
+          vec2 p = (vUv - 0.5) * 2.0;
+          float rLen = length(p);
+          float R_moon = 0.42;
+
+          float disc = smoothstep(R_moon + 0.008, R_moon - 0.008, rLen);
+          if (disc <= 0.001 || uOpacity <= 0.005) discard;
+
+          // Recorte analítico de media luna con cuernos finos y afilados
+          vec2 shadowOffset = vec2(0.18, 0.12);
+          float shadowR = R_moon * 0.94;
+          float shadowMask = smoothstep(shadowR - 0.035, shadowR + 0.02, length(p - shadowOffset));
+          float crescent = disc * shadowMask;
+
+          // Detalle de superficie lunar (mares y cráteres sutiles)
+          float detail = fbm3(p * 6.5);
+          float crater = fbm3(p * 14.0 + vec2(2.4, -1.7));
+          float surfaceTex = 0.90 + 0.14 * detail - 0.05 * smoothstep(0.55, 0.85, crater);
+
+          // Limbo exterior ligeramente más cálido y brillante (HDR > 1.0 para UnrealBloomPass)
+          float limb = smoothstep(0.18, R_moon, rLen);
+          vec3 litBase = vec3(1.28, 1.22, 1.08) * mix(vec3(1.0), uMoonColor + vec3(0.15), 0.35);
+          vec3 litCol = mix(litBase * 0.94, litBase * vec3(1.06, 1.01, 0.90), limb) * surfaceTex;
+
+          // Luz cenicienta azul-violeta sutil en la cara oscura
+          vec3 earthshineCol = vec3(0.14, 0.12, 0.28) * (0.35 + 0.12 * detail);
+
+          vec3 finalCol = mix(earthshineCol, litCol, shadowMask);
+          float alpha = max(crescent, disc * 0.28) * uOpacity;
+
+          gl_FragColor = vec4(finalCol, alpha);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `
+    });
+    discMat.userData = { isVfx: true };
+
+    // Pasada 2: Corona interna cálida + aura externa lavanda-dorada (AdditiveBlending, sin bordes)
+    const coronaMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      fog: false,
       blending: THREE.AdditiveBlending,
-      fog: false,
-      depthWrite: false,
-      toneMapped: false
+      uniforms: {
+        uTime: GraphicsSync.uTime,
+        uOpacity: { value: 1.0 },
+        uMoonColor: GraphicsSync.uMoonColor
+      },
+      vertexShader: moonVertex,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        uniform float uOpacity;
+        uniform vec3 uMoonColor;
+        varying vec2 vUv;
+
+        void main() {
+          vec2 p = (vUv - 0.5) * 2.0;
+          float rLen = length(p);
+          if (rLen >= 0.96 || uOpacity <= 0.005) discard;
+
+          float R_moon = 0.42;
+          vec2 shadowOffset = vec2(0.18, 0.12);
+          float shadowR = R_moon * 0.94;
+
+          float dDisc = rLen - R_moon;
+          float dShadow = shadowR - length(p - shadowOffset);
+          float dGlow = max(max(dDisc, dShadow), 0.0);
+
+          float edgeZero = smoothstep(0.95, 0.62, rLen);
+          float shimmer = 0.96 + 0.04 * sin(uTime * 0.9);
+
+          float innerCorona = exp(-dGlow * 7.5) * 0.75;
+          float outerAura = exp(-dGlow * 2.4) * 0.32;
+
+          vec3 warmCol = mix(vec3(1.0, 0.90, 0.72), uMoonColor, 0.5);
+          vec3 auraCol = vec3(0.76, 0.60, 0.96);
+
+          vec3 col = (warmCol * innerCorona + auraCol * outerAura) * edgeZero * shimmer * uOpacity;
+          float a = clamp((innerCorona + outerAura) * edgeZero * uOpacity, 0.0, 1.0);
+          if (a <= 0.002) discard;
+
+          gl_FragColor = vec4(col, a);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `
     });
-    haloMat.userData = { isVfx: true };
+    coronaMat.userData = { isVfx: true };
 
-    this.#moonHalo = new THREE.Sprite(haloMat);
-    this.#moonHalo.scale.set(62, 62, 1);
-    this.#moonHalo.frustumCulled = false;
-    this.#moonHalo.renderOrder = -25;
+    this.#moonCoronaMesh = new THREE.Mesh(planeGeo, coronaMat);
+    this.#moonCoronaMesh.frustumCulled = false;
+    this.#moonCoronaMesh.renderOrder = -991;
 
-    const moonGeo = new THREE.PlaneGeometry(19.5, 19.5);
-    const moonMat = new THREE.MeshBasicMaterial({
-      map: this.#moonTex,
-      color: 0xfff9ee,
-      transparent: true,
-      opacity: 0,
-      fog: false,
-      depthWrite: false,
-      toneMapped: false
-    });
-    moonMat.userData = { isVfx: true };
+    this.#moonDiscMesh = new THREE.Mesh(planeGeo, discMat);
+    this.#moonDiscMesh.frustumCulled = false;
+    this.#moonDiscMesh.renderOrder = -990;
 
-    this.#moonMesh = new THREE.Mesh(moonGeo, moonMat);
-    this.#moonMesh.frustumCulled = false;
-    this.#moonMesh.renderOrder = -24;
-
-    this.#moonGroup.add(this.#moonHalo);
-    this.#moonGroup.add(this.#moonMesh);
+    this.#moonGroup.add(this.#moonCoronaMesh);
+    this.#moonGroup.add(this.#moonDiscMesh);
     this.#root.add(this.#moonGroup);
-
-    this.#updateMoonPlacement();
   }
 
   #updateMoonPlacement() {
-    if (!this.#moonMesh || !this.#moonHalo) return;
+    if (!this.#moonDiscMesh || !this.#moonCoronaMesh) return;
+    const dir = GraphicsSync.uMoonDir.value;
 
-    this.#tmpMoonPos.copy(this.#moonDir).multiplyScalar(BASE_RADIUS * 0.922);
-    this.#moonHalo.position.copy(this.#tmpMoonPos);
+    this.#tmpMoonPos.copy(dir).multiplyScalar(MOON_DIST + 2.0);
+    this.#moonCoronaMesh.position.copy(this.#tmpMoonPos);
+    this.#moonCoronaMesh.lookAt(this.#tmpOrigin);
 
-    this.#tmpMoonPos.copy(this.#moonDir).multiplyScalar(BASE_RADIUS * 0.916);
-    this.#moonMesh.position.copy(this.#tmpMoonPos);
-    this.#moonMesh.lookAt(this.#tmpOrigin);
-
-    if (this.#distantStars) {
-      this.#distantStars.material.uniforms.uMoonDir.value.copy(this.#moonDir);
-    }
-    if (this.#brightStars) {
-      this.#brightStars.material.uniforms.uMoonDir.value.copy(this.#moonDir);
-    }
-    if (this.#constellationStars) {
-      this.#constellationStars.material.uniforms.uMoonDir.value.copy(this.#moonDir);
-    }
+    this.#tmpMoonPos.copy(dir).multiplyScalar(MOON_DIST);
+    this.#moonDiscMesh.position.copy(this.#tmpMoonPos);
+    this.#moonDiscMesh.lookAt(this.#tmpOrigin);
   }
 
-  #createStarShaderMaterial({ crossFlare = false, intensityBoost = 1.0 } = {}) {
+  #createStarShaderMaterial() {
     const mat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       fog: false,
       blending: THREE.AdditiveBlending,
       uniforms: {
-        uTime: { value: 0.0 },
+        uTime: GraphicsSync.uTime,
+        uMoonDir: GraphicsSync.uMoonDir,
         uPixelRatio: { value: this.#pixelRatio },
-        uVisibility: { value: 0.0 },
-        uSpinYaw: { value: 0.0 },
-        uMoonDir: { value: this.#moonDir.clone() },
-        uIntensity: { value: intensityBoost }
+        uVisibility: { value: 1.0 },
+        uSpinYaw: { value: 0.0 }
       },
       vertexShader: /* glsl */ `
         attribute float aSize;
-        attribute float aPhase;
-        attribute float aFreq;
         attribute vec3 aColor;
+        attribute float aPhase;
+        attribute float aSpeed;
+        attribute float aHero;
 
         uniform float uTime;
         uniform float uPixelRatio;
@@ -453,12 +499,12 @@ export class StarrySkySystem {
 
         varying vec3 vColor;
         varying float vAlpha;
+        varying float vHero;
 
         void main() {
           vec3 unitDir = normalize(position);
-          float horizonFade = smoothstep(0.025, 0.15, unitDir.y);
+          float horizonFade = smoothstep(0.025, 0.16, unitDir.y);
 
-          // Ocultación limpia detrás del disco lunar sólido al girar la bóveda
           float cy = cos(uSpinYaw);
           float sy = sin(uSpinYaw);
           vec3 worldDir = vec3(
@@ -466,71 +512,50 @@ export class StarrySkySystem {
             unitDir.y,
             -unitDir.x * sy + unitDir.z * cy
           );
-          float moonOccult = smoothstep(0.9988, 0.9974, dot(worldDir, uMoonDir));
+          // Ocultación detrás del disco lunar monumental
+          float moonOccult = smoothstep(0.9968, 0.9935, dot(worldDir, normalize(uMoonDir)));
 
-          float twinkle = 0.62 + 0.38 * sin(uTime * aFreq + aPhase);
+          float twinkle = 0.65 + 0.35 * sin(uTime * aSpeed + aPhase);
           vColor = aColor;
+          vHero = aHero;
           vAlpha = twinkle * horizonFade * moonOccult * uVisibility;
 
           vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mvPos;
-          gl_PointSize = max(1.0, aSize * (0.88 + 0.18 * twinkle) * uPixelRatio);
+          gl_PointSize = max(1.0, aSize * (0.90 + 0.16 * twinkle) * uPixelRatio);
         }
       `,
-      fragmentShader: crossFlare
-        ? /* glsl */ `
-          uniform float uIntensity;
-          varying vec3 vColor;
-          varying float vAlpha;
+      fragmentShader: /* glsl */ `
+        varying vec3 vColor;
+        varying float vAlpha;
+        varying float vHero;
 
-          void main() {
-            if (vAlpha <= 0.004) discard;
-            vec2 uv = gl_PointCoord - 0.5;
-            float d = length(uv);
-            if (d > 0.5) discard;
+        void main() {
+          if (vAlpha <= 0.004) discard;
+          vec2 uv = gl_PointCoord - 0.5;
+          float r = length(uv);
+          if (r > 0.5) discard;
 
-            float edge = 1.0 - smoothstep(0.36, 0.5, d);
-            float core = exp(-d * d * 54.0);
-            float halo = exp(-d * d * 13.0) * 0.36;
+          float edge = 1.0 - smoothstep(0.36, 0.5, r);
+          float core = exp(-r * 9.0);
+          float halo = exp(-r * 3.2) * 0.35;
+          float shape = (core + halo) * edge;
 
-            // Destello en cruz estelar de 4 puntas suave
-            float rayX = exp(-abs(uv.y) * 28.0) * exp(-abs(uv.x) * 4.6);
-            float rayY = exp(-abs(uv.x) * 28.0) * exp(-abs(uv.y) * 4.6);
-            float crossGlow = (rayX + rayY) * 0.68;
-
-            float shape = (core * 1.25 + halo + crossGlow) * edge;
-            float a = clamp(shape * vAlpha, 0.0, 1.0);
-            if (a <= 0.003) discard;
-
-            vec3 col = vColor * (uIntensity * (0.85 + 0.55 * core)) * shape * vAlpha;
-            gl_FragColor = vec4(col, a);
-            #include <tonemapping_fragment>
-            #include <colorspace_fragment>
+          if (vHero > 0.5) {
+            float crossSpike = exp(-abs(uv.x) * 28.0) * exp(-abs(uv.y) * 5.0)
+              + exp(-abs(uv.y) * 28.0) * exp(-abs(uv.x) * 5.0);
+            shape += crossSpike * 0.82 * edge;
           }
-        `
-        : /* glsl */ `
-          uniform float uIntensity;
-          varying vec3 vColor;
-          varying float vAlpha;
 
-          void main() {
-            if (vAlpha <= 0.004) discard;
-            vec2 uv = gl_PointCoord - 0.5;
-            float d = length(uv);
-            if (d > 0.5) discard;
+          float a = clamp(shape * vAlpha, 0.0, 1.0);
+          if (a <= 0.003) discard;
 
-            float edge = 1.0 - smoothstep(0.32, 0.5, d);
-            float core = exp(-d * d * 24.0);
-            float shape = core * edge;
-            float a = clamp(shape * vAlpha, 0.0, 1.0);
-            if (a <= 0.003) discard;
-
-            vec3 col = vColor * uIntensity * shape * vAlpha;
-            gl_FragColor = vec4(col, a);
-            #include <tonemapping_fragment>
-            #include <colorspace_fragment>
-          }
-        `
+          vec3 col = vColor * shape * vAlpha * (vHero > 0.5 ? 1.35 : 1.05);
+          gl_FragColor = vec4(col, a);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `
     });
     mat.userData = { isVfx: true };
     return mat;
@@ -539,10 +564,10 @@ export class StarrySkySystem {
   #pickStarLinearColor(rand) {
     const roll = rand();
     let src;
-    if (roll < 0.42) src = STAR_PALETTE[0];      // Blanco diamante
-    else if (roll < 0.66) src = STAR_PALETTE[1]; // Azul hielo
-    else if (roll < 0.85) src = STAR_PALETTE[2]; // Dorado cálido
-    else src = STAR_PALETTE[3];                  // Rosa pálido
+    if (roll < 0.42) src = STAR_PALETTE[0];
+    else if (roll < 0.66) src = STAR_PALETTE[1];
+    else if (roll < 0.85) src = STAR_PALETTE[2];
+    else src = STAR_PALETTE[3];
 
     return [
       srgbToLinear(src[0]),
@@ -551,25 +576,23 @@ export class StarrySkySystem {
     ];
   }
 
-  #buildStarLayers() {
+  #buildStarfield() {
     const rand = createSeededRandom(0x47414c41);
-    const galNormal = new THREE.Vector3(0.41, 0.38, -0.829).normalize();
+    const galNormal = new THREE.Vector3(0.413, -0.529, 0.741).normalize();
     const tmpVec = new THREE.Vector3();
 
-    // --- Capa 1: ~2.500 estrellas lejanas ---
-    const pos1 = new Float32Array(DISTANT_STAR_COUNT * 3);
-    const size1 = new Float32Array(DISTANT_STAR_COUNT);
-    const phase1 = new Float32Array(DISTANT_STAR_COUNT);
-    const freq1 = new Float32Array(DISTANT_STAR_COUNT);
-    const col1 = new Float32Array(DISTANT_STAR_COUNT * 3);
-    const r1 = BASE_RADIUS * 0.96;
+    const pos = new Float32Array(STAR_COUNT * 3);
+    const size = new Float32Array(STAR_COUNT);
+    const col = new Float32Array(STAR_COUNT * 3);
+    const phase = new Float32Array(STAR_COUNT);
+    const speed = new Float32Array(STAR_COUNT);
+    const hero = new Float32Array(STAR_COUNT);
 
-    for (let i = 0; i < DISTANT_STAR_COUNT; i++) {
-      // 28% concentradas sutilmente cerca de la banda de la Vía Láctea, 72% en todo el hemisferio
+    for (let i = 0; i < STAR_COUNT; i++) {
       let x;
       let y;
       let z;
-      if (i < DISTANT_STAR_COUNT * 0.28) {
+      if (i < STAR_COUNT * 0.30) {
         let attempts = 0;
         do {
           const theta = rand() * Math.PI * 2;
@@ -577,111 +600,69 @@ export class StarrySkySystem {
           const sinPhi = Math.sqrt(Math.max(0, 1 - u * u));
           tmpVec.set(sinPhi * Math.cos(theta), u, sinPhi * Math.sin(theta));
           attempts += 1;
-        } while (Math.abs(tmpVec.dot(galNormal)) > 0.24 && attempts < 10);
-        x = tmpVec.x * r1;
-        y = tmpVec.y * r1;
-        z = tmpVec.z * r1;
+        } while (Math.abs(tmpVec.dot(galNormal)) > 0.26 && attempts < 10);
+        x = tmpVec.x * STAR_RADIUS;
+        y = tmpVec.y * STAR_RADIUS;
+        z = tmpVec.z * STAR_RADIUS;
       } else {
         const theta = rand() * Math.PI * 2;
-        const u = 0.032 + rand() * 0.968; // y > 0.03 * R
+        const u = 0.03 + rand() * 0.97;
         const sinPhi = Math.sqrt(Math.max(0, 1 - u * u));
-        x = r1 * sinPhi * Math.cos(theta);
-        y = r1 * u;
-        z = r1 * sinPhi * Math.sin(theta);
+        x = STAR_RADIUS * sinPhi * Math.cos(theta);
+        y = STAR_RADIUS * u;
+        z = STAR_RADIUS * sinPhi * Math.sin(theta);
       }
 
-      pos1[i * 3] = x;
-      pos1[i * 3 + 1] = y;
-      pos1[i * 3 + 2] = z;
+      pos[i * 3] = x;
+      pos[i * 3 + 1] = y;
+      pos[i * 3 + 2] = z;
 
-      size1[i] = 1.35 + Math.pow(rand(), 1.7) * 2.15;
-      phase1[i] = rand() * Math.PI * 2;
-      freq1[i] = 1.15 + rand() * 2.85;
-
-      const [cr, cg, cb] = this.#pickStarLinearColor(rand);
-      const brightness = 0.72 + rand() * 0.42;
-      col1[i * 3] = cr * brightness;
-      col1[i * 3 + 1] = cg * brightness;
-      col1[i * 3 + 2] = cb * brightness;
-    }
-
-    const geo1 = new THREE.BufferGeometry();
-    geo1.setAttribute('position', new THREE.BufferAttribute(pos1, 3));
-    geo1.setAttribute('aSize', new THREE.BufferAttribute(size1, 1));
-    geo1.setAttribute('aPhase', new THREE.BufferAttribute(phase1, 1));
-    geo1.setAttribute('aFreq', new THREE.BufferAttribute(freq1, 1));
-    geo1.setAttribute('aColor', new THREE.BufferAttribute(col1, 3));
-
-    const mat1 = this.#createStarShaderMaterial({ crossFlare: false, intensityBoost: 1.05 });
-    this.#distantStars = new THREE.Points(geo1, mat1);
-    this.#distantStars.frustumCulled = false;
-    this.#distantStars.renderOrder = -35;
-    this.#celestialSpinner.add(this.#distantStars);
-
-    // --- Capa 2: ~350 estrellas brillantes principales con cruz estelar ---
-    const pos2 = new Float32Array(BRIGHT_STAR_COUNT * 3);
-    const size2 = new Float32Array(BRIGHT_STAR_COUNT);
-    const phase2 = new Float32Array(BRIGHT_STAR_COUNT);
-    const freq2 = new Float32Array(BRIGHT_STAR_COUNT);
-    const col2 = new Float32Array(BRIGHT_STAR_COUNT * 3);
-    const r2 = BASE_RADIUS * 0.95;
-
-    for (let i = 0; i < BRIGHT_STAR_COUNT; i++) {
-      const theta = rand() * Math.PI * 2;
-      const u = 0.06 + rand() * 0.94;
-      const sinPhi = Math.sqrt(Math.max(0, 1 - u * u));
-
-      pos2[i * 3] = r2 * sinPhi * Math.cos(theta);
-      pos2[i * 3 + 1] = r2 * u;
-      pos2[i * 3 + 2] = r2 * sinPhi * Math.sin(theta);
-
-      size2[i] = 4.6 + Math.pow(rand(), 1.45) * 4.4;
-      phase2[i] = rand() * Math.PI * 2;
-      freq2[i] = 1.35 + rand() * 2.45;
+      const isHero = rand() < 0.06;
+      hero[i] = isHero ? 1.0 : 0.0;
+      size[i] = isHero ? (6.4 + rand() * 4.8) : (1.5 + Math.pow(rand(), 2.2) * 3.1);
+      phase[i] = rand() * Math.PI * 2;
+      speed[i] = 1.2 + rand() * 2.8;
 
       const [cr, cg, cb] = this.#pickStarLinearColor(rand);
-      const brightness = 0.92 + rand() * 0.35;
-      col2[i * 3] = cr * brightness;
-      col2[i * 3 + 1] = cg * brightness;
-      col2[i * 3 + 2] = cb * brightness;
+      const brightness = isHero ? (1.05 + rand() * 0.35) : (0.72 + rand() * 0.42);
+      col[i * 3] = cr * brightness;
+      col[i * 3 + 1] = cg * brightness;
+      col[i * 3 + 2] = cb * brightness;
     }
 
-    const geo2 = new THREE.BufferGeometry();
-    geo2.setAttribute('position', new THREE.BufferAttribute(pos2, 3));
-    geo2.setAttribute('aSize', new THREE.BufferAttribute(size2, 1));
-    geo2.setAttribute('aPhase', new THREE.BufferAttribute(phase2, 1));
-    geo2.setAttribute('aFreq', new THREE.BufferAttribute(freq2, 1));
-    geo2.setAttribute('aColor', new THREE.BufferAttribute(col2, 3));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
+    geo.setAttribute('aSpeed', new THREE.BufferAttribute(speed, 1));
+    geo.setAttribute('aHero', new THREE.BufferAttribute(hero, 1));
 
-    const mat2 = this.#createStarShaderMaterial({ crossFlare: true, intensityBoost: 1.18 });
-    this.#brightStars = new THREE.Points(geo2, mat2);
-    this.#brightStars.frustumCulled = false;
-    this.#brightStars.renderOrder = -31;
-    this.#celestialSpinner.add(this.#brightStars);
+    const mat = this.#createStarShaderMaterial();
+    this.#starsPoints = new THREE.Points(geo, mat);
+    this.#starsPoints.frustumCulled = false;
+    this.#starsPoints.renderOrder = -960;
+    this.#celestialSpinner.add(this.#starsPoints);
   }
 
   #buildConstellations() {
-    // 3 Constelaciones Reales bien distribuidas en el cielo:
-    // 1. Corona Imperial (Norte-Noroeste, sobre las agujas del Palacio de Cristal)
-    // 2. Cisne Real (Sureste, sobre el Lago Sur y el Paseo del Casino)
-    // 3. Corazón Estelar (Suroeste, sobre la Pasarela y los Jardines de Perla)
     const definitions = [
       {
         name: 'Corona Imperial',
-        azimuthDeg: -26,
-        elevationDeg: 53,
+        azimuthDeg: -28,
+        elevationDeg: 52,
         lineHex: 0xffe9b5,
         starHex: 0xfff1c9,
         stars: [
-          [-0.145, -0.052, 7.6], // 0: base izq
-          [-0.050, -0.068, 7.2], // 1: base centro-izq
-          [0.050, -0.068, 7.2],  // 2: base centro-der
-          [0.145, -0.052, 7.6],  // 3: base der
-          [-0.168, 0.048, 8.8],  // 4: punta izq
-          [-0.076, 0.002, 7.0],  // 5: valle izq
-          [0.000, 0.105, 10.6],  // 6: joya cumbre central
-          [0.076, 0.002, 7.0],   // 7: valle der
-          [0.168, 0.048, 8.8]    // 8: punta der
+          [-0.145, -0.052, 8.2],
+          [-0.050, -0.068, 7.6],
+          [0.050, -0.068, 7.6],
+          [0.145, -0.052, 8.2],
+          [-0.168, 0.048, 9.2],
+          [-0.076, 0.002, 7.4],
+          [0.000, 0.105, 11.2],
+          [0.076, 0.002, 7.4],
+          [0.168, 0.048, 9.2]
         ],
         edges: [
           [0, 1], [1, 2], [2, 3],
@@ -696,14 +677,14 @@ export class StarrySkySystem {
         lineHex: 0xcbe6ff,
         starHex: 0xdff2ff,
         stars: [
-          [0.000, -0.118, 8.6],  // 0: cola (Deneb real)
-          [0.000, -0.012, 9.8],  // 1: pecho del cisne (Sadr)
-          [0.022, 0.068, 7.6],   // 2: cuello arqueado
-          [0.062, 0.132, 9.0],   // 3: cabeza coronada (Albireo)
-          [-0.098, 0.016, 8.2],  // 4: ala izq interior
-          [-0.192, -0.028, 7.8], // 5: punta ala izq
-          [0.098, -0.018, 8.2],  // 6: ala der interior
-          [0.192, -0.068, 7.8]   // 7: punta ala der
+          [0.000, -0.118, 9.0],
+          [0.000, -0.012, 10.2],
+          [0.022, 0.068, 8.0],
+          [0.062, 0.132, 9.4],
+          [-0.098, 0.016, 8.6],
+          [-0.192, -0.028, 8.2],
+          [0.098, -0.018, 8.6],
+          [0.192, -0.068, 8.2]
         ],
         edges: [
           [0, 1], [1, 2], [2, 3],
@@ -718,14 +699,14 @@ export class StarrySkySystem {
         lineHex: 0xffcce8,
         starHex: 0xffdff2,
         stars: [
-          [0.000, -0.118, 9.4],  // 0: punta inferior del corazón
-          [-0.088, -0.036, 7.8], // 1: flanco inf izq
-          [-0.120, 0.046, 8.4],  // 2: lóbulo ext izq
-          [-0.058, 0.098, 9.0],  // 3: cumbre izq
-          [0.000, 0.046, 8.2],   // 4: hendidura central
-          [0.058, 0.098, 9.0],   // 5: cumbre der
-          [0.120, 0.046, 8.4],   // 6: lóbulo ext der
-          [0.088, -0.036, 7.8]   // 7: flanco inf der
+          [0.000, -0.118, 9.8],
+          [-0.088, -0.036, 8.2],
+          [-0.120, 0.046, 8.8],
+          [-0.058, 0.098, 9.4],
+          [0.000, 0.046, 8.6],
+          [0.058, 0.098, 9.4],
+          [0.120, 0.046, 8.8],
+          [0.088, -0.036, 8.2]
         ],
         edges: [
           [0, 1], [1, 2], [2, 3], [3, 4],
@@ -738,8 +719,9 @@ export class StarrySkySystem {
     const starPositions = [];
     const starSizes = [];
     const starPhases = [];
-    const starFreqs = [];
+    const starSpeeds = [];
     const starColors = [];
+    const starHero = [];
 
     const linePositions = [];
     const lineColors = [];
@@ -752,17 +734,14 @@ export class StarrySkySystem {
     const tmpStarCol = new THREE.Color();
     const tmpLineCol = new THREE.Color();
 
-    const rStars = BASE_RADIUS * 0.946;
-    const rLines = BASE_RADIUS * 0.948;
+    const rLines = CONSTELLATION_RADIUS + 1.0;
 
     for (const def of definitions) {
       const az = THREE.MathUtils.degToRad(def.azimuthDeg);
       const el = THREE.MathUtils.degToRad(def.elevationDeg);
       const cosEl = Math.cos(el);
-      // Mirando hacia -Z como Norte del Reino
       centerDir.set(Math.sin(az) * cosEl, Math.sin(el), -Math.cos(az) * cosEl).normalize();
 
-      // Base ortonormal vista desde el interior de la cúpula: +right a la derecha, +up hacia el cenit
       rightAxis.crossVectors(centerDir, worldUp).normalize();
       upAxis.crossVectors(rightAxis, centerDir).normalize();
 
@@ -778,11 +757,12 @@ export class StarrySkySystem {
           .normalize();
         resolvedDirs.push(starVec.clone());
 
-        starPositions.push(starVec.x * rStars, starVec.y * rStars, starVec.z * rStars);
+        starPositions.push(starVec.x * CONSTELLATION_RADIUS, starVec.y * CONSTELLATION_RADIUS, starVec.z * CONSTELLATION_RADIUS);
         starSizes.push(sz);
         starPhases.push(rand() * Math.PI * 2);
-        starFreqs.push(1.4 + rand() * 1.3);
-        starColors.push(tmpStarCol.r * 1.12, tmpStarCol.g * 1.12, tmpStarCol.b * 1.12);
+        starSpeeds.push(1.4 + rand() * 1.3);
+        starColors.push(tmpStarCol.r * 1.15, tmpStarCol.g * 1.15, tmpStarCol.b * 1.15);
+        starHero.push(1.0);
       }
 
       for (const [a, b] of def.edges) {
@@ -802,14 +782,15 @@ export class StarrySkySystem {
     const starGeo = new THREE.BufferGeometry();
     starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
     starGeo.setAttribute('aSize', new THREE.Float32BufferAttribute(starSizes, 1));
-    starGeo.setAttribute('aPhase', new THREE.Float32BufferAttribute(starPhases, 1));
-    starGeo.setAttribute('aFreq', new THREE.Float32BufferAttribute(starFreqs, 1));
     starGeo.setAttribute('aColor', new THREE.Float32BufferAttribute(starColors, 3));
+    starGeo.setAttribute('aPhase', new THREE.Float32BufferAttribute(starPhases, 1));
+    starGeo.setAttribute('aSpeed', new THREE.Float32BufferAttribute(starSpeeds, 1));
+    starGeo.setAttribute('aHero', new THREE.Float32BufferAttribute(starHero, 1));
 
-    const starMat = this.#createStarShaderMaterial({ crossFlare: true, intensityBoost: 1.32 });
+    const starMat = this.#createStarShaderMaterial();
     this.#constellationStars = new THREE.Points(starGeo, starMat);
     this.#constellationStars.frustumCulled = false;
-    this.#constellationStars.renderOrder = -30;
+    this.#constellationStars.renderOrder = -955;
     this.#celestialSpinner.add(this.#constellationStars);
 
     const lineGeo = new THREE.BufferGeometry();
@@ -819,7 +800,7 @@ export class StarrySkySystem {
     const lineMat = new THREE.LineBasicMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0,
+      opacity: 0.16,
       fog: false,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -829,12 +810,11 @@ export class StarrySkySystem {
 
     this.#constellationLines = new THREE.LineSegments(lineGeo, lineMat);
     this.#constellationLines.frustumCulled = false;
-    this.#constellationLines.renderOrder = -40;
+    this.#constellationLines.renderOrder = -965;
     this.#celestialSpinner.add(this.#constellationLines);
   }
 
   #buildShootingStarPool() {
-    // Geometría compartida de cinta segmentada proyectada sobre el arco esférico en GPU
     const vertCount = (RIBBON_SEGMENTS + 1) * 2;
     const dummyPos = new Float32Array(vertCount * 3);
     const aT = new Float32Array(vertCount);
@@ -849,9 +829,8 @@ export class StarrySkySystem {
       aT[idx + 1] = t;
       aSide[idx + 1] = 1;
 
-      // Posiciones base no nulas para boundingSphere válido
-      dummyPos[idx * 3 + 1] = BASE_RADIUS * 0.9;
-      dummyPos[(idx + 1) * 3 + 1] = BASE_RADIUS * 0.9;
+      dummyPos[idx * 3 + 1] = SHOOTING_RADIUS;
+      dummyPos[(idx + 1) * 3 + 1] = SHOOTING_RADIUS;
 
       if (i < RIBBON_SEGMENTS) {
         indices.push(idx, idx + 1, idx + 2);
@@ -881,9 +860,10 @@ export class StarrySkySystem {
           uHeadDir: { value: headDir },
           uTailDir: { value: tailDir },
           uSideDir: { value: sideDir },
-          uRadius: { value: BASE_RADIUS * 0.905 },
-          uWidth: { value: 0.88 },
-          uOpacity: { value: 0.0 }
+          uRadius: { value: SHOOTING_RADIUS },
+          uWidth: { value: 1.8 },
+          uProgress: { value: 0.0 },
+          uVisibility: { value: 1.0 }
         },
         vertexShader: /* glsl */ `
           attribute float aT;
@@ -903,7 +883,6 @@ export class StarrySkySystem {
             vSide = aSide;
 
             vec3 spineDir = normalize(mix(uHeadDir, uTailDir, aT));
-            // Cabeza redondeada brillante y estela ahusada sedosa hacia la cola
             float headRound = sin(clamp(aT * 8.0, 0.0, 1.5707963));
             float tailTaper = pow(1.0 - aT, 1.45);
             float halfW = uWidth * headRound * tailTaper;
@@ -913,26 +892,29 @@ export class StarrySkySystem {
           }
         `,
         fragmentShader: /* glsl */ `
-          uniform float uOpacity;
+          uniform float uProgress;
+          uniform float uVisibility;
           varying float vT;
           varying float vSide;
 
           void main() {
-            if (uOpacity <= 0.003) discard;
+            float fadeIn = smoothstep(0.0, 0.14, uProgress);
+            float fadeOut = 1.0 - smoothstep(0.55, 1.0, uProgress);
+            float lifeAlpha = fadeIn * fadeOut * uVisibility;
+            if (lifeAlpha <= 0.003) discard;
 
             float across = exp(-vSide * vSide * 4.2) * (1.0 - vSide * vSide);
             float along = pow(1.0 - vT, 1.75);
-            float headSpark = exp(-vT * 18.0) * 0.85;
+            float headSpark = exp(-vT * 18.0) * 0.95;
 
-            // Degradado perlado/dorado imperial en la cabeza hacia rosa pálido en la estela
-            vec3 headCol = vec3(1.28, 1.16, 0.92);
-            vec3 midCol = vec3(1.02, 0.78, 0.52);
-            vec3 tailCol = vec3(0.94, 0.54, 0.80);
+            vec3 headCol = vec3(1.45, 1.32, 1.02);
+            vec3 midCol = vec3(0.72, 0.92, 1.18);
+            vec3 tailCol = vec3(0.96, 0.52, 0.84);
 
             vec3 col = mix(headCol, midCol, smoothstep(0.0, 0.35, vT));
             col = mix(col, tailCol, smoothstep(0.32, 0.95, vT));
 
-            float alpha = clamp((along + headSpark) * across * uOpacity, 0.0, 1.0);
+            float alpha = clamp((along + headSpark) * across * lifeAlpha, 0.0, 1.0);
             if (alpha <= 0.002) discard;
 
             gl_FragColor = vec4(col * alpha, alpha);
@@ -946,7 +928,7 @@ export class StarrySkySystem {
       const mesh = new THREE.Mesh(ribbonGeo, mat);
       mesh.frustumCulled = false;
       mesh.visible = false;
-      mesh.renderOrder = -20;
+      mesh.renderOrder = -940;
       this.#root.add(mesh);
 
       this.#shootingPool.push({
@@ -975,12 +957,11 @@ export class StarrySkySystem {
     }
     if (!slot) return;
 
-    // Trayectoria diagonal alta en la bóveda celeste (sin asignar objetos)
     const startAz = Math.random() * Math.PI * 2;
-    const startEl = 0.56 + Math.random() * 0.62; // ~32° a ~68° de elevación
+    const startEl = 0.45 + Math.random() * 0.65;
     const dirSign = Math.random() < 0.5 ? -1 : 1;
-    const deltaAz = dirSign * (0.42 + Math.random() * 0.36);
-    const endEl = Math.max(0.20, startEl - (0.24 + Math.random() * 0.24));
+    const deltaAz = dirSign * (0.38 + Math.random() * 0.38);
+    const endEl = Math.max(0.18, startEl - (0.22 + Math.random() * 0.24));
     const endAz = startAz + deltaAz;
 
     const cosStart = Math.cos(startEl);
@@ -999,18 +980,18 @@ export class StarrySkySystem {
 
     slot.active = true;
     slot.elapsed = 0;
-    slot.duration = 0.75 + Math.random() * 0.50; // 0.75s - 1.25s
-    slot.tailSpan = 0.28 + Math.random() * 0.12;
-    slot.mat.uniforms.uWidth.value = 0.78 + Math.random() * 0.28;
-    slot.mat.uniforms.uOpacity.value = 0;
+    slot.duration = 0.78 + Math.random() * 0.52;
+    slot.tailSpan = 0.28 + Math.random() * 0.14;
+    slot.mat.uniforms.uWidth.value = 1.6 + Math.random() * 0.55;
+    slot.mat.uniforms.uProgress.value = 0;
     slot.mesh.visible = true;
   }
 
   #updateShootingStars(dt) {
-    if (this.#starsOpacity > 0.5) {
+    if (this.#starsOpacity > 0.4) {
       this.#shootingCooldown -= dt;
       if (this.#shootingCooldown <= 0) {
-        this.#shootingCooldown = 4.0 + Math.random() * 4.0; // Cada 4 a 8 segundos
+        this.#shootingCooldown = 3.5 + Math.random() * 3.5; // Cada 3.5s - 7.0s
         this.#spawnShootingStar();
       }
     }
@@ -1024,7 +1005,7 @@ export class StarrySkySystem {
       if (p >= 1.0 || this.#starsOpacity <= 0.05) {
         s.active = false;
         s.mesh.visible = false;
-        s.mat.uniforms.uOpacity.value = 0;
+        s.mat.uniforms.uProgress.value = 0;
         continue;
       }
 
@@ -1042,9 +1023,8 @@ export class StarrySkySystem {
         s.sideDir.set(1, 0, 0);
       }
 
-      const fadeIn = smoothstepJS(0.0, 0.14, p);
-      const fadeOut = 1.0 - smoothstepJS(0.55, 1.0, p);
-      s.mat.uniforms.uOpacity.value = fadeIn * fadeOut * this.#starsOpacity;
+      s.mat.uniforms.uProgress.value = p;
+      s.mat.uniforms.uVisibility.value = this.#starsOpacity;
     }
   }
 
@@ -1053,13 +1033,9 @@ export class StarrySkySystem {
     const moonVis = this.#moonOpacity;
 
     const showStars = starsVis > 0.01;
-    if (this.#distantStars) {
-      this.#distantStars.visible = showStars;
-      this.#distantStars.material.uniforms.uVisibility.value = starsVis;
-    }
-    if (this.#brightStars) {
-      this.#brightStars.visible = showStars;
-      this.#brightStars.material.uniforms.uVisibility.value = starsVis;
+    if (this.#starsPoints) {
+      this.#starsPoints.visible = showStars;
+      this.#starsPoints.material.uniforms.uVisibility.value = starsVis;
     }
     if (this.#constellationStars) {
       this.#constellationStars.visible = showStars;
@@ -1074,12 +1050,14 @@ export class StarrySkySystem {
     if (this.#moonGroup) {
       this.#moonGroup.visible = showMoon;
     }
-    if (this.#moonMesh) {
-      this.#moonMesh.material.opacity = moonVis;
+    if (this.#moonDiscMesh) {
+      this.#moonDiscMesh.material.uniforms.uOpacity.value = moonVis;
     }
-    if (this.#moonHalo) {
-      const haloMix = Math.max(moonVis, starsVis * 0.85);
-      this.#moonHalo.material.opacity = haloMix * 0.64;
+    if (this.#moonCoronaMesh) {
+      this.#moonCoronaMesh.material.uniforms.uOpacity.value = Math.max(moonVis, starsVis * 0.75);
+    }
+    if (this.#skyDome) {
+      this.#skyDome.material.uniforms.uMoonOpacity.value = moonVis;
     }
   }
 
@@ -1087,11 +1065,9 @@ export class StarrySkySystem {
     if (!theme || !this.#skyDome) return;
 
     const skyU = this.#skyDome.material.uniforms;
-    skyU.uTopColor.value.setHex(theme.skyTop ?? 0x7cb2f8);
-    skyU.uMidColor.value.setHex(theme.skyMid ?? 0xffd2e5);
-    skyU.uBottomColor.value.setHex(theme.skyBottom ?? 0xfff3d8);
+    skyU.uSkyMidHigh.value.setHex(theme.skyMidHigh ?? 0x171042);
 
-    const starsOpacity = THREE.MathUtils.clamp(theme.starsOpacity ?? 0, 0, 1);
+    const starsOpacity = THREE.MathUtils.clamp(theme.starsOpacity ?? 1.0, 0, 1);
     const nightMix = THREE.MathUtils.clamp(
       theme.nightMix ?? (starsOpacity > 0.6 ? 1.0 : starsOpacity * 0.8),
       0,
@@ -1103,25 +1079,15 @@ export class StarrySkySystem {
       1
     );
 
-    const wasNight = this.#starsOpacity > 0.5;
+    const wasNight = this.#starsOpacity > 0.45;
     this.#starsOpacity = starsOpacity;
     this.#nightMix = nightMix;
     this.#moonOpacity = moonOpacity;
-    skyU.uNightMix.value = nightMix;
 
-    // Alinear la Luna con la DirectionalLight nocturna en Gala Imperial
-    if (nightMix >= 0.5 && Array.isArray(theme.sunPosition) && theme.sunPosition.length === 3) {
-      this.#moonDir.set(theme.sunPosition[0], theme.sunPosition[1], theme.sunPosition[2]);
-      if (this.#moonDir.y < 8) this.#moonDir.y = 28;
-      this.#moonDir.normalize();
-    } else {
-      this.#moonDir.copy(this.#defaultTwilightMoonDir);
-    }
     this.#updateMoonPlacement();
 
-    if (!wasNight && starsOpacity > 0.5) {
-      // Primera estrella fugaz pronta pero dentro del rango natural de 4-8s
-      this.#shootingCooldown = 4.0 + Math.random() * 2.2;
+    if (!wasNight && starsOpacity > 0.45) {
+      this.#shootingCooldown = 3.5 + Math.random() * 2.5;
     }
 
     this.#syncVisibility();
@@ -1131,57 +1097,37 @@ export class StarrySkySystem {
     this.#quality = quality;
     this.setPixelRatio(pixelRatio);
 
-    const drawCount = QUALITY_STAR_COUNTS[quality] ?? DISTANT_STAR_COUNTS_FALLBACK(quality);
-    this.#distantStars?.geometry?.setDrawRange(0, drawCount);
+    const drawCount = QUALITY_STAR_COUNTS[quality] ?? STAR_COUNT;
+    this.#starsPoints?.geometry?.setDrawRange(0, drawCount);
   }
 
   setPixelRatio(pixelRatio) {
     if (!Number.isFinite(pixelRatio) || pixelRatio <= 0) return;
     this.#pixelRatio = pixelRatio;
-    if (this.#distantStars) this.#distantStars.material.uniforms.uPixelRatio.value = pixelRatio;
-    if (this.#brightStars) this.#brightStars.material.uniforms.uPixelRatio.value = pixelRatio;
+    if (this.#starsPoints) this.#starsPoints.material.uniforms.uPixelRatio.value = pixelRatio;
     if (this.#constellationStars) this.#constellationStars.material.uniforms.uPixelRatio.value = pixelRatio;
   }
 
   update(dt) {
     this.#elapsed += dt;
 
-    if (this.#skyDome) {
-      this.#skyDome.material.uniforms.uTime.value = this.#elapsed;
-    }
-
     if (this.#starsOpacity > 0.01 && this.#celestialSpinner) {
-      this.#celestialSpinner.rotation.y = (this.#celestialSpinner.rotation.y + dt * 0.0045) % (Math.PI * 2);
+      this.#celestialSpinner.rotation.y = (this.#celestialSpinner.rotation.y + dt * 0.0042) % (Math.PI * 2);
       const spinYaw = this.#celestialSpinner.rotation.y;
 
       if (this.#skyDome) {
         this.#skyDome.material.uniforms.uSpinYaw.value = spinYaw;
       }
-      if (this.#distantStars) {
-        const u = this.#distantStars.material.uniforms;
-        u.uTime.value = this.#elapsed;
-        u.uSpinYaw.value = spinYaw;
-      }
-      if (this.#brightStars) {
-        const u = this.#brightStars.material.uniforms;
-        u.uTime.value = this.#elapsed;
-        u.uSpinYaw.value = spinYaw;
+      if (this.#starsPoints) {
+        this.#starsPoints.material.uniforms.uSpinYaw.value = spinYaw;
       }
       if (this.#constellationStars) {
-        const u = this.#constellationStars.material.uniforms;
-        u.uTime.value = this.#elapsed;
-        u.uSpinYaw.value = spinYaw;
+        this.#constellationStars.material.uniforms.uSpinYaw.value = spinYaw;
       }
       if (this.#constellationLines) {
         const pulse = 0.92 + 0.08 * Math.sin(this.#elapsed * 0.85);
         this.#constellationLines.material.opacity = 0.16 * this.#starsOpacity * pulse;
       }
-    }
-
-    if (this.#moonOpacity > 0.01 && this.#moonHalo) {
-      const haloMix = Math.max(this.#moonOpacity, this.#starsOpacity * 0.85);
-      const shimmer = 0.95 + 0.05 * Math.sin(this.#elapsed * 1.1);
-      this.#moonHalo.material.opacity = haloMix * 0.64 * shimmer;
     }
 
     this.#updateShootingStars(dt);
@@ -1190,11 +1136,6 @@ export class StarrySkySystem {
   syncToCamera(camera) {
     if (!camera || !this.#root) return;
     this.#root.position.copy(camera.position);
-    const scale = (camera.far * 0.86) / BASE_RADIUS;
-    if (Math.abs(scale - this.#lastCameraScale) > 1e-4) {
-      this.#lastCameraScale = scale;
-      this.#root.scale.setScalar(scale);
-    }
   }
 
   dispose() {
@@ -1205,17 +1146,12 @@ export class StarrySkySystem {
     this.#skyDome?.geometry?.dispose();
     this.#skyDome?.material?.dispose();
 
-    this.#moonMesh?.geometry?.dispose();
-    this.#moonMesh?.material?.dispose();
-    this.#moonHalo?.material?.dispose();
-    this.#moonTex?.dispose();
-    this.#haloTex?.dispose();
+    this.#moonDiscMesh?.geometry?.dispose();
+    this.#moonDiscMesh?.material?.dispose();
+    this.#moonCoronaMesh?.material?.dispose();
 
-    this.#distantStars?.geometry?.dispose();
-    this.#distantStars?.material?.dispose();
-
-    this.#brightStars?.geometry?.dispose();
-    this.#brightStars?.material?.dispose();
+    this.#starsPoints?.geometry?.dispose();
+    this.#starsPoints?.material?.dispose();
 
     this.#constellationStars?.geometry?.dispose();
     this.#constellationStars?.material?.dispose();
@@ -1231,20 +1167,13 @@ export class StarrySkySystem {
 
     this.#skyDome = null;
     this.#moonGroup = null;
-    this.#moonMesh = null;
-    this.#moonHalo = null;
-    this.#moonTex = null;
-    this.#haloTex = null;
-    this.#distantStars = null;
-    this.#brightStars = null;
+    this.#moonDiscMesh = null;
+    this.#moonCoronaMesh = null;
+    this.#starsPoints = null;
     this.#constellationStars = null;
     this.#constellationLines = null;
     this.#shootingRibbonGeo = null;
     this.#celestialSpinner = null;
     this.#root = null;
   }
-}
-
-function DISTANT_STAR_COUNTS_FALLBACK() {
-  return DISTANT_STAR_COUNT;
 }

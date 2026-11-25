@@ -288,6 +288,44 @@ export class WorldDecor {
         metalness: 0.0
       })
     );
+    grass.customProgramCacheKey = () => 'royal_grass_water_cutout_v1';
+    grass.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          '#include <common>\nvarying vec2 vGrassWorldXZ;'
+        )
+        .replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvec4 grassWp = modelMatrix * vec4(transformed, 1.0);\nvGrassWorldXZ = grassWp.xz;'
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          '#include <common>\nvarying vec2 vGrassWorldXZ;'
+        )
+        .replace(
+          'void main() {',
+          `void main() {
+          {
+            float wx = vGrassWorldXZ.x;
+            float wz = vGrassWorldXZ.y;
+            if (wz >= -78.2 && wz <= 39.4) {
+              float tRiv = min(1.0, (wz * wz) / 144.0);
+              float rcx = 97.5 + sin(wz * 0.07) * 7.5 * tRiv;
+              if (abs(wx - rcx) < 3.38) discard;
+            }
+            vec2 dSwan = vec2((wx - 106.0) / 20.6, (wz - 45.0) / 12.1);
+            if (dot(dSwan, dSwan) < 1.0) discard;
+            vec2 dPond = vec2((wx - 46.0) / 10.4, (wz - 26.0) / 7.9);
+            if (dot(dPond, dPond) < 1.0) discard;
+            if (wx > 31.1 && wx < 35.9 && wz > 18.1 && wz < 29.9) discard;
+            if (wx >= 35.2 && wx <= 39.0 && wz > 20.8 && wz < 29.2) discard;
+            if (wx > -23.5 && wx < -18.5 && wz > 28.1 && wz < 55.2) discard;
+            if (wx > -94.5 && wx < 94.5 && wz > 55.2 && wz < 108.0) discard;
+          }`
+        );
+    };
 
     const hillGrass = this.#trackMat(
       new THREE.MeshStandardMaterial({
@@ -1714,6 +1752,10 @@ export class WorldDecor {
       }
       this.#finalizeStaticInstanced(cloverInst);
     }
+  }
+
+  getWaterSystem() {
+    return this.#waterSystem;
   }
 
   applyTheme(theme) {

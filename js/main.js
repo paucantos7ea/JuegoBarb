@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Engine } from './core/Engine.js';
 import { InputManager } from './core/InputManager.js';
 import { AudioManager } from './core/AudioManager.js';
@@ -21,7 +22,8 @@ class ReinoRosaApp {
   #menuUI = null;
   #preview = null;
   #inGame = false;
-  #orbitAngle = 0.55;
+  #orbitAngle = 0.22;
+  #previewFocus = new THREE.Vector3(0, 0, -20);
   #lastFrameTime = 0;
   #rafId = null;
 
@@ -48,7 +50,7 @@ class ReinoRosaApp {
     });
     this.#menuUI.init();
 
-    await this.#loadMenuPreview('palacio_cristal');
+    await this.#loadMenuPreview('gala_imperial');
     this.#lastFrameTime = performance.now();
     this.#loop(this.#lastFrameTime);
   }
@@ -74,6 +76,7 @@ class ReinoRosaApp {
     decor.init();
     arena.init();
     fauna.init();
+    fauna.setWaterSystem?.(decor.getWaterSystem?.());
     casinoDome.init();
     this.#preview = { castle, decor, arena, fauna, casinoDome, dummyCol };
     this.#applyPreviewTheme(worldId);
@@ -143,11 +146,12 @@ class ReinoRosaApp {
       this.#orbitAngle += dt * 0.14;
       const cam = this.#engine.getCamera();
       cam.position.set(
-        Math.sin(this.#orbitAngle) * 44,
-        19.0 + Math.sin(this.#orbitAngle * 1.5) * 2.5,
-        Math.cos(this.#orbitAngle) * 42 - 12
+        Math.sin(this.#orbitAngle) * 38,
+        9.5 + Math.sin(this.#orbitAngle * 1.5) * 1.8,
+        Math.cos(this.#orbitAngle) * 38 - 6
       );
-      cam.lookAt(0, 9.0, -28);
+      cam.lookAt(0, 14.5, -36);
+      this.#engine.updateShadowTarget(this.#previewFocus);
       this.#preview?.castle?.update(dt);
       this.#preview?.decor?.update(dt);
       this.#preview?.arena?.update(dt);

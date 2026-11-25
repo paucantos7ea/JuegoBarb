@@ -134,6 +134,25 @@ export class CollisionSystem {
     this.#insertIntoGrid(this.#surfaceGrid, surface, minX, maxX, minZ, maxZ);
   }
 
+  addCustomSurface(minX, maxX, minZ, maxZ, heightFn) {
+    const cx = (minX + maxX) * 0.5;
+    const cz = (minZ + maxZ) * 0.5;
+    const boundR = Math.hypot((maxX - minX) * 0.5, (maxZ - minZ) * 0.5);
+    const surface = {
+      minX,
+      maxX,
+      minZ,
+      maxZ,
+      cx,
+      cz,
+      boundR,
+      stamp: 0,
+      getHeight: heightFn
+    };
+    this.#surfaces.push(surface);
+    this.#insertIntoGrid(this.#surfaceGrid, surface, minX, maxX, minZ, maxZ);
+  }
+
   getGroundHeight(x, z, currentY = 0, maxStepUp = 1.15) {
     let bestY = 0;
     const gx = Math.floor(x / CELL_SIZE);
