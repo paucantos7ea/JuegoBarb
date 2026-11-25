@@ -501,7 +501,7 @@ export class CoopExploreMode {
     this.#wardrobeFX?.update(dt);
 
     const pos = this.#player.getPosition();
-    this.#horses?.update(dt);
+    this.#horses?.update(dt, pos);
     this.#fauna?.update(dt, this.#ctx.engine.getElapsed(), pos, this.#ctx.input.isSprinting());
     this.#npcs?.update(dt, pos, Boolean(this.#dialogue?.isOpen()));
     this.#quests?.update(dt, pos);

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
-import { createHorseModel, animateHorseModel, HORSE_SEAT_OFFSET } from '../world/HorseSystem.js';
+import { createHorseModel, animateHorseModel, placeRiderOnHorse, updateHorseReins } from '../world/HorseSystem.js';
 
 /**
  * Valida los campos del catálogo 3D recibidos por red para sincronizar
@@ -44,6 +44,8 @@ export class RemotePlayer {
   #horseModel = null;
   #mountVariant = null;
   #mountAnim = 'idle';
+  #horseLodAcc = 0;
+  #horseLodFrame = 0;
 
   constructor(scene, peerId, profile = {}, textureFactory = null) {
     this.#scene = scene;
@@ -253,16 +255,23 @@ export class RemotePlayer {
           this.#horseModel = null;
         }
         this.#horseModel = createHorseModel(state.mount.v);
+        this.#horseModel.root.position.copy(this.#currentPos);
+        this.#horseModel.root.rotation.y = this.#currentYaw;
         this.#scene.add(this.#horseModel.root);
         this.#mountVariant = state.mount.v;
+        this.#rig?.setRidingMode(true, this.#horseModel.mount);
       }
-      this.#mountAnim = state.mount.a || 'idle';
+      const a = state.mount.a;
+      this.#mountAnim = a === 'walk' || a === 'run' || a === 'jump' ? a : 'idle';
     } else if (this.#horseModel) {
       this.#scene.remove(this.#horseModel.root);
       this.#horseModel.dispose();
       this.#horseModel = null;
       this.#mountVariant = null;
       this.#mountAnim = 'idle';
+      const root = this.#rig?.getRoot();
+      if (root) root.rotation.set(0, this.#currentYaw, 0);
+      this.#rig?.setRidingMode(false);
     }
   }
 
@@ -301,27 +310,38 @@ export class RemotePlayer {
     root.rotation.y = this.#currentYaw;
 
     let lod = 0;
+    let horseLod = 0;
     if (localPlayerPos) {
       const distSq = this.#currentPos.distanceToSquared(localPlayerPos);
       if (distSq > 2025) lod = 2;
       else if (distSq > 625) lod = 1;
+      if (distSq > 8100) horseLod = 2;
+      else if (distSq > 2500) horseLod = 1;
     }
 
     if (this.#horseModel) {
-      this.#horseModel.root.position.copy(this.#currentPos);
-      this.#horseModel.root.rotation.y = this.#currentYaw;
+      const hm = this.#horseModel;
+      hm.root.position.copy(this.#currentPos);
+      hm.root.rotation.y = this.#currentYaw;
       const horseSpeedRatio = this.#mountAnim === 'run' ? 1 : this.#mountAnim === 'walk' ? 0.55 : 0;
-      animateHorseModel(this.#horseModel, this.#mountAnim, dt, horseSpeedRatio);
-
-      const sinY = Math.sin(this.#currentYaw);
-      const cosY = Math.cos(this.#currentYaw);
-      root.position.set(
-        this.#currentPos.x + sinY * HORSE_SEAT_OFFSET.z,
-        this.#currentPos.y + HORSE_SEAT_OFFSET.y + this.#horseModel.bounceY,
-        this.#currentPos.z + cosY * HORSE_SEAT_OFFSET.z
-      );
+      // LOD del caballo remoto: lejos se anima 1 de cada 3 fotogramas y sin micro-animaciones
+      let animate = true;
+      let hdt = dt;
+      if (horseLod > 0) {
+        this.#horseLodAcc += dt;
+        this.#horseLodFrame++;
+        animate = this.#horseLodFrame % 3 === 0;
+        hdt = this.#horseLodAcc;
+      }
+      if (animate) {
+        animateHorseModel(hm, this.#mountAnim, hdt, horseSpeedRatio, horseLod < 2);
+        this.#horseLodAcc = 0;
+      }
+      placeRiderOnHorse(hm, root);
+      this.#rig.setRidingMode(true, hm.mount);
       const riderSpeed = this.#mountAnim === 'run' ? 18 : this.#mountAnim === 'walk' ? 11 : 0;
       this.#rig.update(dt, 'riding', riderSpeed, lod);
+      if (horseLod < 2) updateHorseReins(hm, this.#rig);
     } else {
       root.position.copy(this.#currentPos);
       this.#rig.update(dt, this.#animState, 0, lod);

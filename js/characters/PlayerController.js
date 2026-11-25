@@ -94,6 +94,7 @@ export class PlayerController {
     this.#horseAnim = 'idle';
     this.#horseSpeedRatio = 0;
     this.#rig?.cancelEmote();
+    this.#rig?.setRidingMode(true, horse.model?.mount ?? null);
     return true;
   }
 
@@ -108,7 +109,8 @@ export class PlayerController {
     if (this.#rig) {
       const root = this.#rig.getRoot();
       root.position.copy(this.#position);
-      root.rotation.y = this.#facingYaw;
+      root.rotation.set(0, this.#facingYaw, 0);
+      this.#rig.setRidingMode(false);
       this.#rig.resetMotion();
     }
     return true;
@@ -307,16 +309,12 @@ export class PlayerController {
       );
       this.#mountSeat = seat;
 
-      const sinY = Math.sin(this.#facingYaw);
-      const cosY = Math.cos(this.#facingYaw);
-      root.position.set(
-        this.#position.x + sinY * seat.seatZ,
-        this.#position.y + seat.seatY + seat.bounceY,
-        this.#position.z + cosY * seat.seatZ
-      );
-      root.rotation.y = this.#facingYaw;
+      // Pelvis exactamente sobre el asiento (rebote, cabeceo y banking del caballo incluidos)
+      this.#horseSystem.placeRider(this.#mountedHorse, root);
       this.#animState = 'riding';
+      this.#rig.setRidingMode(true, seat);
       this.#rig.update(dt, 'riding', isMoving ? speed : 0);
+      this.#horseSystem.updateReins(this.#mountedHorse, this.#rig);
     } else {
       if (!this.#isGrounded) {
         this.#animState = 'jump';

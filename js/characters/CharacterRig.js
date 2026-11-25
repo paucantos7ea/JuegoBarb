@@ -5,6 +5,8 @@ import { HairBuilder } from './catalog/HairBuilder.js';
 import { OutfitBuilder } from './catalog/OutfitBuilder.js';
 import { PrinceRigBuilder } from './catalog/PrinceRigBuilder.js';
 import { CharacterAnimator } from './CharacterAnimator.js';
+import { buildRidingMorphs, RIDE_MORPH } from './RidingDrape.js';
+import { RIDER_POSE } from '../world/HorseAnatomy.js';
 
 const SPINE_Y = 1.0;   // Pivote de la columna (cintura): el torso se inclina sin mover los pies
 const WAIST_Y = 1.04;  // Pivote del vuelo de la falda
@@ -35,6 +37,8 @@ export class CharacterRig {
   #spine = null; #spineInner = null; #skirtPivot = null; #skirtInner = null;
   #hairSwing = null; #hairSwingInner = null; #torso = null; #animator = null;
   #isMale = false; #outfitStyle = 'ballgown';
+  // Falda a caballo: mallas con morph targets precalculados (skirtGroup / capas de la columna)
+  #rideMeshes = []; #rideMorphsReady = false; #ridingRequested = false;
   #appearance = CatalogData.getDefaultAppearance('aurora');
 
   constructor(initialAppearance = null) {
@@ -57,11 +61,14 @@ export class CharacterRig {
     this.#isMale = avatar.gender === 'male';
     this.#root = new THREE.Group();
     this.#root.userData.isCharacter = true;
+    // Yaw -> cabeceo -> alabeo: el mismo marco que el cuerpo del caballo al montar
+    this.#root.rotation.order = 'YXZ';
     this.#bodyGroup = new THREE.Group();
     this.#root.add(this.#bodyGroup);
     // Columna (torso, brazos, cabeza) con pivote en la cintura y vuelo de falda en la cadera
     [this.#spine, this.#spineInner] = this.#makePivot(this.#bodyGroup, new THREE.Vector3(0, SPINE_Y, 0));
     [this.#skirtPivot, this.#skirtInner] = this.#makePivot(this.#bodyGroup, new THREE.Vector3(0, WAIST_Y, 0));
+    this.#skirtPivot.name = 'skirtGroup';
 
     this.#createMaterials();
     if (this.#isMale) {
@@ -132,7 +139,7 @@ export class CharacterRig {
 
   /** Falda/faldones (tornos) y adornos bajos van al pivote de cintura para tener vuelo. */
   #isSkirtPart(mesh) {
-    return mesh.geometry?.type === 'LatheGeometry' || mesh.position.y < 0.6;
+    return mesh.userData.skirtPart === true || mesh.geometry?.type === 'LatheGeometry' || mesh.position.y < 0.6;
   }
 
   /** Mechones y mantos que caen por debajo de las orejas tienen balanceo con inercia. */
@@ -443,6 +450,11 @@ export class CharacterRig {
     CharacterRig.mergeGroupByMaterial(this.#hairSwingInner);
     this.#animator?.setBaseArmZ(this.#getBaseArmZ());
 
+    // Las mallas de falda se han reconstruido: sus morphs de montar se recalculan
+    this.#rideMeshes.length = 0;
+    this.#rideMorphsReady = false;
+    if (this.#ridingRequested) this.#buildRideMorphs();
+
     const activeAcc = new Set(ap.accessories);
     for (const [id, node] of Object.entries(this.#accessoryNodes)) {
       node.visible = activeAcc.has(id);
@@ -471,9 +483,111 @@ export class CharacterRig {
     return wideSkirt ? 0.35 : 0.32;
   }
 
-  /** Avanza la animación (idle, walk, run, jump, dance, pose, talk) y la física secundaria. */
+  /** Avanza la animación (idle, walk, run, jump, dance, pose, talk, riding) y la física secundaria. */
   update(dt, animState = 'idle', speed = 0, lod = 0) {
     this.#animator?.update(dt, animState, speed, lod);
+    this.#applyRideMorphs();
+  }
+
+  /**
+   * Modo montura. Al montar, la falda (skirtGroup) y las capas largas se transforman con
+   * morph targets precalculados que la dejan caer sobre la grupa y los flancos del caballo sin
+   * atravesarlo nunca; al desmontar vuelven a su forma en ~0.25 s.
+   * @param {boolean} isRiding
+   * @param {object} [horseData] datos prealocados de la montura (HorseSystem model.mount)
+   */
+  setRidingMode(isRiding, horseData = null) {
+    this.#ridingRequested = Boolean(isRiding);
+    if (isRiding && !this.#rideMorphsReady) this.#buildRideMorphs();
+    this.#animator?.setRidingMode(Boolean(isRiding), horseData);
+  }
+
+  /** Posición de ambas manos en el marco de la raíz (para anclar las riendas). */
+  getHandPositions(outL, outR) {
+    if (!this.#bodyGroup) return false;
+    this.#bodyGroup.updateMatrix();
+    this.#spine.updateMatrix();
+    this.#spineInner.updateMatrix();
+    this.#solveHand(this.#leftShoulder, this.#leftForearm, outL);
+    this.#solveHand(this.#rightShoulder, this.#rightForearm, outR);
+    return true;
+  }
+
+  #solveHand(shoulder, fore, out) {
+    shoulder.updateMatrix();
+    fore.updateMatrix();
+    out.set(0, this.#isMale ? -0.268 : -0.265, 0)
+      .applyMatrix4(fore.matrix)
+      .applyMatrix4(shoulder.matrix)
+      .applyMatrix4(this.#spineInner.matrix)
+      .applyMatrix4(this.#spine.matrix)
+      .applyMatrix4(this.#bodyGroup.matrix);
+  }
+
+  /** Aplica los pesos de la física de la falda a caballo a los morph targets (sin asignaciones). */
+  #applyRideMorphs() {
+    if (!this.#rideMorphsReady || !this.#animator) return;
+    const w = this.#animator.getRideWeights();
+    const T = w.T;
+    for (let i = 0; i < this.#rideMeshes.length; i++) {
+      const inf = this.#rideMeshes[i].morphTargetInfluences;
+      if (!inf) continue;
+      inf[RIDE_MORPH.DRAPE] = T;
+      inf[RIDE_MORPH.LIFT] = T * w.lift;
+      inf[RIDE_MORPH.WAVE_S] = T * w.waveS;
+      inf[RIDE_MORPH.WAVE_C] = T * w.waveC;
+      inf[RIDE_MORPH.OUT_POS] = T * w.outPos;
+      inf[RIDE_MORPH.OUT_NEG] = T * w.outNeg;
+    }
+  }
+
+  /** Cápsulas de las piernas del jinete en la pose de estribos (marco del cuerpo del rig). */
+  #riderLegCapsules() {
+    const P = RIDER_POSE;
+    const caps = [];
+    const thighR = this.#isMale ? 0.080 : 0.068;
+    const shinR = this.#isMale ? 0.062 : 0.050;
+    const e = new THREE.Euler();
+    const q = new THREE.Quaternion();
+    const one = new THREE.Vector3(1, 1, 1);
+    const legs = [[this.#leftLeg, this.#leftShin, 1], [this.#rightLeg, this.#rightShin, -1]];
+    for (const [leg, shin, side] of legs) {
+      const mLeg = new THREE.Matrix4().compose(leg.position, q.setFromEuler(e.set(P.legX, 0, side * P.legZ)), one);
+      const mShin = new THREE.Matrix4().compose(shin.position, q.setFromEuler(e.set(P.shinX, 0, side * P.shinZ)), one);
+      const hip = leg.position.clone();
+      const knee = shin.position.clone().applyMatrix4(mLeg);
+      const ankle = new THREE.Vector3(0, -0.43, 0).applyMatrix4(mShin).applyMatrix4(mLeg);
+      const toe = new THREE.Vector3(0, -0.44, 0.13).applyMatrix4(mShin).applyMatrix4(mLeg);
+      caps.push({ a: hip, b: knee, r: thighR + 0.014 }, { a: knee, b: ankle, r: shinR + 0.014 }, { a: ankle, b: toe, r: 0.05 });
+    }
+    return caps;
+  }
+
+  /** Precalcula (una vez por vestido) la caída a caballo de falda y capas largas. */
+  #buildRideMorphs() {
+    if (!this.#skirtInner || !this.#outfitGroup) return;
+    const caps = this.#riderLegCapsules();
+    const pelvis = { c: new THREE.Vector3(0, 0.95, 0), r: new THREE.Vector3(0.165, 0.10, 0.125) };
+    const meshes = [];
+    for (const child of this.#skirtInner.children) {
+      if (child.isMesh) meshes.push([child, 'skirt']);
+    }
+    for (const child of this.#outfitGroup.children) {
+      if (!child.isMesh) continue;
+      const geo = child.geometry;
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      child.updateMatrix();
+      if (_box.copy(geo.boundingBox).applyMatrix4(child.matrix).min.y < 0.98) meshes.push([child, 'spine']);
+    }
+    for (const [mesh, kind] of meshes) {
+      // Ribetes/cristales encima de la tela que adornan; capas por orden radial a igual altura
+      const m = this.#materials;
+      const bias = mesh.material === m.roseGold || mesh.material === m.crystal ? 0.006 : mesh.material === m.shawl ? 0.016 : 0;
+      buildRidingMorphs(mesh, kind, caps, pelvis, bias);
+      this.#rideMeshes.push(mesh);
+    }
+    this.#rideMorphsReady = true;
+    this.#applyRideMorphs();
   }
 
   /** Emotes: 'wave' | 'spin' | 'curtsy' | 'star'. */

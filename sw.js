@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v12';
-const CACHE_ASSETS = 'reino-rosa-assets-v12';
+const CACHE_STATIC = 'reino-rosa-static-v13';
+const CACHE_ASSETS = 'reino-rosa-assets-v13';
 
 const PRECACHE_URLS = [
   './',
@@ -18,6 +18,7 @@ const PRECACHE_URLS = [
   './js/core/Engine.js',
   './js/core/InputManager.js',
   './js/core/PwaManager.js',
+  './js/core/SpringValue.js',
   './js/core/TextureFactory.js',
   './js/world/ArenaBuilder.js',
   './js/world/CasinoDomeBuilder.js',
@@ -27,6 +28,7 @@ const PRECACHE_URLS = [
   './js/world/CoinSystem.js',
   './js/world/CollisionSystem.js',
   './js/world/FaunaSystem.js',
+  './js/world/HorseAnatomy.js',
   './js/world/HorseSystem.js',
   './js/world/Minigames.js',
   './js/world/Quests.js',
@@ -37,6 +39,7 @@ const PRECACHE_URLS = [
   './js/characters/NPCManager.js',
   './js/characters/PlayerController.js',
   './js/characters/RemotePlayer.js',
+  './js/characters/RidingDrape.js',
   './js/characters/catalog/CatalogData.js',
   './js/characters/catalog/FaceBuilder.js',
   './js/characters/catalog/HairBuilder.js',

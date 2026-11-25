@@ -70,6 +70,12 @@ export class OutfitBuilder {
       mesh.scale.set(sx, sy, sz);
       mesh.castShadow = castShadow && mat !== materials.crystal;
       mesh.receiveShadow = true;
+      // Paneles de falda/sobrefalda (tornos): CharacterRig los lleva al skirtGroup, donde
+      // reciben el vuelo a pie y la caída sin clipping a caballo (morph targets de RidingDrape)
+      if (geo.type === 'LatheGeometry') {
+        mesh.userData.skirtPart = true;
+        mesh.userData.skirtLayer = mat === materials.secondary ? 'overskirt' : 'skirt';
+      }
       group.add(mesh);
       return mesh;
     };

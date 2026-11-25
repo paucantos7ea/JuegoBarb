@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { SpringValue } from '../core/SpringValue.js';
+import { RIDER_POSE } from '../world/HorseAnatomy.js';
+import { RIDER_LEAN_RANGE } from './RidingDrape.js';
 
 const TAU = Math.PI * 2;
 const THIGH = 0.44;
@@ -10,6 +13,7 @@ const MAX_SPRING_STEP = 1 / 120;
 const clamp = THREE.MathUtils.clamp;
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const smoothstep = (k) => k * k * (3 - 2 * k);
+const lerpTo = (cur, target, k) => cur + (target - cur) * k;
 
 /**
  * Definiciones de emotes [1-4] y micro-gestos en reposo.
@@ -45,7 +49,7 @@ export class PoseLibrary {
     p.headX = 0; p.headY = 0; p.headZ = 0;
     p.lArmX = 0; p.lArmZ = baseZ; p.rArmX = 0; p.rArmZ = -baseZ;
     p.lForeX = -0.22; p.lForeZ = 0.08; p.rForeX = -0.22; p.rForeZ = -0.08;
-    p.lLegX = 0; p.rLegX = 0; p.lLegZ = 0; p.rLegZ = 0; p.lShinX = 0; p.rShinX = 0;
+    p.lLegX = 0; p.rLegX = 0; p.lLegZ = 0; p.rLegZ = 0; p.lShinX = 0; p.rShinX = 0; p.lShinZ = 0; p.rShinZ = 0;
     p.breath = 0; p.flare = 0;
     return p;
   }
@@ -118,34 +122,33 @@ export class PoseLibrary {
     });
   }
 
-  /** Monta a caballo: piernas abiertas en la silla, rodillas flexionadas a los estribos y manos en las riendas. */
-  static riding(p, t, baseZ, speed = 0) {
-    const isRunning = speed > 13.0;
-    const isMoving = speed > 0.5;
-    const freq = isRunning ? 12.5 : (isMoving ? 7.8 : 2.0);
-    const bob = isMoving ? Math.sin(t * freq) * (isRunning ? 0.032 : 0.016) : Math.sin(t * 2.0) * 0.008;
+  /**
+   * Monta a caballo: caderas abiertas lo justo para rodear el barril, rodillas flexionadas hacia
+   * los estribos (pose calculada contra el volumen real del caballo), espalda erguida y codos
+   * flexionados con las manos adelantadas sobre las riendas. `r` = estado físico del jinete.
+   */
+  static riding(p, t, r) {
+    const P = RIDER_POSE;
+    p.lLegX = P.legX; p.rLegX = P.legX;
+    p.lLegZ = P.legZ; p.rLegZ = -P.legZ;
+    p.lShinX = P.shinX; p.rShinX = P.shinX;
+    p.lShinZ = P.shinZ; p.rShinZ = -P.shinZ;
+    p.flare = 0;
 
-    p.lLegZ = 0.44;
-    p.rLegZ = -0.44;
-    p.lLegX = -0.62;
-    p.rLegX = -0.62;
-    p.lShinX = 0.92;
-    p.rShinX = 0.92;
-    p.flare = 0.14;
+    p.bodyY = r.residual + r.hop;
+    p.spineX = r.lean;
+    p.spineZ = r.inLean;
+    p.headX = -r.lean * 0.65 + Math.sin(t * 0.7) * 0.015;
+    p.headZ = -r.bank * 0.45;
+    p.headY = r.speed < 0.5 ? Math.sin(t * 0.45) * 0.12 : 0;
 
-    p.bodyY = bob;
-    p.spineX = isRunning ? 0.16 : (isMoving ? 0.06 : 0.02);
-    p.headX = -p.spineX * 0.6;
-    p.headY = isMoving ? 0 : Math.sin(t * 0.45) * 0.1;
-
-    p.lArmX = -0.62;
-    p.rArmX = -0.62;
-    p.lArmZ = baseZ * 0.55;
-    p.rArmZ = -baseZ * 0.55;
-    p.lForeX = -0.58 + bob * 1.2;
-    p.rForeX = -0.58 + bob * 1.2;
-    p.lForeZ = -0.14;
-    p.rForeZ = 0.14;
+    // Manos sobre las riendas: acompañan el rebote con los codos
+    const give = r.residual * 2.2;
+    p.lArmX = P.armX + give; p.rArmX = P.armX + give;
+    p.lArmZ = P.armZ; p.rArmZ = -P.armZ;
+    p.lForeX = P.foreX - give * 1.3; p.rForeX = P.foreX - give * 1.3;
+    p.lForeZ = P.foreZ; p.rForeZ = -P.foreZ;
+    p.breath = Math.sin(t * 1.9) * 0.5;
   }
 
   /** Limpia un objeto de pose parcial reutilizable sin reasignar. */
@@ -297,21 +300,25 @@ class SpringMotion {
     const skirtZ = clamp(-m.yawRate * 0.05 - m.side * 0.012, -0.2, 0.2) + m.sway * 0.035;
     this.#skirt.step(skirtX, skirtZ, dt);
 
-    const hairX = clamp(m.fwd * 0.028 + falling * 0.022, -0.06, 0.36);
+    const hairCap = m.riding ? 0.52 : 0.36;
+    const flutter = m.riding ? Math.sin(m.t * 9.5) * 0.035 * clamp(m.fwd / 15, 0, 1) : 0;
+    const hairX = clamp(m.fwd * (m.riding ? 0.032 : 0.028) + falling * 0.022 + flutter, -0.06, hairCap);
     const hairZ = clamp(-m.yawRate * 0.07 - m.side * 0.025, -0.24, 0.24);
     this.#hair.step(hairX, hairZ, dt);
 
     this.#flare.step(clamp(m.flare + falling * 0.012 + Math.abs(m.yawRate) * 0.012, 0, 0.2), 0, dt);
   }
 
-  apply(skirtPivot, hairSwing) {
+  /** rideT ∈ [0,1]: a caballo la falda deja el vuelo rígido (lo gestionan los morphs de montar). */
+  apply(skirtPivot, hairSwing, rideT = 0) {
     if (skirtPivot) {
-      const f = Math.max(-0.02, this.#flare.x);
-      skirtPivot.rotation.set(this.#skirt.x, 0, this.#skirt.z);
+      const free = 1 - rideT;
+      const f = Math.max(-0.02, this.#flare.x) * free;
+      skirtPivot.rotation.set(this.#skirt.x * free, 0, this.#skirt.z * free);
       skirtPivot.scale.set(1 + f, 1 - f * 0.3, 1 + f);
     }
     if (hairSwing) {
-      hairSwing.rotation.set(clamp(this.#hair.x, -0.1, 0.42), 0, clamp(this.#hair.z, -0.28, 0.28));
+      hairSwing.rotation.set(clamp(this.#hair.x, -0.1, 0.55), 0, clamp(this.#hair.z, -0.28, 0.28));
     }
   }
 
@@ -341,7 +348,16 @@ export class CharacterAnimator {
   #prevYaw = 0; #yawRate = 0; #hasPrev = false; #spinAngle = 0; #smoothYaw = 0; #breath = 0;
   #torsoBase = new THREE.Vector3(1, 1, 1); #shoulderY = 0;
   #motionOut = { fwd: 0, side: 0, vy: 0, spinRate: 0 };
-  #springIn = { fwd: 0, side: 0, vy: 0, yawRate: 0, sway: 0, flare: 0 };
+  #springIn = { fwd: 0, side: 0, vy: 0, yawRate: 0, sway: 0, flare: 0, riding: false, t: 0 };
+  // Montura: transición de la falda, muelle vertical del jinete, inclinación y pesos de la tela
+  #ride = { on: false, k: 0, T: 0, hopT: 1, data: null, resetY: true };
+  #rideState = { residual: 0, hop: 0, lean: 0, inLean: 0, bank: 0, speed: 0 };
+  #riderY = new SpringValue(320, 30);
+  #lean = new SpringValue(55, 11);
+  #rideLift = new SpringValue(30, 6.5);
+  #rideOut = new SpringValue(40, 7);
+  #wavePhase = 0;
+  #rideWeights = { T: 0, lift: 0, waveS: 0, waveC: 0, outPos: 0, outNeg: 0 };
   #partialPose = {};
 
   constructor(bones, isMale = false) {
@@ -353,6 +369,28 @@ export class CharacterAnimator {
   }
 
   setBaseArmZ(z) { this.#baseZ = z; }
+
+  /**
+   * Activa/desactiva el modo montura. `horseData` es el objeto prealocado del caballo
+   * (rebote, cabeceo, banking, velocidad, aceleración, vy, giro, marcha); se lee cada fotograma.
+   */
+  setRidingMode(isRiding, horseData = null) {
+    const r = this.#ride;
+    if (horseData) r.data = horseData;
+    if (isRiding === r.on) return;
+    r.on = isRiding;
+    if (isRiding) {
+      r.hopT = 0;
+      r.resetY = true;
+    } else {
+      r.data = null;
+    }
+  }
+
+  isRiding() { return this.#ride.on; }
+
+  /** Pesos de los morph targets de montar (transición, viento, onda, giros). */
+  getRideWeights() { return this.#rideWeights; }
 
   /** Lanza un emote ('wave' | 'spin' | 'curtsy' | 'star'). Devuelve false si no existe. */
   playEmote(id) {
@@ -382,12 +420,15 @@ export class CharacterAnimator {
     this.#prevState = state;
     if (LOCO.has(state)) this.#emote = null;
 
+    this.#updateRideTransition(dt);
+    const riding = state === 'riding';
+    if (riding) this.#updateRider(dt, motion);
     const p = PoseLibrary.reset(this.#pose, this.#baseZ);
     let sway = 0;
     switch (state) {
       case 'walk': case 'run': sway = PoseLibrary.locomotion(p, t, this.#baseZ, state === 'run'); break;
       case 'jump': PoseLibrary.jump(p, this.#baseZ); break;
-      case 'riding': PoseLibrary.riding(p, t, this.#baseZ, speed); break;
+      case 'riding': PoseLibrary.riding(p, t, this.#rideState); break;
       case 'dance': PoseLibrary.dance(p, t); break;
       case 'pose': PoseLibrary.pose(p, t, this.#baseZ, this.#isMale); break;
       case 'talk': PoseLibrary.idle(p, t, this.#baseZ); PoseLibrary.talk(p, t, this.#baseZ); break;
@@ -415,7 +456,7 @@ export class CharacterAnimator {
     }
     if (state !== 'jump' && state !== 'riding' && runFar) this.#plantFeet(p);
 
-    this.#applyPose(dt, p, runFar);
+    this.#applyPose(dt, p, runFar, riding);
     if (runMid) this.#updateBlink(dt);
     if (runFar) {
       const si = this.#springIn;
@@ -425,9 +466,86 @@ export class CharacterAnimator {
       si.yawRate = this.#yawRate + motion.spinRate;
       si.sway = sway * (state === 'run' ? 1 : 0.6);
       si.flare = p.flare;
+      si.riding = riding;
+      si.t = t;
       this.#springs.update(dt, si);
-      this.#springs.apply(this.#b.skirtPivot, this.#b.hairSwing);
+      this.#springs.apply(this.#b.skirtPivot, this.#b.hairSwing, this.#ride.T);
     }
+    this.#updateRideWeights(dt, motion, t);
+  }
+
+  /** Transición suave (~0.25 s) de la falda entre forma normal y caída a caballo. */
+  #updateRideTransition(dt) {
+    const r = this.#ride;
+    r.k = r.on ? Math.min(1, r.k + dt / 0.25) : Math.max(0, r.k - dt / 0.25);
+    r.T = r.on ? 1 - (1 - r.k) ** 3 : smoothstep(r.k);
+    if (r.hopT < 1) r.hopT = Math.min(1, r.hopT + dt / 0.28);
+  }
+
+  /** Física del jinete: amortiguación vertical, inclinación por marcha/aceleración y banking. */
+  #updateRider(dt, motion) {
+    const r = this.#ride;
+    const rs = this.#rideState;
+    const d = r.data;
+    const rootY = this.#b.root.position.y;
+    const sp = this.#riderY;
+    if (r.resetY) {
+      sp.reset(rootY);
+      this.#lean.reset(0.04);
+      r.resetY = false;
+    }
+    // El jinete no está soldado: absorbe el ritmo con retardo, pero la silla nunca le deja hundirse
+    sp.step(rootY, dt);
+    if (sp.x < rootY) {
+      sp.x = rootY;
+      if (sp.v < 0) sp.v = 0;
+    } else if (sp.x > rootY + 0.025) {
+      sp.x = rootY + 0.025;
+      if (sp.v > 0) sp.v = 0;
+    }
+    rs.residual = sp.x - rootY;
+    rs.hop = 0.30 * (1 - smoothstep(r.hopT));
+
+    const speed = d ? d.speed : Math.hypot(motion.fwd, motion.side);
+    const accel = d ? d.accel : 0;
+    const vy = d ? d.vy : motion.vy;
+    const gait = d ? d.gait : 'idle';
+    let leanT = gait === 'run' ? 0.17 : gait === 'walk' ? 0.07 : 0.03;
+    if (gait === 'jump') leanT = vy > 0 ? 0.22 : 0.06;
+    leanT += clamp(accel * 0.012, -0.10, 0.06);
+    rs.lean = this.#lean.stepClamped(leanT, dt, RIDER_LEAN_RANGE.min, RIDER_LEAN_RANGE.max);
+    rs.bank = d ? d.bank : 0;
+    rs.inLean = clamp(rs.bank * 0.35, -0.05, 0.05);
+    rs.speed = speed;
+  }
+
+  /** Pesos de la falda a caballo: viento/galope, caída de saltos, onda viajera y giros. */
+  #updateRideWeights(dt, motion, t) {
+    const w = this.#rideWeights;
+    const r = this.#ride;
+    w.T = r.T;
+    if (r.T <= 0) {
+      this.#rideLift.reset(0);
+      this.#rideOut.reset(0);
+      w.lift = w.waveS = w.waveC = w.outPos = w.outNeg = 0;
+      return;
+    }
+    const d = r.data;
+    const speed = d ? d.speed : 0;
+    const vy = d ? d.vy : motion.vy;
+    const yawRate = d ? d.yawRate : this.#yawRate;
+    const gait = d ? d.gait : 'idle';
+    const liftT = clamp(speed / 18, 0, 1) * 0.85 + clamp(-vy * 0.06, 0, 0.45) + (gait === 'idle' ? 0.05 + Math.sin(t * 0.8) * 0.04 : 0);
+    const lift = this.#rideLift.stepClamped(Math.min(1, liftT), dt, 0, 1);
+    this.#wavePhase = (this.#wavePhase + dt * (6 + speed * 0.35)) % TAU;
+    const amp = lift * 0.85;
+    w.lift = lift;
+    w.waveS = amp * Math.cos(this.#wavePhase);
+    w.waveC = -amp * Math.sin(this.#wavePhase);
+    const out = this.#rideOut.stepClamped(clamp(yawRate * clamp(speed / 10, 0, 1.2) * 0.45, -1, 1), dt, -1, 1);
+    // Giro hacia +X (yawRate > 0) => el exterior de la curva es -X
+    w.outNeg = out > 0 ? out : 0;
+    w.outPos = out < 0 ? -out : 0;
   }
 
   #trackMotion(dt) {
@@ -516,30 +634,34 @@ export class CharacterAnimator {
     p.bodyY += Math.max(dl, dr) - LEG;
   }
 
-  #applyPose(dt, p, applyBreathing = true) {
+  #applyPose(dt, p, applyBreathing = true, riding = false) {
     const b = this.#b;
     const a = 1 - Math.exp(-dt * 12);
-    const L = (cur, target) => cur + (target - cur) * a;
-    b.body.position.x = L(b.body.position.x, p.bodyX);
-    b.body.position.y = L(b.body.position.y, p.bodyY);
-    b.body.rotation.x = L(b.body.rotation.x, p.bodyRotX);
-    b.body.rotation.z = L(b.body.rotation.z, p.bodyRotZ);
-    this.#smoothYaw = L(this.#smoothYaw, p.bodyRotY);
+    b.body.position.x = lerpTo(b.body.position.x, p.bodyX, a);
+    // A caballo la altura la dicta el muelle del jinete (sin retardo extra que lo hundiría en la silla)
+    b.body.position.y = riding ? p.bodyY : lerpTo(b.body.position.y, p.bodyY, a);
+    b.body.rotation.x = lerpTo(b.body.rotation.x, p.bodyRotX, a);
+    b.body.rotation.z = lerpTo(b.body.rotation.z, p.bodyRotZ, a);
+    this.#smoothYaw = lerpTo(this.#smoothYaw, p.bodyRotY, a);
     b.body.rotation.y = this.#smoothYaw + this.#spinAngle;
-    b.spine.rotation.set(L(b.spine.rotation.x, p.spineX), L(b.spine.rotation.y, p.spineY), L(b.spine.rotation.z, p.spineZ));
-    b.head.rotation.set(L(b.head.rotation.x, p.headX), L(b.head.rotation.y, p.headY), L(b.head.rotation.z, p.headZ));
-    b.lShoulder.rotation.set(L(b.lShoulder.rotation.x, p.lArmX), 0, L(b.lShoulder.rotation.z, p.lArmZ));
-    b.rShoulder.rotation.set(L(b.rShoulder.rotation.x, p.rArmX), 0, L(b.rShoulder.rotation.z, p.rArmZ));
-    b.lFore.rotation.set(L(b.lFore.rotation.x, p.lForeX), 0, L(b.lFore.rotation.z, p.lForeZ));
-    b.rFore.rotation.set(L(b.rFore.rotation.x, p.rForeX), 0, L(b.rFore.rotation.z, p.rForeZ));
-    b.lLeg.rotation.x = L(b.lLeg.rotation.x, p.lLegX);
-    b.rLeg.rotation.x = L(b.rLeg.rotation.x, p.rLegX);
-    b.lLeg.rotation.z = L(b.lLeg.rotation.z, p.lLegZ);
-    b.rLeg.rotation.z = L(b.rLeg.rotation.z, p.rLegZ);
-    b.lShin.rotation.x = L(b.lShin.rotation.x, p.lShinX);
-    b.rShin.rotation.x = L(b.rShin.rotation.x, p.rShinX);
+    b.spine.rotation.set(lerpTo(b.spine.rotation.x, p.spineX, a), lerpTo(b.spine.rotation.y, p.spineY, a), lerpTo(b.spine.rotation.z, p.spineZ, a));
+    b.head.rotation.set(lerpTo(b.head.rotation.x, p.headX, a), lerpTo(b.head.rotation.y, p.headY, a), lerpTo(b.head.rotation.z, p.headZ, a));
+    b.lShoulder.rotation.set(lerpTo(b.lShoulder.rotation.x, p.lArmX, a), 0, lerpTo(b.lShoulder.rotation.z, p.lArmZ, a));
+    b.rShoulder.rotation.set(lerpTo(b.rShoulder.rotation.x, p.rArmX, a), 0, lerpTo(b.rShoulder.rotation.z, p.rArmZ, a));
+    b.lFore.rotation.set(lerpTo(b.lFore.rotation.x, p.lForeX, a), 0, lerpTo(b.lFore.rotation.z, p.lForeZ, a));
+    b.rFore.rotation.set(lerpTo(b.rFore.rotation.x, p.rForeX, a), 0, lerpTo(b.rFore.rotation.z, p.rForeZ, a));
+    // Piernas: a caballo convergen más rápido a la pose de estribos (rodean el barril al instante)
+    const al = riding ? 1 - Math.exp(-dt * 26) : a;
+    b.lLeg.rotation.x = lerpTo(b.lLeg.rotation.x, p.lLegX, al);
+    b.rLeg.rotation.x = lerpTo(b.rLeg.rotation.x, p.rLegX, al);
+    b.lLeg.rotation.z = lerpTo(b.lLeg.rotation.z, p.lLegZ, al);
+    b.rLeg.rotation.z = lerpTo(b.rLeg.rotation.z, p.rLegZ, al);
+    b.lShin.rotation.x = lerpTo(b.lShin.rotation.x, p.lShinX, al);
+    b.rShin.rotation.x = lerpTo(b.rShin.rotation.x, p.rShinX, al);
+    b.lShin.rotation.z = lerpTo(b.lShin.rotation.z, p.lShinZ, al);
+    b.rShin.rotation.z = lerpTo(b.rShin.rotation.z, p.rShinZ, al);
 
-    this.#breath = L(this.#breath, p.breath);
+    this.#breath = lerpTo(this.#breath, p.breath, a);
     if (applyBreathing) {
       if (b.torso) {
         const tb = this.#torsoBase;
@@ -582,5 +704,6 @@ export class CharacterAnimator {
     this.#velS.set(0, 0, 0);
     this.#yawRate = 0;
     this.#springs.reset();
+    this.#ride.resetY = true;
   }
 }
