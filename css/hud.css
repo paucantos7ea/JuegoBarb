@@ -54,6 +54,57 @@ body.pointer-locked .hud-layer * {
   color: var(--ink-muted);
 }
 
+.hud-net-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--rose-600);
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-net-pill:hover {
+  background: #fff;
+}
+
+.hud-net-pill .net-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #b9a3b2;
+}
+
+.hud-net-pill .net-dot[data-state='online'] {
+  background: #3fc97a;
+  box-shadow: 0 0 8px rgba(63, 201, 122, 0.8);
+}
+
+.hud-net-pill .net-dot[data-state='connecting'] {
+  background: #f2c14e;
+  box-shadow: 0 0 8px rgba(242, 193, 78, 0.85);
+  animation: netPulse 1s ease-in-out infinite;
+}
+
+.hud-net-pill .net-dot[data-state='error'] {
+  background: #e5484d;
+  box-shadow: 0 0 8px rgba(229, 72, 77, 0.7);
+}
+
+@keyframes netPulse {
+  50% { opacity: 0.35; }
+}
+
+body.wardrobe-open .hud-net-pill {
+  opacity: 0;
+  pointer-events: none !important;
+}
+
 .hud-compass {
   position: relative;
   width: 210px;
@@ -550,6 +601,56 @@ body.pointer-locked .hud-layer * {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.chat-head {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.chat-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--rose-600);
+  border: 1px solid rgba(229, 184, 105, 0.6);
+}
+
+.chat-toggle kbd {
+  font-size: 0.66rem;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(243, 116, 174, 0.16);
+}
+
+.chat-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-panel.is-collapsed {
+  width: auto;
+  max-width: 310px;
+  padding: 7px 8px;
+  background: rgba(255, 248, 252, 0.55);
+}
+
+.chat-panel.is-collapsed .chat-compose {
+  display: none;
+}
+
+.chat-panel.is-collapsed .chat-messages {
+  max-height: 64px;
+}
+
+.chat-panel.is-collapsed .chat-messages:empty {
+  display: none;
 }
 
 .chat-messages {

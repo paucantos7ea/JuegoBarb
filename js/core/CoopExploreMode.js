@@ -5,6 +5,7 @@ import { MinigameManager } from '../world/Minigames.js';
 import { PlayerController } from '../characters/PlayerController.js';
 import { CatalogData } from '../characters/catalog/CatalogData.js';
 import { NPCManager } from '../characters/NPCManager.js';
+import { ChatBubble } from '../characters/SpeechBubble.js';
 import { WardrobeUI } from '../wardrobe/WardrobeUI.js';
 import { WardrobeCamera } from '../wardrobe/WardrobeCamera.js';
 import { WardrobeFX } from '../wardrobe/WardrobeFX.js';
@@ -45,6 +46,7 @@ export class CoopExploreMode {
   #wardrobeCamera = null;
   #wardrobeFX = null;
   #pendingWardrobeFx = null;
+  #localBubble = null;
   #unsubs = [];
   #currentHotspot = null;
   #hudRefreshTimer = 0.05;
@@ -109,6 +111,10 @@ export class CoopExploreMode {
     this.#player.init(CatalogData.getDefaultAppearance(context.profile.avatarId));
     this.#player.setHorseSystem(this.#horses);
 
+    // Burbuja de chat 3D sobre la cabeza del jugador local (sprite reutilizado)
+    this.#localBubble = new ChatBubble({ y: 2.82 });
+    this.#player.getRig()?.getRoot()?.add(this.#localBubble.sprite);
+
     this.#npcs = new NPCManager(scene, context.textures);
     this.#npcs.init();
 
@@ -142,7 +148,8 @@ export class CoopExploreMode {
         onChatOpen: () => this.#ctx.input.exitPointerLock(),
         onChatClose: () => this.#resumePointerLockIfFree(),
         onOpenInvite: () => {
-          this.#hud.openInviteModal(this.#worldId);
+          this.#ctx.input.exitPointerLock();
+          this.#hud.openInviteModal();
           this.#syncControlLock();
         },
         onCloseInvite: () => this.#syncControlLock(true)
@@ -235,7 +242,7 @@ export class CoopExploreMode {
     this.#refreshPartyHud();
     this.#hud.appendChat(
       'Palacio',
-      `¡Bienvenida/o ${this.#playerName}! Pulsa [C] para probar ropa en vivo, clic para capturar cámara y [Tab] para liberar el ratón.`
+      `¡Bienvenida/o ${this.#playerName}! [C] Vestidor · [T] o 💬 Chat · clic para capturar cámara y [Tab] para liberar el ratón.`
     );
     this.#active = true;
   }
@@ -352,8 +359,11 @@ export class CoopExploreMode {
     });
   }
 
-  #sendChat(text) {
+  #sendChat(rawText) {
+    const text = String(rawText || '').trim().slice(0, 60);
+    if (!text) return;
     this.#hud.appendChat(this.#playerName, text);
+    this.#localBubble?.show(text);
     this.#stateSync.broadcastChat(this.#playerName, text);
     this.#ctx.audio?.playClick();
   }
@@ -499,6 +509,7 @@ export class CoopExploreMode {
       this.#casinoGames.update(dt);
     }
     this.#wardrobeFX?.update(dt);
+    this.#localBubble?.update(dt);
 
     const pos = this.#player.getPosition();
     this.#horses?.update(dt, pos);
@@ -586,6 +597,8 @@ export class CoopExploreMode {
     this.#active = false;
     this.#pendingWardrobeFx?.cancelPeak();
     this.#pendingWardrobeFx = null;
+    this.#localBubble?.dispose();
+    this.#localBubble = null;
 
     for (const u of this.#unsubs) u();
     this.#unsubs.length = 0;

@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v15';
-const CACHE_ASSETS = 'reino-rosa-assets-v15';
+const CACHE_STATIC = 'reino-rosa-static-v16';
+const CACHE_ASSETS = 'reino-rosa-assets-v16';
 
 const PRECACHE_URLS = [
   './',
@@ -40,6 +40,7 @@ const PRECACHE_URLS = [
   './js/characters/PlayerController.js',
   './js/characters/RemotePlayer.js',
   './js/characters/RidingDrape.js',
+  './js/characters/SpeechBubble.js',
   './js/characters/catalog/CatalogData.js',
   './js/characters/catalog/FaceBuilder.js',
   './js/characters/catalog/HairBuilder.js',
@@ -53,10 +54,27 @@ const PRECACHE_URLS = [
   './js/ui/CasinoUI.js',
   './js/ui/DialogueUI.js',
   './js/ui/HudUI.js',
-  './js/ui/MenuUI.js'
+  './js/ui/MenuUI.js',
+  './js/ui/MultiplayerUI.js'
 ];
 
 const THREE_CDN_HOSTS = ['esm.sh', 'cdn.jsdelivr.net', 'unpkg.com'];
+
+/**
+ * Tráfico multijugador que el Service Worker NUNCA intercepta ni cachea:
+ *  - Servidor de señalización de PeerJS (peerjs.com, 0.peerjs.com…).
+ *  - La librería PeerJS (y sus dependencias) servida desde esm.sh / unpkg.
+ * Three.js sí se sigue cacheando para que la PWA funcione sin conexión.
+ */
+const NETWORK_ONLY_HOSTS = ['peerjs.com'];
+const NETWORK_ONLY_CDN_PATH = /peerjs|webrtc-adapter|\/sdp@|eventemitter3/i;
+
+function isNetworkOnly(url) {
+  if (NETWORK_ONLY_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))) {
+    return true;
+  }
+  return isCdnAsset(url) && NETWORK_ONLY_CDN_PATH.test(url.pathname + url.search);
+}
 const ASSET_EXTENSIONS = /\.(png|jpe?g|webp|svg|woff2?|ttf|otf)$/i;
 const SHELL_EXTENSIONS = /\.(js|css|html|webmanifest)$/i;
 
@@ -163,6 +181,8 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+  // Sin respondWith: el navegador gestiona la petición directamente (señalización intacta)
+  if (isNetworkOnly(url)) return;
 
   if (isCacheFirstRequest(url)) {
     event.respondWith(cacheFirstStrategy(request));

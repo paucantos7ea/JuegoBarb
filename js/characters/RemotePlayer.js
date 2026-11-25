@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
 import { createHorseModel, animateHorseModel, placeRiderOnHorse, updateHorseReins } from '../world/HorseSystem.js';
+import { NameTag, ChatBubble } from './SpeechBubble.js';
 
 /**
  * Valida los campos del catálogo 3D recibidos por red para sincronizar
@@ -32,9 +33,9 @@ export class RemotePlayer {
   #targetYaw = Math.PI;
   #currentYaw = Math.PI;
   #animState = 'idle';
-  #nameSprite = null;
-  #chatSprite = null;
-  #chatTimer = 0;
+  #nameTag = null;
+  #chatBubble = null;
+  #lastSeq = -1;
   #appearanceKey = '';
   #emoteSeq = -1;
   #pendingFxHandle = null;
@@ -62,50 +63,14 @@ export class RemotePlayer {
     root.position.copy(this.#currentPos);
     this.#scene.add(root);
 
-    this.#nameSprite = this.#createLabelSprite(this.#name, 'rgba(42, 16, 38, 0.78)', '#fff6fa');
-    this.#nameSprite.position.set(0, 2.22, 0);
-    this.#nameSprite.scale.set(1.9, 0.44, 1);
-    root.add(this.#nameSprite);
-  }
-
-  #createLabelSprite(text, bg, fg) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-
-    ctx.fillStyle = bg;
-    ctx.beginPath();
-    ctx.roundRect(14, 18, 484, 92, 44);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(244, 198, 130, 0.85)';
-    ctx.lineWidth = 4;
-    ctx.stroke();
-
-    ctx.fillStyle = fg;
-    ctx.font = 'bold 40px "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const trimmed = text.length > 26 ? `${text.slice(0, 25)}…` : text;
-    ctx.fillText(trimmed, 256, 65);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = new THREE.SpriteMaterial({
-      map: tex,
-      color: 0xc8c8c8,
-      transparent: true,
-      depthTest: false,
-      toneMapped: false
-    });
-    return new THREE.Sprite(mat);
+    this.#nameTag = new NameTag(this.#name, { y: 2.22 });
+    root.add(this.#nameTag.sprite);
+    this.#chatBubble = new ChatBubble({ y: 2.82 });
+    root.add(this.#chatBubble.sprite);
   }
 
   setProfile(name, rawAppearance) {
-    if (name && name !== this.#name) {
-      this.#name = name;
-      this.#replaceSprite('name', name);
-    }
+    this.#setName(name);
     if (rawAppearance && !this.#pendingFxHandle) {
       const appearance = sanitizeAppearance(rawAppearance);
       if (appearance) {
@@ -124,10 +89,7 @@ export class RemotePlayer {
    * cambiando la vestimenta en el pico del humo (~120 ms) y lanzando la pose de alegría.
    */
   applyWardrobeChange(name, rawAppearance, wardrobeFX = null, emoteId = 'spin') {
-    if (name && name !== this.#name) {
-      this.#name = name;
-      this.#replaceSprite('name', name);
-    }
+    this.#setName(name);
     const appearance = sanitizeAppearance(rawAppearance);
     if (!appearance) return;
 
@@ -155,37 +117,29 @@ export class RemotePlayer {
     this.#pendingFxHandle = handle;
   }
 
-  #replaceSprite(kind, text) {
-    const root = this.#rig?.getRoot();
-    if (!root) return;
-    if (kind === 'name' && this.#nameSprite) {
-      this.#nameSprite.material.map?.dispose();
-      this.#nameSprite.material.dispose();
-      root.remove(this.#nameSprite);
-      this.#nameSprite = this.#createLabelSprite(text, 'rgba(42, 16, 38, 0.78)', '#fff6fa');
-      this.#nameSprite.position.set(0, 2.22, 0);
-      this.#nameSprite.scale.set(1.9, 0.44, 1);
-      root.add(this.#nameSprite);
-    }
+  #setName(name) {
+    if (typeof name !== 'string' || !name || name === this.#name) return;
+    this.#name = name.slice(0, 18);
+    this.#nameTag?.setText(this.#name);
   }
 
   showChatBubble(message) {
-    const root = this.#rig?.getRoot();
-    if (!root) return;
-    if (this.#chatSprite) {
-      this.#chatSprite.material.map?.dispose();
-      this.#chatSprite.material.dispose();
-      root.remove(this.#chatSprite);
-      this.#chatSprite = null;
-    }
-    this.#chatSprite = this.#createLabelSprite(message, 'rgba(255, 248, 252, 0.94)', '#7a1f4d');
-    this.#chatSprite.position.set(0, 2.75, 0);
-    this.#chatSprite.scale.set(2.55, 0.56, 1);
-    root.add(this.#chatSprite);
-    this.#chatTimer = 5.0;
+    this.#chatBubble?.show(message);
   }
 
-  applyNetworkState(state) {
+  /** Reinicia la secuencia de estados (el compañero volvió a entrar en partida). */
+  resetSequence() {
+    this.#lastSeq = -1;
+  }
+
+  applyNetworkState(state, { initial = false } = {}) {
+    // Canal no ordenado: descartamos estados más viejos que el último aplicado.
+    // Un salto grande hacia atrás significa que el emisor reinició su contador.
+    const seq = state.s;
+    if (Number.isFinite(seq)) {
+      if (seq <= this.#lastSeq && this.#lastSeq - seq < 500) return;
+      this.#lastSeq = seq;
+    }
     if (ANIM_STATES.has(state.anim)) {
       this.#animState = state.anim;
     }
@@ -241,7 +195,8 @@ export class RemotePlayer {
     const emote = state.emote;
     if (emote && typeof emote.id === 'string' && Number.isFinite(emote.seq) && emote.seq !== this.#emoteSeq) {
       this.#emoteSeq = emote.seq;
-      this.#rig?.playEmote(emote.id);
+      // Estado inicial del roster: no repetimos un emote que ya terminó
+      if (!initial) this.#rig?.playEmote(emote.id);
     }
     if ((state.name && state.name !== this.#name) || state.appearance) {
       this.setProfile(state.name, state.appearance);
@@ -347,28 +302,16 @@ export class RemotePlayer {
       this.#rig.update(dt, this.#animState, 0, lod);
     }
 
-    if (this.#chatTimer > 0) {
-      this.#chatTimer -= dt;
-      if (this.#chatTimer <= 0 && this.#chatSprite) {
-        this.#chatSprite.material.map?.dispose();
-        this.#chatSprite.material.dispose();
-        root.remove(this.#chatSprite);
-        this.#chatSprite = null;
-      }
-    }
+    this.#chatBubble?.update(dt);
   }
 
   dispose() {
     this.#pendingFxHandle?.cancelPeak();
     this.#pendingFxHandle = null;
-    if (this.#nameSprite) {
-      this.#nameSprite.material.map?.dispose();
-      this.#nameSprite.material.dispose();
-    }
-    if (this.#chatSprite) {
-      this.#chatSprite.material.map?.dispose();
-      this.#chatSprite.material.dispose();
-    }
+    this.#nameTag?.dispose();
+    this.#nameTag = null;
+    this.#chatBubble?.dispose();
+    this.#chatBubble = null;
     if (this.#horseModel) {
       this.#scene.remove(this.#horseModel.root);
       this.#horseModel.dispose();

@@ -48,14 +48,6 @@ class ReinoRosaApp {
     });
     this.#menuUI.init();
 
-    this.#peerManager.on('message', ({ packet }) => {
-      if (!this.#inGame && packet?.type === 'start_game') {
-        const profile = this.#menuUI.getProfile();
-        profile.worldId = packet.worldId || profile.worldId;
-        this.#startGame(profile);
-      }
-    });
-
     await this.#loadMenuPreview('palacio_cristal');
     this.#lastFrameTime = performance.now();
     this.#loop(this.#lastFrameTime);

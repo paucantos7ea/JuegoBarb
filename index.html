@@ -35,7 +35,7 @@
       <div class="menu-shell glass-panel">
         <header class="menu-header">
           <div class="crown-badge" aria-hidden="true">♛</div>
-          <p class="menu-kicker">Edición Multijugador Red Local</p>
+          <p class="menu-kicker">Edición Multijugador Online</p>
           <h1 class="menu-title">Reino Rosa Imperial</h1>
           <p class="menu-subtitle">El Palacio de Cristal</p>
           <div class="pwa-toolbar">
@@ -59,7 +59,7 @@
               type="text"
               maxlength="18"
               placeholder="Ej. Princesa Clara"
-              value="Estrella Real"
+              value=""
               autocomplete="off"
             />
 
@@ -78,7 +78,7 @@
                 ✦ Jugar Solo
               </button>
               <button id="tab-coop" class="mode-tab" type="button" role="tab" aria-selected="false">
-                ♛ Cooperativo (Red Local)
+                🌍 Multijugador Online
               </button>
             </div>
 
@@ -98,89 +98,13 @@
               </button>
             </div>
 
-            <!-- Panel Cooperativo LAN WebRTC -->
+            <!-- Panel Multijugador Online (PeerJS) -->
             <div id="panel-coop" class="mode-panel">
-              <div id="coop-role-picker" class="coop-role-picker">
-                <p class="panel-desc">
-                  Conecta directamente con compañeros en la misma red de clase sin servidores externos.
-                </p>
-                <div class="coop-role-buttons">
-                  <button id="btn-coop-host" class="btn-primary" type="button">
-                    ♛ Crear Grupo (Host)
-                  </button>
-                  <button id="btn-coop-guest" class="btn-secondary" type="button">
-                    ✦ Unirse a Grupo (Invitado)
-                  </button>
-                </div>
-              </div>
-
-              <!-- Asistente Host -->
-              <div id="coop-host-view" class="coop-flow hidden">
-                <div class="flow-header">
-                  <span class="badge-gold">Anfitrión del Grupo</span>
-                  <button id="btn-host-back" class="btn-link" type="button">Cambiar rol</button>
-                </div>
-
-                <div class="step-box">
-                  <div class="step-title">Paso 1 · Comparte este código de invitación</div>
-                  <div class="code-row">
-                    <textarea id="host-offer-code" class="code-box" readonly rows="2" placeholder="Generando código de sala..."></textarea>
-                    <button id="btn-copy-offer" class="btn-secondary btn-sm" type="button">Copiar</button>
-                  </div>
-                </div>
-
-                <div class="step-box">
-                  <div class="step-title">Paso 2 · Pega el código de respuesta de tu compañero</div>
-                  <div class="code-row">
-                    <textarea id="host-answer-input" class="code-box" rows="2" placeholder="Pega aquí la respuesta del invitado..."></textarea>
-                    <button id="btn-accept-answer" class="btn-primary btn-sm" type="button">Conectar</button>
-                  </div>
-                </div>
-
-                <div class="peer-lobby-box">
-                  <div class="peer-lobby-head">
-                    <span>Grupo conectado (<span id="host-peer-count">0</span>)</span>
-                    <button id="btn-new-invite" class="btn-link" type="button">+ Nuevo código</button>
-                  </div>
-                  <ul id="host-peer-list" class="peer-list"></ul>
-                </div>
-
-                <p id="host-status" class="status-line">Genera o comparte tu código para invitar compañeros.</p>
-
-                <button id="btn-start-host" class="btn-primary btn-large" type="button">
-                  Iniciar Aventura con el Grupo
-                </button>
-              </div>
-
-              <!-- Asistente Invitado -->
-              <div id="coop-guest-view" class="coop-flow hidden">
-                <div class="flow-header">
-                  <span class="badge-rose">Invitado Real</span>
-                  <button id="btn-guest-back" class="btn-link" type="button">Cambiar rol</button>
-                </div>
-
-                <div class="step-box">
-                  <div class="step-title">Paso 1 · Pega el código de invitación del Host</div>
-                  <div class="code-row">
-                    <textarea id="guest-offer-input" class="code-box" rows="2" placeholder="Pega aquí el código del anfitrión..."></textarea>
-                    <button id="btn-generate-answer" class="btn-primary btn-sm" type="button">Generar</button>
-                  </div>
-                </div>
-
-                <div class="step-box">
-                  <div class="step-title">Paso 2 · Envía este código de respuesta al Host</div>
-                  <div class="code-row">
-                    <textarea id="guest-answer-code" class="code-box" readonly rows="2" placeholder="Aquí aparecerá tu código de respuesta..."></textarea>
-                    <button id="btn-copy-answer" class="btn-secondary btn-sm" type="button">Copiar</button>
-                  </div>
-                </div>
-
-                <p id="guest-status" class="status-line">Pega el código del anfitrión para generar tu respuesta.</p>
-
-                <button id="btn-start-guest" class="btn-primary btn-large" type="button" disabled>
-                  Esperando conexión del Host...
-                </button>
-              </div>
+              <p class="panel-desc">
+                Juega con amigas desde cualquier casa o clase: sin cuentas ni códigos largos.
+                Entra en la sala pública o crea una sala privada con código corto.
+              </p>
+              <div id="menu-multiplayer-root"></div>
             </div>
           </div>
         </div>
@@ -199,6 +123,11 @@
           <span class="hud-world-name" id="hud-world-name">Palacio de Cristal</span>
           <span class="hud-zone-name" id="hud-zone-name">Jardines Reales</span>
         </div>
+
+        <button id="hud-net-pill" class="hud-net-pill glass-chip hidden" type="button" title="Estado de la sala">
+          <span class="net-dot" id="hud-net-dot" data-state="offline"></span>
+          <span id="hud-net-text">Solo</span>
+        </button>
 
         <div class="hud-compass glass-chip" aria-label="Brújula">
           <div class="compass-track" id="compass-track">
@@ -226,7 +155,7 @@
             <span id="hud-net-badge" class="pill-badge">Solo</span>
           </div>
           <ul id="hud-party-list" class="party-list"></ul>
-          <button id="btn-hud-invite" class="btn-mini hidden" type="button">+ Invitar compañero LAN</button>
+          <button id="btn-hud-invite" class="btn-mini" type="button">🌍 Salas Multijugador</button>
         </div>
 
         <div class="glass-card quest-card">
@@ -301,19 +230,24 @@
         ✨ <kbd>1-4</kbd> Emotes
       </div>
 
-      <!-- Chat Rápido [T] -->
-      <div id="chat-panel" class="chat-panel glass-card">
-        <div id="chat-messages" class="chat-messages"></div>
-        <div id="chat-quick-bar" class="chat-quick-bar">
-          <button class="quick-chat-btn" data-msg="¡Hola a todos! 👑" type="button">¡Hola! 👑</button>
-          <button class="quick-chat-btn" data-msg="¡Vamos al Palacio! 🏰" type="button">Al Palacio 🏰</button>
-          <button class="quick-chat-btn" data-msg="¡Qué estilo tan genial! ✨" type="button">¡Genial! ✨</button>
-          <button class="quick-chat-btn" data-msg="¡Encontré una gema! 💎" type="button">¡Gema! 💎</button>
+      <!-- Chat Rápido [T] / 💬 -->
+      <div id="chat-panel" class="chat-panel glass-card is-collapsed">
+        <div class="chat-head">
+          <button id="btn-chat-toggle" class="chat-toggle" type="button" title="Chat [T]">💬 <span>Chat</span> <kbd>T</kbd></button>
         </div>
-        <form id="chat-form" class="chat-form">
-          <input id="chat-input" type="text" maxlength="90" placeholder="Pulsa [T] para escribir al grupo..." autocomplete="off" />
-          <button type="submit" class="btn-chat-send">Enviar</button>
-        </form>
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="chat-compose">
+          <div id="chat-quick-bar" class="chat-quick-bar">
+            <button class="quick-chat-btn" data-msg="¡Hola! 👋" type="button">¡Hola! 👋</button>
+            <button class="quick-chat-btn" data-msg="¡Vamos al Casino! 🎰" type="button">¡Vamos al Casino! 🎰</button>
+            <button class="quick-chat-btn" data-msg="¡A cabalgar! 🐴" type="button">¡A cabalgar! 🐴</button>
+            <button class="quick-chat-btn" data-msg="¡Qué estilazo! ✨" type="button">¡Qué estilazo! ✨</button>
+          </div>
+          <form id="chat-form" class="chat-form">
+            <input id="chat-input" type="text" maxlength="60" placeholder="Escribe un mensaje corto…" autocomplete="off" />
+            <button type="submit" class="btn-chat-send">Enviar</button>
+          </form>
+        </div>
       </div>
     </section>
 
@@ -384,31 +318,17 @@
       </div>
     </section>
 
-    <!-- Modal Rápido de Invitación LAN en Partida -->
-    <section id="invite-modal" class="modal-backdrop hidden" aria-label="Invitar compañero LAN">
+    <!-- Modal de Salas Multijugador en Partida -->
+    <section id="invite-modal" class="modal-backdrop hidden" aria-label="Salas multijugador">
       <div class="invite-modal-card glass-panel">
         <header class="modal-header">
           <div>
-            <p class="modal-kicker">Multijugador Red Local</p>
-            <h2>Invitar Nuevo Compañero</h2>
+            <p class="modal-kicker">Multijugador Online</p>
+            <h2>Salas del Reino</h2>
           </div>
-          <button id="btn-close-invite-modal" class="btn-close" type="button">✕</button>
+          <button id="btn-close-invite-modal" class="btn-close" type="button" aria-label="Cerrar">✕</button>
         </header>
-        <div class="step-box">
-          <div class="step-title">1. Código de invitación</div>
-          <div class="code-row">
-            <textarea id="ingame-offer-code" class="code-box" readonly rows="2"></textarea>
-            <button id="btn-ingame-copy" class="btn-secondary btn-sm" type="button">Copiar</button>
-          </div>
-        </div>
-        <div class="step-box">
-          <div class="step-title">2. Pega la respuesta de tu compañero</div>
-          <div class="code-row">
-            <textarea id="ingame-answer-input" class="code-box" rows="2" placeholder="Pega aquí el código de respuesta..."></textarea>
-            <button id="btn-ingame-accept" class="btn-primary btn-sm" type="button">Conectar</button>
-          </div>
-        </div>
-        <p id="ingame-invite-status" class="status-line"></p>
+        <div id="ingame-multiplayer-root"></div>
       </div>
     </section>
 

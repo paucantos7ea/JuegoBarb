@@ -1,3 +1,5 @@
+import { MultiplayerUI, copyText } from './MultiplayerUI.js';
+
 const QUALITY_STORAGE_KEY = 'reino_rosa_quality_v1';
 
 const QUALITY_OPTIONS = [
@@ -22,7 +24,9 @@ export class HudUI {
   #boundCleanups = [];
   #injectedNodes = [];
   #inviteModalOpen = false;
-  #inviteWorldId = 'palacio_cristal';
+  #multiplayerUI = null;
+  #netPillKey = '';
+  #chatOpen = false;
   #coinDeltaTimer = null;
   #coinAnimTimer = null;
   #quality = 'medium';
@@ -71,27 +75,37 @@ export class HudUI {
     };
 
     bindGroup('.activity-btn', (btn) => this.#callbacks.onStartMinigame?.(btn.dataset.minigame));
-    bindGroup('.quick-chat-btn', (btn) => this.#callbacks.onSendChat?.(btn.dataset.msg));
+    bindGroup('.quick-chat-btn', (btn) => {
+      this.#callbacks.onSendChat?.(btn.dataset.msg);
+      this.closeChat();
+    });
+
+    // Chat rápido plegable: [T] o 💬 lo abre; Enter/Esc lo cierra
+    this.#on('btn-chat-toggle', 'click', () => {
+      if (this.#chatOpen) this.closeChat();
+      else this.focusChat();
+    });
 
     const form = this.#el('chat-form');
     const chatInput = this.#el('chat-input');
     const chatSubmit = (e) => {
       e.preventDefault();
-      const text = chatInput.value.trim();
+      const text = chatInput.value.trim().slice(0, 60);
       if (text) {
         this.#callbacks.onSendChat?.(text);
         chatInput.value = '';
       }
-      chatInput.blur();
-      this.#callbacks.onChatClose?.();
+      this.closeChat();
     };
-    const chatFocus = () => this.#callbacks.onChatOpen?.();
+    const chatFocus = () => {
+      this.#setChatOpen(true);
+      this.#callbacks.onChatOpen?.();
+    };
     const chatKeyDown = (e) => {
       if (e.key === 'Escape' || e.code === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        chatInput.blur();
-        this.#callbacks.onChatClose?.();
+        this.closeChat();
       }
     };
     form.addEventListener('submit', chatSubmit);
@@ -103,36 +117,86 @@ export class HudUI {
       () => chatInput.removeEventListener('keydown', chatKeyDown)
     );
 
-    this.#boundCleanups.push(
-      this.#peerManager.on('peerConnected', ({ name }) => {
-        this.#el('ingame-invite-status').textContent = `¡${name} se ha unido! Puedes invitar a otro compañero con el código de arriba o cerrar esta ventana.`;
-      }),
-      this.#peerManager.on('peerFailed', ({ name }) => {
-        this.#el('ingame-invite-status').textContent = `No se pudo conectar con ${name}. Comprobad que estáis en la misma red y repetid con el código de arriba.`;
-      })
-    );
-
-    this.#on('btn-ingame-copy', 'click', async () => {
-      const box = this.#el('ingame-offer-code');
-      if (!box.value) return;
-      try { await navigator.clipboard.writeText(box.value); } catch { box.select(); document.execCommand('copy'); }
-      this.#el('ingame-invite-status').textContent = '¡Código copiado! Envíaselo a tu compañero.';
+    // Salas multijugador dentro de la partida
+    this.#multiplayerUI = new MultiplayerUI({
+      container: this.#el('ingame-multiplayer-root'),
+      peerManager: this.#peerManager,
+      audio: this.#audio,
+      getName: () => this.#peerManager.getLocalName()
     });
+    this.#multiplayerUI.init();
 
-    this.#on('btn-ingame-accept', 'click', async () => {
-      const input = this.#el('ingame-answer-input');
-      const status = this.#el('ingame-invite-status');
-      try {
-        const res = await this.#peerManager.acceptGuestAnswer(input.value);
-        input.value = '';
-        this.showToast(`Conectando con ${res.name}...`);
-        const code = await this.#peerManager.createHostInvite(this.#inviteWorldId);
-        this.#el('ingame-offer-code').value = code;
-        status.textContent = `Conectando con ${res.name}... El código de arriba ya es nuevo para el siguiente compañero.`;
-      } catch (err) {
-        status.textContent = err.message;
+    // Píldora de estado de red en la barra superior
+    this.#on('hud-net-pill', 'click', async () => {
+      const st = this.#peerManager.getStatus();
+      if (st.roomType === 'private' && st.roomCode && st.state === 'online') {
+        const ok = await copyText(st.roomCode);
+        this.showToast(ok ? `📋 Código ${st.roomCode} copiado` : `Código de la sala: ${st.roomCode}`);
+      } else {
+        this.#callbacks.onOpenInvite?.();
       }
     });
+    const refreshNet = () => this.#renderNetPill();
+    this.#boundCleanups.push(
+      this.#peerManager.on('status', refreshNet),
+      this.#peerManager.on('peerConnected', refreshNet),
+      this.#peerManager.on('peerDisconnected', refreshNet)
+    );
+    this.#renderNetPill();
+  }
+
+  /** Píldora: 🟢 Pública · 3 jugadores · 42ms  (🟡 conectando / 🔴 desconectado). */
+  #renderNetPill() {
+    const pill = this.#el('hud-net-pill');
+    if (!pill) return;
+    const st = this.#peerManager.getStatus();
+    const visible = st.state !== 'offline';
+    let dot = 'offline';
+    let text = '';
+    if (st.state === 'online') {
+      dot = 'online';
+      const room = st.roomType === 'public' ? 'Pública' : `Privada: ${st.roomCode}`;
+      const players = `${st.playerCount} ${st.playerCount === 1 ? 'jugador' : 'jugadores'}`;
+      text = `${room} · ${players}${st.ping > 0 ? ` · ${st.ping}ms` : ''}`;
+    } else if (st.state === 'connecting' || st.state === 'reconnecting') {
+      dot = 'connecting';
+      text = st.state === 'reconnecting' ? 'Reconectando…' : 'Conectando…';
+    } else if (st.state === 'error') {
+      dot = 'error';
+      text = 'Desconectada';
+    }
+    const key = `${visible}|${dot}|${text}`;
+    if (key !== this.#netPillKey) {
+      this.#netPillKey = key;
+      pill.classList.toggle('hidden', !visible);
+      this.#el('hud-net-dot').dataset.state = dot;
+      this.#el('hud-net-text').textContent = text;
+      pill.title = st.roomType === 'private' && st.state === 'online'
+        ? 'Clic para copiar el código de la sala'
+        : (st.message || 'Estado de la sala');
+    }
+    const badge = this.#el('hud-net-badge');
+    if (badge) {
+      badge.textContent = st.state === 'online'
+        ? (st.roomType === 'public' ? 'Pública' : 'Privada')
+        : st.state === 'connecting' || st.state === 'reconnecting' ? '…' : 'Solo';
+    }
+  }
+
+  #setChatOpen(open) {
+    this.#chatOpen = Boolean(open);
+    this.#el('chat-panel')?.classList.toggle('is-collapsed', !this.#chatOpen);
+  }
+
+  closeChat() {
+    const input = this.#el('chat-input');
+    this.#setChatOpen(false);
+    if (document.activeElement === input) input.blur();
+    this.#callbacks.onChatClose?.();
+  }
+
+  isChatOpen() {
+    return this.#chatOpen;
   }
 
   #syncMuteButton() {
@@ -169,6 +233,7 @@ export class HudUI {
   }
 
   focusChat() {
+    this.#setChatOpen(true);
     const input = this.#el('chat-input');
     input?.focus();
   }
@@ -214,11 +279,7 @@ export class HudUI {
   }
 
   updateParty(localName, remoteList) {
-    const role = this.#peerManager.getRole();
-    const badge = this.#el('hud-net-badge');
-    const inviteBtn = this.#el('btn-hud-invite');
-    badge.textContent = role === 'host' ? 'Host LAN' : role === 'guest' ? 'Grupo LAN' : 'Solo';
-    inviteBtn.classList.toggle('hidden', role !== 'host');
+    this.#renderNetPill();
 
     const listEl = this.#el('hud-party-list');
     const items = [
@@ -284,19 +345,11 @@ export class HudUI {
     }, 3400);
   }
 
-  async openInviteModal(worldId = 'palacio_cristal') {
-    this.#inviteWorldId = worldId;
+  /** Abre el modal de Salas (Pública / Privada / Salir) dentro de la partida. */
+  openInviteModal() {
     this.#inviteModalOpen = true;
+    this.#multiplayerUI?.render();
     this.#el('invite-modal').classList.remove('hidden');
-    this.#el('ingame-invite-status').textContent = 'Generando código LAN...';
-    this.#el('ingame-offer-code').value = '';
-    try {
-      const code = await this.#peerManager.createHostInvite(worldId);
-      this.#el('ingame-offer-code').value = code;
-      this.#el('ingame-invite-status').textContent = 'Listo. Compártelo con tu compañero.';
-    } catch (err) {
-      this.#el('ingame-invite-status').textContent = err.message;
-    }
   }
 
   closeInviteModal() {
@@ -1181,6 +1234,10 @@ export class HudUI {
     this.#getEngine()?.setStatsListener?.(null);
     for (const fn of this.#boundCleanups) fn();
     this.#boundCleanups.length = 0;
+    this.#multiplayerUI?.dispose();
+    this.#multiplayerUI = null;
+    this.#setChatOpen(false);
+    this.#netPillKey = '';
     for (const node of this.#injectedNodes) node?.remove?.();
     this.#injectedNodes.length = 0;
     this.#qualityPopoverEl = null;

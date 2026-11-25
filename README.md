@@ -1,6 +1,6 @@
 # ♛ Reino Rosa Imperial: El Palacio de Cristal
 
-Videojuego 3D multijugador web construido con **Three.js (ES Modules)**, iluminación PBR realista (`RoomEnvironment`, sombras `PCFSoftShadowMap` y `UnrealBloomPass`), audio procedural con Web Audio API y multijugador **P2P 100% en red local (LAN)** mediante **WebRTC nativo** sin servidores externos ni herramientas de compilación.
+Videojuego 3D multijugador web construido con **Three.js (ES Modules)**, iluminación PBR realista (`RoomEnvironment`, sombras `PCFSoftShadowMap` y `UnrealBloomPass`), audio procedural con Web Audio API y multijugador **P2P online con PeerJS** (WebRTC con señalización automática: sin cuentas, sin claves API y sin servidor propio) y sin herramientas de compilación.
 
 ---
 
@@ -42,34 +42,34 @@ Videojuego 3D multijugador web construido con **Three.js (ES Modules)**, ilumina
 
 ---
 
-## 🌐 Cómo Conectar Compañeros en Clase (Red Local LAN sin Servidor)
+## 🌐 Multijugador Online (Sala Pública y Sala Privada)
 
-El multijugador usa **WebRTC nativo (`RTCPeerConnection` con `iceServers: []`)**: los navegadores se conectan **directamente** entre sí dentro de la misma red local, sin servidores STUN/TURN ni servidor de juego. Para "presentarse" se intercambian dos códigos de texto (~650 caracteres, comprimidos) que copiáis y pegáis por el medio que queráis (chat del aula, Teams/Classroom, un documento compartido…).
+El multijugador usa **PeerJS 1.5.4** (cargado desde `esm.sh`, con respaldo en `unpkg`): el servidor gratuito de PeerJS solo "presenta" a los navegadores y después el juego viaja **directo entre jugadores por WebRTC** (STUN de Google y Cloudflare). No hace falta crear cuentas ni pegar códigos largos, y funciona desde GitHub Pages.
 
-Se usa una **topología en estrella**: el Host está conectado a cada invitado y reenvía los mensajes entre ellos. Se sincronizan **movimiento y animaciones, ropa/peinado/accesorios, chat rápido, misiones y gemas, y el reino elegido**.
+Se usa una **topología en estrella**: quien abre la sala es el **anfitrión** y reenvía los mensajes al resto, así que pueden jugar 2, 5 o 10 amigas a la vez. Se sincronizan **movimiento y animaciones, emotes, ropa/peinado/accesorios, caballos (pelaje y pose de jinete), chat rápido con burbujas 3D, misiones y el reino elegido**.
 
-### Paso a paso
+### Sala Pública (1 clic)
 
-1. Todos abren el juego (la URL de GitHub Pages o el servidor local, ver más abajo) **en la misma red WiFi o cable de clase**. Recomendado: Chrome o Edge actualizados.
-2. Cada jugador escribe su **Nombre**, elige **Avatar** y abre la pestaña **Cooperativo (Red Local)**.
-3. **Host** → pulsa **Crear Grupo (Host)** → pulsa **Copiar** en el *Paso 1* y envía ese **código de invitación** a UN compañero.
-4. **Invitado** → pulsa **Unirse a Grupo (Invitado)** → pega el código en el *Paso 1* → **Generar** → pulsa **Copiar** en el *Paso 2* y devuelve ese **código de respuesta** al Host.
-5. **Host** → pega la respuesta en su *Paso 2* → **Conectar**. En unos segundos el compañero aparece en *Grupo conectado* y al invitado se le activa el botón **¡Conectado! Entrar al Reino**.
-6. **Para más compañeros:** cada código de invitación sirve para **una sola persona**. Tras conectar a alguien, el código del *Paso 1* se renueva automáticamente: repite los pasos 3–5 con el siguiente compañero (también puedes forzar uno nuevo con **+ Nuevo código**).
-7. **Host** → **Iniciar Aventura con el Grupo**: todos los invitados que sigan en el menú entran automáticamente al mismo reino.
+1. Escribe tu **Nombre** (se guarda en el navegador), abre la pestaña **🌍 Multijugador Online** y pulsa **🌍 Entrar a Sala Pública**.
+2. El primero en entrar se convierte en anfitrión; los demás se conectan solos a él.
+3. Pulsa **✨ Entrar al Reino con la Sala**. Si el anfitrión se va, el resto se reconecta automáticamente en ~1 segundo (uno de ellos pasa a ser el nuevo anfitrión).
 
-> **Invitar a mitad de partida:** el Host tiene el botón **+ Invitar compañero LAN** en el panel *Grupo Real*. El nuevo invitado sigue los pasos 4–5 y, al entrar, recibe el progreso de misiones del grupo.
+### Sala Privada (con código)
+
+1. **Crear:** pulsa **👑 Crear Sala Privada**. Aparece un código corto (p. ej. `ROSA-4821`): pulsa **📋 Copiar Código** y pásaselo a tus amigas.
+2. **Unirse:** escribe el código (vale `ROSA-4821`, `rosa 4821` o solo `4821`) y pulsa **🔑 Unirse**.
+3. Si el anfitrión cierra el juego, la sala privada se cierra.
+
+> **Dentro de la partida:** el botón **🌍 Salas Multijugador** (panel *Grupo Real*) abre el mismo menú. La píldora superior muestra el estado (`🟢 Pública · 3 jugadores · 42ms`); en una sala privada, haz clic en ella para copiar el código. Pulsa **[T]** o **💬** para el chat rápido (mientras escribes no te mueves).
 
 ### 🛠️ Solución de problemas de conexión
 
 | Síntoma | Causa probable y solución |
 |---|---|
-| "No se pudo conectar con …" o se queda en *Conectando…* | Los PCs no se "ven" en la red. Comprobad que estáis en la **misma WiFi/red** (no una en WiFi de alumnos y otra en cable de profesores). Generad un **código nuevo** y repetid. |
-| Falla siempre en la WiFi del centro | Muchas redes escolares activan el **aislamiento de clientes** (los equipos no pueden hablar entre sí). Sin servidores externos no hay forma de saltarlo: pedid al responsable TIC que lo desactive para el aula, o usad la **red por cable** o un **router/punto de acceso propio** de la clase. |
-| Falla entre PCs pero funciona entre dos pestañas del mismo PC | Chrome/Edge ocultan la IP local tras nombres `*.local` (mDNS). Si la red bloquea mDNS/multicast, la conexión no se establece. Probad con la red por cable o un punto de acceso propio. |
-| "Esta respuesta no corresponde al código de invitación actual" | El Host generó un código nuevo después de enviar el anterior. Enviad el código que aparece **ahora** en el Paso 1 y repetid. |
-| "Código inválido" | El código se copió incompleto. Usad siempre el botón **Copiar**. |
-| El botón Copiar no copia | En `http://` con IP (no `localhost`) el navegador limita el portapapeles; el juego usa un método alternativo, pero si falla, selecciona el texto y pulsa `Ctrl+C`. |
+| "No hay conexión con el servidor de salas" | Hace falta internet para la presentación inicial (servidor de PeerJS). Comprueba la conexión o el cortafuegos. |
+| "La sala no existe o ya se ha cerrado" | El código está mal escrito o el anfitrión ya salió. Pide el código otra vez. |
+| Se queda en *Conectando…* / "El anfitrión no responde" | Algunas redes (escolares o corporativas) bloquean las conexiones directas WebRTC. Prueba otra red (p. ej. datos móviles). |
+| Probando en dos pestañas, el otro personaje no se mueve | El navegador congela la animación de las pestañas en segundo plano. Usa **dos ventanas** una al lado de la otra. |
 
 ---
 
@@ -86,7 +86,7 @@ Se usa una **topología en estrella**: el Host está conectado a cada invitado y
 
 ### Requisitos de internet
 
-El juego descarga **Three.js 0.160.0** desde `https://esm.sh` (definido en el `importmap` de `index.html`) la primera vez; después queda en la caché del navegador. **El multijugador no usa internet**: el tráfico de juego viaja solo por la red local.
+El juego descarga **Three.js 0.160.0** desde `https://esm.sh` (definido en el `importmap` de `index.html`) la primera vez; después queda en la caché del navegador. El multijugador necesita internet para conectar con el servidor de señalización de PeerJS; el Service Worker nunca cachea ni intercepta esas peticiones.
 
 ### Alternativa: servirlo desde el PC del profesor en la red de clase
 
