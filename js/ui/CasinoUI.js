@@ -164,17 +164,17 @@ export class CasinoUI {
         border-color: transparent;
       }
 
+      /* Columna izquierda bajo el título: nunca tapa a la Princesa Crupier ni las cartas del tapete */
       .casino-top-center {
         position: absolute;
         top: 66px;
-        left: 50%;
-        transform: translateX(-50%);
+        left: 18px;
         display: flex;
         flex-direction: column;
-        align-items: center;
+        align-items: flex-start;
         gap: 8px;
         pointer-events: none;
-        width: min(560px, 90vw);
+        max-width: min(420px, 60vw);
       }
 
       .casino-dealer-badge {

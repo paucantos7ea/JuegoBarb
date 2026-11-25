@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CharacterRig } from '../characters/CharacterRig.js';
 
 const CX = 162.0;
 const CZ = 0.0;
@@ -135,6 +136,361 @@ function mergeGeometries(pieces) {
   return merged;
 }
 
+// ---------------------------------------------------------------------------
+// Princesa Crupier del Blackjack (reutiliza CharacterRig sin modificarlo)
+// ---------------------------------------------------------------------------
+
+/** Tiempo (s) desde que empieza el gesto de reparto hasta que la carta sale del zapato. */
+export const DEALER_DEAL_LEAD = 0.13;
+const DEAL_GESTURE = 0.52;
+const FLIP_GESTURE = 0.56;
+const CLAP_TIME = 1.9;
+const BOW_TIME = 2.5;
+const DEALER_ANIM_SQ = 40 * 40;
+const DEALER_HIDE_SQ = 80 * 80;
+const DEALER_LOCAL_Z = -0.63;
+const ARM_UPPER = 0.27;
+const ARM_HAND = 0.265;
+const SHOULDER_X = 0.194;
+const SHOULDER_Y = 1.335;
+const SPINE_PIVOT_Y = 1.0;
+
+const DEALER_LOOKS = Object.freeze([
+  { avatarId: 'aurora', hairId: 'recogido_mono', hairColorId: 'rubio_miel', accessories: ['corona'] },
+  { avatarId: 'valentina', hairId: 'coleta_alta', hairColorId: 'castano_chocolate', accessories: ['tiara'] },
+  { avatarId: 'celeste', hairId: 'recogido_mono', hairColorId: 'rosa_pastel', accessories: ['corona'] },
+  { avatarId: 'amara', hairId: 'media_melena', hairColorId: 'negro_azabache', accessories: ['tiara'] }
+]);
+
+const _fk = { x: 0, y: 0, z: 0 };
+
+/** Mano (marco raíz de la crupier) para un brazo con Euler XYZ en hombro/antebrazo e inclinación de columna. */
+function dealerArmFK(side, ax, az, fx, fz, lean, out) {
+  let s = Math.sin(fz);
+  let c = Math.cos(fz);
+  let x = ARM_HAND * s;
+  let y = -ARM_HAND * c;
+  let z = 0;
+  s = Math.sin(fx);
+  c = Math.cos(fx);
+  let ny = y * c - z * s;
+  let nz = y * s + z * c;
+  y = ny - ARM_UPPER;
+  z = nz;
+  s = Math.sin(az);
+  c = Math.cos(az);
+  const nx = x * c - y * s;
+  y = x * s + y * c;
+  x = nx;
+  s = Math.sin(ax);
+  c = Math.cos(ax);
+  ny = y * c - z * s;
+  nz = y * s + z * c;
+  x += side * SHOULDER_X;
+  y = ny + (SHOULDER_Y - SPINE_PIVOT_Y);
+  z = nz;
+  s = Math.sin(lean);
+  c = Math.cos(lean);
+  out.x = x;
+  out.y = SPINE_PIVOT_Y + y * c - z * s;
+  out.z = y * s + z * c;
+  return out;
+}
+
+function dealerArmCost(side, p, lean, tx, ty, tz, seed) {
+  dealerArmFK(side, p[0], p[1], p[2], p[3], lean, _fk);
+  const dx = _fk.x - tx;
+  const dy = _fk.y - ty;
+  const dz = _fk.z - tz;
+  let reg = 0;
+  for (let i = 0; i < 4; i++) reg += (p[i] - seed[i]) * (p[i] - seed[i]);
+  return dx * dx + dy * dy + dz * dz + reg * 0.0025;
+}
+
+/**
+ * IK de 2 huesos por descenso coordenado (sólo al iniciar un gesto, nunca por fotograma).
+ * Escribe [hombroX, hombroZ, antebrazoX, antebrazoZ] en `out`.
+ */
+function solveDealerArm(side, tx, ty, tz, lean, seed, out) {
+  out.set(seed);
+  const lo0 = -2.5;
+  const hi0 = 0.5;
+  const lo1 = side > 0 ? -0.15 : -1.7;
+  const hi1 = side > 0 ? 1.7 : 0.15;
+  const lo2 = -2.3;
+  const hi2 = 0;
+  const lo3 = side > 0 ? -1.4 : -1.0;
+  const hi3 = side > 0 ? 1.0 : 1.4;
+  let best = dealerArmCost(side, out, lean, tx, ty, tz, seed);
+  let step = 0.3;
+  for (let iter = 0; iter < 90 && step > 0.003; iter++) {
+    let improved = false;
+    for (let k = 0; k < 4; k++) {
+      const lo = k === 0 ? lo0 : k === 1 ? lo1 : k === 2 ? lo2 : lo3;
+      const hi = k === 0 ? hi0 : k === 1 ? hi1 : k === 2 ? hi2 : hi3;
+      for (let dir = -1; dir <= 1; dir += 2) {
+        const old = out[k];
+        const v = Math.min(hi, Math.max(lo, old + dir * step));
+        if (v === old) continue;
+        out[k] = v;
+        const cst = dealerArmCost(side, out, lean, tx, ty, tz, seed);
+        if (cst < best) {
+          best = cst;
+          improved = true;
+        } else {
+          out[k] = old;
+        }
+      }
+    }
+    if (!improved) step *= 0.5;
+  }
+  return out;
+}
+
+const dealerEase = (k) => {
+  const t = k <= 0 ? 0 : k >= 1 ? 1 : k;
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * Princesa Crupier: CharacterRig real (vestido, peinado, corona, ojos y parpadeo del reino)
+ * con capa de animación propia para repartir, voltear, aplaudir y hacer la reverencia.
+ * Las poses de brazo se resuelven con IK al iniciar cada gesto y se interpolan sin asignar memoria.
+ */
+class BlackjackDealer {
+  rig;
+  root;
+  #table;
+  #spine = null;
+  #lS = null; #lF = null; #rS = null; #rF = null;
+  #action = 0; // 0 reposo · 1 repartir · 2 voltear · 3 aplaudir · 4 reverencia
+  #t = 0;
+  #idleT = Math.random() * 10;
+  #w = 0;
+  #lean = 0;
+  #animating = true;
+  #seedL = new Float32Array([-0.55, 0.20, -0.95, -0.30]);
+  #seedR = new Float32Array([-0.55, -0.20, -0.95, 0.30]);
+  #restL = new Float32Array(4);
+  #restR = new Float32Array(4);
+  #reachL = new Float32Array(4);
+  #releaseL = new Float32Array(4);
+  #flipA = new Float32Array(4);
+  #flipB = new Float32Array(4);
+  #clapOpenL = new Float32Array(4);
+  #clapOpenR = new Float32Array(4);
+  #clapShutL = new Float32Array(4);
+  #clapShutR = new Float32Array(4);
+  #curL = new Float32Array(4);
+  #curR = new Float32Array(4);
+  #shoeMouth = new THREE.Vector3();
+  #worldCenter = new THREE.Vector3();
+  #invTable = new THREE.Matrix4();
+  #lookLocal = new THREE.Vector3();
+
+  constructor(rig, table, shoeMouthLocal) {
+    this.rig = rig;
+    this.root = rig.getRoot();
+    this.#table = table;
+    this.root.position.set(0, 0, DEALER_LOCAL_Z);
+    this.root.name = 'PrincesaCrupier';
+    table.add(this.root);
+    // Boca del zapato en el marco de la crupier
+    this.#shoeMouth.set(shoeMouthLocal.x, shoeMouthLocal.y, shoeMouthLocal.z - DEALER_LOCAL_Z);
+    this.#worldCenter.setFromMatrixPosition(table.matrixWorld);
+    this.#invTable.copy(table.matrixWorld).invert();
+    this.#findBones();
+
+    // Poses clave precalculadas: manos relajadas en el borde, aplauso abierto/cerrado
+    solveDealerArm(1, 0.17, 0.93, 0.25, 0, this.#seedL, this.#restL);
+    solveDealerArm(-1, -0.17, 0.93, 0.25, 0, this.#seedR, this.#restR);
+    solveDealerArm(1, 0.17, 1.14, 0.30, 0, this.#seedL, this.#clapOpenL);
+    solveDealerArm(-1, -0.17, 1.14, 0.30, 0, this.#seedR, this.#clapOpenR);
+    solveDealerArm(1, 0.035, 1.16, 0.32, 0, this.#clapOpenL, this.#clapShutL);
+    solveDealerArm(-1, -0.035, 1.16, 0.32, 0, this.#clapOpenR, this.#clapShutR);
+    this.#curL.set(this.#restL);
+    this.#curR.set(this.#restR);
+  }
+
+  #findBones() {
+    const body = this.root.children[0];
+    if (!body) return;
+    for (const c of body.children) {
+      if (c.isGroup && Math.abs(c.position.y - SPINE_PIVOT_Y) < 1e-4 && c.children[0]?.isGroup) this.#spine = c;
+    }
+    const inner = this.#spine?.children[0];
+    if (!inner) return;
+    for (const c of inner.children) {
+      if (!c.isGroup || Math.abs(c.position.y - SHOULDER_Y) > 0.06 || Math.abs(c.position.x) < 0.1) continue;
+      const fore = c.children.find((g) => g.isGroup && Math.abs(g.position.y + ARM_UPPER) < 1e-3) || null;
+      if (c.position.x > 0) {
+        this.#lS = c;
+        this.#lF = fore;
+      } else {
+        this.#rS = c;
+        this.#rF = fore;
+      }
+    }
+  }
+
+  /** Brazo del lado del zapato hacia la boca del zapato y gesto de deslizamiento hacia la carta. */
+  playDeal(slotX, slotZ) {
+    const m = this.#shoeMouth;
+    solveDealerArm(1, m.x, m.y + 0.035, m.z, 0.16, this.#restL, this.#reachL);
+    const dz = slotZ - DEALER_LOCAL_Z;
+    const k = 0.55;
+    solveDealerArm(1, m.x + (slotX - m.x) * k, 0.95, m.z + (dz - m.z) * k, 0.16, this.#reachL, this.#releaseL);
+    this.#action = 1;
+    this.#t = 0;
+  }
+
+  /** Mano hacia la carta oculta y giro de muñeca al revelarla. */
+  playFlip(cardX, cardZ) {
+    solveDealerArm(-1, cardX, 0.95, cardZ - DEALER_LOCAL_Z, 0.18, this.#restR, this.#flipA);
+    this.#flipB.set(this.#flipA);
+    this.#flipB[2] -= 0.25;
+    this.#flipB[3] += 0.75;
+    this.#action = 2;
+    this.#t = 0;
+  }
+
+  playCelebrate() {
+    this.rig.cancelEmote();
+    this.#action = 3;
+    this.#t = 0;
+  }
+
+  playBow() {
+    this.rig.playEmote('curtsy');
+    this.#action = 4;
+    this.#t = 0;
+  }
+
+  playIdle() {
+    if (this.#action !== 4) this.rig.cancelEmote();
+    this.#action = 0;
+    this.#t = 0;
+  }
+
+  /**
+   * @param {number} dt
+   * @param {THREE.Vector3|null} viewer posición del jugador (mundo)
+   * @param {boolean} active la mesa está en sesión de juego
+   */
+  update(dt, viewer, active) {
+    let distSq = 0;
+    if (viewer) {
+      const dx = viewer.x - this.#worldCenter.x;
+      const dz = viewer.z - this.#worldCenter.z;
+      distSq = dx * dx + dz * dz;
+    }
+    const visible = active || distSq < DEALER_HIDE_SQ;
+    if (this.root.visible !== visible) this.root.visible = visible;
+    // LOD: lejos y sin partida -> micro-animaciones en pausa
+    this.#animating = active || distSq < DEALER_ANIM_SQ;
+    if (!visible || !this.#animating) return;
+
+    if (viewer) {
+      this.#lookLocal.set(viewer.x, viewer.y + 1.45, viewer.z).applyMatrix4(this.#invTable);
+      this.rig.setLookTarget(this.#lookLocal);
+    }
+    this.rig.update(dt, 'idle', 0, active ? 0 : 1);
+
+    this.#t += dt;
+    this.#idleT += dt;
+    const t = this.#t;
+    const L = this.#curL;
+    const R = this.#curR;
+    let leanT = 0.02;
+    let wT = 1;
+
+    switch (this.#action) {
+      case 1: {
+        R.set(this.#restR);
+        if (t < DEALER_DEAL_LEAD) {
+          this.#mix(L, this.#restL, this.#reachL, dealerEase(t / DEALER_DEAL_LEAD));
+        } else if (t < 0.35) {
+          this.#mix(L, this.#reachL, this.#releaseL, dealerEase((t - DEALER_DEAL_LEAD) / (0.35 - DEALER_DEAL_LEAD)));
+        } else {
+          this.#mix(L, this.#releaseL, this.#restL, dealerEase((t - 0.35) / (DEAL_GESTURE - 0.35)));
+        }
+        leanT = 0.16 * Math.sin(Math.min(1, t / DEAL_GESTURE) * Math.PI);
+        if (t >= DEAL_GESTURE) this.#action = 0;
+        break;
+      }
+      case 2: {
+        L.set(this.#restL);
+        if (t < 0.18) this.#mix(R, this.#restR, this.#flipA, dealerEase(t / 0.18));
+        else if (t < 0.36) this.#mix(R, this.#flipA, this.#flipB, dealerEase((t - 0.18) / 0.18));
+        else this.#mix(R, this.#flipB, this.#restR, dealerEase((t - 0.36) / (FLIP_GESTURE - 0.36)));
+        leanT = 0.18 * Math.sin(Math.min(1, t / FLIP_GESTURE) * Math.PI);
+        if (t >= FLIP_GESTURE) this.#action = 0;
+        break;
+      }
+      case 3: {
+        // Aplauso alegre: manos que se juntan a ~4.5 Hz con entrada y salida suaves
+        const env = Math.min(1, t / 0.22, (CLAP_TIME - t) / 0.3);
+        const shut = 0.5 + 0.5 * Math.sin(t * Math.PI * 9);
+        this.#mix(L, this.#clapOpenL, this.#clapShutL, shut);
+        this.#mix(R, this.#clapOpenR, this.#clapShutR, shut);
+        if (env < 1) {
+          this.#mix(L, this.#restL, L, dealerEase(Math.max(0, env)));
+          this.#mix(R, this.#restR, R, dealerEase(Math.max(0, env)));
+        }
+        leanT = -0.05;
+        if (t >= CLAP_TIME) this.#action = 0;
+        break;
+      }
+      case 4:
+        wT = 0;
+        if (t >= BOW_TIME) this.#action = 0;
+        break;
+      default: {
+        // Reposo: manos relajadas en el borde de la mesa con respiración sutil
+        const b = Math.sin(this.#idleT * 1.7) * 0.025;
+        this.#mix(L, L, this.#restL, 1 - Math.exp(-dt * 6));
+        this.#mix(R, R, this.#restR, 1 - Math.exp(-dt * 6));
+        L[0] += b * 0.4;
+        R[0] += b * 0.4;
+      }
+    }
+
+    this.#w += (wT - this.#w) * (1 - Math.exp(-dt * 9));
+    this.#lean += (leanT - this.#lean) * (1 - Math.exp(-dt * 12));
+    this.#apply();
+  }
+
+  #mix(out, a, b, k) {
+    out[0] = a[0] + (b[0] - a[0]) * k;
+    out[1] = a[1] + (b[1] - a[1]) * k;
+    out[2] = a[2] + (b[2] - a[2]) * k;
+    out[3] = a[3] + (b[3] - a[3]) * k;
+  }
+
+  #apply() {
+    const w = this.#w;
+    if (w < 1e-3) return;
+    const L = this.#curL;
+    const R = this.#curR;
+    this.#setBone(this.#lS, L[0], L[1], w);
+    this.#setBone(this.#lF, L[2], L[3], w);
+    this.#setBone(this.#rS, R[0], R[1], w);
+    this.#setBone(this.#rF, R[2], R[3], w);
+    if (this.#spine) this.#spine.rotation.x += this.#lean * w;
+  }
+
+  #setBone(bone, x, z, w) {
+    if (!bone) return;
+    bone.rotation.x += (x - bone.rotation.x) * w;
+    bone.rotation.z += (z - bone.rotation.z) * w;
+  }
+
+  dispose() {
+    this.root.removeFromParent();
+    this.rig.dispose();
+  }
+}
+
 /**
  * Constructor arquitectónico de la Gran Cúpula Gigante del Casino Real,
  * Paseo Real del Casino y sistema de fuegos artificiales.
@@ -150,6 +506,9 @@ export class CasinoDomeBuilder {
   #built = false;
 
   #stations = [];
+  #dealers = [];
+  #dealerViewer = null;
+  #activeTableId = null;
   #markerRingInst = null;
   #markerRingPositions = [];
   #chandelierSpinners = [];
@@ -314,6 +673,16 @@ export class CasinoDomeBuilder {
     return best;
   }
 
+  /** Posición del jugador (referencia viva, sin copias) para el LOD de las crupieres. */
+  setDealerViewer(positionRef) {
+    this.#dealerViewer = positionRef || null;
+  }
+
+  /** Mesa de Blackjack en partida (sus animaciones nunca se pausan). */
+  setActiveBlackjackTable(id) {
+    this.#activeTableId = id || null;
+  }
+
   triggerDomeFireworks() {
     this.#fwActive = true;
     this.#fwTimer = 0;
@@ -398,10 +767,18 @@ export class CasinoDomeBuilder {
       this.#markerRingInst.instanceMatrix.needsUpdate = true;
     }
 
+    for (let i = 0; i < this.#dealers.length; i++) {
+      const d = this.#dealers[i];
+      d.dealer.update(safeDt, this.#dealerViewer, d.id === this.#activeTableId);
+    }
+
     this.#updateFireworks(safeDt);
   }
 
   dispose() {
+    for (const d of this.#dealers) d.dealer.dispose();
+    this.#dealers.length = 0;
+    this.#dealerViewer = null;
     for (const mesh of this.#instancedMeshes) {
       if (mesh && typeof mesh.dispose === 'function') mesh.dispose();
     }
@@ -2088,9 +2465,6 @@ export class CasinoDomeBuilder {
     const pedBaseGeo = new THREE.CylinderGeometry(0.42, 0.56, 0.14, 24);
     const pedColGeo = new THREE.CylinderGeometry(0.20, 0.25, 0.68, 20);
     const backTrimGeo = new THREE.BoxGeometry((tableRadius + 0.09) * 2, 0.09, 0.12);
-    const shoeBodyGeo = new THREE.BoxGeometry(0.11, 0.09, 0.24);
-    const deckBlockGeo = new THREE.BoxGeometry(0.085, 0.068, 0.14);
-    const shoeTrimGeo = new THREE.BoxGeometry(0.12, 0.02, 0.25);
     const chairStemGeo = new THREE.CylinderGeometry(0.045, 0.055, 0.48, 12);
     const chairFootGeo = new THREE.CylinderGeometry(0.26, 0.28, 0.04, 18);
     const seatGeo = new THREE.CylinderGeometry(0.28, 0.26, 0.10, 20);
@@ -2098,31 +2472,47 @@ export class CasinoDomeBuilder {
 
     this.#tempGeos.push(
       tableBaseGeo, railGeo, feltTopGeo, pedBaseGeo, pedColGeo, backTrimGeo,
-      shoeBodyGeo, deckBlockGeo, shoeTrimGeo, chairStemGeo, chairFootGeo, seatGeo, backrestGeo
+      chairStemGeo, chairFootGeo, seatGeo, backrestGeo
     );
 
+    // Fichas: bandeja de la banca (izquierda de la crupier) + pilas del jugador
     const stackSpecs = [
-      { x: 0.56, z: -0.24, count: 6, matIdx: 0 },
-      { x: 0.65, z: -0.22, count: 4, matIdx: 1 },
-      { x: 0.60, z: -0.14, count: 5, matIdx: 2 },
-      { x: -0.44, z: 0.28, count: 5, matIdx: 0 },
-      { x: -0.36, z: 0.32, count: 4, matIdx: 3 },
-      { x: 0.44, z: 0.28, count: 6, matIdx: 4 }
+      { x: -0.71, z: -0.27, count: 6, matIdx: 0 },
+      { x: -0.64, z: -0.29, count: 5, matIdx: 1 },
+      { x: -0.57, z: -0.27, count: 7, matIdx: 2 },
+      { x: -0.50, z: -0.29, count: 4, matIdx: 3 },
+      { x: -0.66, z: -0.21, count: 3, matIdx: 4 },
+      { x: -0.52, z: 0.30, count: 5, matIdx: 0 },
+      { x: -0.45, z: 0.34, count: 4, matIdx: 3 },
+      { x: 0.52, z: 0.30, count: 6, matIdx: 4 }
     ];
     const chipsPerTable = stackSpecs.reduce((acc, s) => acc + s.count, 0);
     const chipGeo = this.#trackGeo(new THREE.CylinderGeometry(0.032, 0.032, 0.012, 16));
-    const chipInst = this.#trackInstanced(new THREE.InstancedMesh(chipGeo, chipMat, BLACKJACK_SPECS.length * chipsPerTable));
+
+    // Zapato dispensador 3D real (marco de cada mesa): esquina derecha del tapete vista por el jugador
+    const shoeLipGeo = this.#trackGeo(new THREE.BoxGeometry(0.11, 0.014, 0.05));
+    const shoeCardGeo = this.#trackGeo(new THREE.BoxGeometry(0.075, 0.004, 0.10));
+    const shoeBody = this.#trackGeo(new THREE.BoxGeometry(0.11, 0.09, 0.24));
+    const shoeDeck = this.#trackGeo(new THREE.BoxGeometry(0.085, 0.068, 0.14));
+    const shoeTrim = this.#trackGeo(new THREE.BoxGeometry(0.12, 0.02, 0.25));
+    const shoeCardMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xb63978, roughness: 0.4, metalness: 0.05 }));
 
     const tableLocalY = 0.86;
     const tableSurfaceY = VIP_Y + tableLocalY;
+    const cardsY = tableLocalY + 0.008;
+    const SHOE_POS = new THREE.Vector3(0.43, tableLocalY, -0.27);
+    const SHOE_YAW = -Math.PI * 0.5 + 0.33; // la boca mira hacia el centro del tapete
+    const shoeMouth = new THREE.Vector3(
+      SHOE_POS.x + Math.sin(SHOE_YAW) * 0.13,
+      tableLocalY + 0.03,
+      SHOE_POS.z + Math.cos(SHOE_YAW) * 0.13
+    );
     const localObj = new THREE.Object3D();
-    const subObj = new THREE.Object3D();
-    const subMat = new THREE.Matrix4();
     const worldMat = new THREE.Matrix4();
     const chipColor = new THREE.Color();
-    let chipIdx = 0;
 
-    for (const spec of BLACKJACK_SPECS) {
+    for (let tableIdx = 0; tableIdx < BLACKJACK_SPECS.length; tableIdx++) {
+      const spec = BLACKJACK_SPECS[tableIdx];
       const table = new THREE.Group();
       table.name = `BlackjackTable_${spec.id}`;
       table.position.set(spec.x, VIP_Y, spec.z);
@@ -2146,47 +2536,72 @@ export class CasinoDomeBuilder {
       pushTableStatic(railGeo, railMat, 0, tableLocalY - 0.02, flatZ, false, true);
       pushTableStatic(backTrimGeo, roseGoldMat, 0, tableLocalY - 0.046, flatZ - 0.05, false, true);
 
-      const shoePos = new THREE.Vector3(-0.68, tableLocalY, -0.25);
-      localObj.position.copy(shoePos);
-      localObj.rotation.set(0, 0.42, 0);
-      localObj.scale.set(1, 1, 1);
-      localObj.updateMatrix();
-      subMat.multiplyMatrices(table.matrix, localObj.matrix);
+      // --- Contenido local de la mesa (tableGroup) ---
+      const cardShoe = new THREE.Group();
+      cardShoe.name = 'cardShoe';
+      cardShoe.position.copy(SHOE_POS);
+      cardShoe.rotation.y = SHOE_YAW;
+      const addShoePart = (geo, mat, x, y, z, rx = 0) => {
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x, y, z);
+        m.rotation.x = rx;
+        m.castShadow = false;
+        m.receiveShadow = true;
+        m.matrixAutoUpdate = false;
+        m.updateMatrix();
+        cardShoe.add(m);
+      };
+      addShoePart(shoeTrim, roseGoldMat, 0, 0.01, 0);
+      addShoePart(shoeDeck, cardDeckMat, 0, 0.044, -0.03);
+      addShoePart(shoeBody, acrylicMat, 0, 0.055, 0);
+      addShoePart(shoeLipGeo, roseGoldMat, 0, 0.03, 0.115, 0.42);
+      addShoePart(shoeCardGeo, shoeCardMat, 0, 0.026, 0.118, 0.42);
+      cardShoe.matrixAutoUpdate = false;
+      cardShoe.updateMatrix();
+      table.add(cardShoe);
 
-      for (const [geo, mat, sx, sy, sz] of [
-        [shoeBodyGeo, acrylicMat, 0, 0.045, 0],
-        [deckBlockGeo, cardDeckMat, 0, 0.042, 0.01],
-        [shoeTrimGeo, roseGoldMat, 0, 0.01, 0]
-      ]) {
-        subObj.position.set(sx, sy, sz);
-        subObj.rotation.set(0, 0, 0);
-        subObj.scale.set(1, 1, 1);
-        subObj.updateMatrix();
-        worldMat.multiplyMatrices(subMat, subObj.matrix);
-        this.#addBucketPiece(buckets, geo, mat, worldMat, false, true, true);
-      }
-
+      const chips = this.#trackInstanced(new THREE.InstancedMesh(chipGeo, chipMat, chipsPerTable));
+      chips.name = 'bankChips';
+      let chipIdx = 0;
       for (const st of stackSpecs) {
         chipColor.setHex(chipColors[st.matIdx]);
         for (let k = 0; k < st.count; k++) {
           localObj.position.set(st.x, tableLocalY + 0.008 + k * 0.013, st.z);
-          localObj.rotation.set(0, 0, 0);
-          localObj.scale.set(1, 1, 1);
+          localObj.rotation.set(0, (k * 0.7) % 1, 0);
           localObj.updateMatrix();
-          worldMat.multiplyMatrices(table.matrix, localObj.matrix);
-          chipInst.setMatrixAt(chipIdx, worldMat);
-          chipInst.setColorAt(chipIdx, chipColor);
+          chips.setMatrixAt(chipIdx, localObj.matrix);
+          chips.setColorAt(chipIdx, chipColor);
           chipIdx++;
         }
       }
+      chips.instanceMatrix.needsUpdate = true;
+      if (chips.instanceColor) chips.instanceColor.needsUpdate = true;
+      chips.matrixAutoUpdate = false;
+      chips.updateMatrix();
+      chips.computeBoundingSphere();
+      table.add(chips);
+
+      // Contenedor de cartas exactamente sobre el tapete (nunca hundido en la mesa)
+      const cardsContainer = new THREE.Group();
+      cardsContainer.name = 'cardsContainer';
+      cardsContainer.position.set(0, cardsY, 0);
+      table.add(cardsContainer);
 
       pushTableStatic(chairStemGeo, roseGoldMat, 0, 0.24, 1.82, false, true);
       pushTableStatic(chairFootGeo, roseGoldMat, 0, 0.02, 1.82, false, true);
       pushTableStatic(seatGeo, velvetChairMat, 0, 0.52, 1.82, false, true);
       pushTableStatic(backrestGeo, velvetChairMat, 0, 0.74, 2.04, false, true);
 
-      table.updateMatrixWorld(true);
       group.add(table);
+      table.updateMatrixWorld(true);
+
+      // Princesa Crupier de pie tras el borde recto, mirando de frente al asiento del jugador
+      const look = DEALER_LOOKS[tableIdx % DEALER_LOOKS.length];
+      // Levita imperial burdeos con botones dorados: elegante y sin falda que roce la mesa
+      const rig = new CharacterRig({ ...look, outfitId: 'amazona_palacio' });
+      rig.init();
+      const dealer = new BlackjackDealer(rig, table, shoeMouth);
+      this.#dealers.push({ id: spec.id, dealer });
 
       if (this.#collision) {
         this.#collision.addCylinderCollider(spec.x, spec.z, 1.15, VIP_Y, VIP_Y + 1.4);
@@ -2194,29 +2609,35 @@ export class CasinoDomeBuilder {
 
       const playerStandPos = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, 0, 1.32);
       const interactPos = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, 0, 1.45);
-      const cameraPos = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, 1.48, 1.12);
-      const cameraLookAt = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, tableLocalY, 0.05);
+      // Encuadre 1ª persona: cartas del jugador abajo, banca al centro, zapato a la derecha
+      // y la crupier de frente (de cintura para arriba) en la parte superior
+      const cameraPos = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, 1.56, 1.24);
+      const cameraLookAt = this.#localToWorld(spec.x, VIP_Y, spec.z, spec.rotY, 0, 1.08, -0.30);
 
       this.#stations.push({
         id: spec.id,
         type: 'blackjack',
         label: 'Jugar Blackjack Real',
         group: table,
+        tableGroup: table,
+        cardsContainer,
+        cardShoe,
+        dealer,
         playerStandPos,
         interactPos,
         playerYaw: spec.rotY + Math.PI,
         cameraPos,
         cameraLookAt,
         tableSurfaceY,
-        shoeLocalPos: shoePos.clone(),
-        playerCardOriginLocal: new THREE.Vector3(0.0, tableLocalY, 0.32),
-        dealerCardOriginLocal: new THREE.Vector3(0.0, tableLocalY, -0.22),
+        tableTopY: tableLocalY,
+        // Coordenadas en el marco de cardsContainer (y = 0 es la superficie del tapete + 8 mm)
+        shoeMouthLocal: new THREE.Vector3(shoeMouth.x, shoeMouth.y - cardsY, shoeMouth.z),
+        playerRowLocal: new THREE.Vector3(-0.20, 0, 0.21),
+        dealerRowLocal: new THREE.Vector3(-0.30, 0, -0.17),
+        discardLocal: new THREE.Vector3(-0.58, 0, -0.04),
         betSpotLocal: new THREE.Vector3(0.0, tableLocalY, 0.52)
       });
     }
-
-    this.#finalizeStaticInstanced(chipInst, false, false);
-    group.add(chipInst);
 
     group.matrixAutoUpdate = false;
     group.updateMatrix();

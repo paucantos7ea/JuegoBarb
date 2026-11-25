@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CatalogData } from '../characters/catalog/CatalogData.js';
 import { CasinoUI } from '../ui/CasinoUI.js';
+import { DEALER_DEAL_LEAD } from './CasinoDomeBuilder.js';
 
 const SUITS = Object.freeze(['♠', '♥', '♦', '♣']);
 const RANKS = Object.freeze(['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']);
@@ -17,17 +18,37 @@ const SYMBOL_LABELS = Object.freeze({
   cherry: 'Cereza'
 });
 
-const PIP_LAYOUTS = Object.freeze({
-  2: [[0.5, 0.25], [0.5, 0.75]],
-  3: [[0.5, 0.22], [0.5, 0.5], [0.5, 0.78]],
-  4: [[0.32, 0.25], [0.68, 0.25], [0.32, 0.75], [0.68, 0.75]],
-  5: [[0.32, 0.25], [0.68, 0.25], [0.5, 0.5], [0.32, 0.75], [0.68, 0.75]],
-  6: [[0.32, 0.23], [0.68, 0.23], [0.32, 0.5], [0.68, 0.5], [0.32, 0.77], [0.68, 0.77]],
-  7: [[0.32, 0.22], [0.68, 0.22], [0.5, 0.36], [0.32, 0.5], [0.68, 0.5], [0.32, 0.78], [0.68, 0.78]],
-  8: [[0.32, 0.21], [0.68, 0.21], [0.5, 0.35], [0.32, 0.5], [0.68, 0.5], [0.5, 0.65], [0.32, 0.79], [0.68, 0.79]],
-  9: [[0.32, 0.2], [0.68, 0.2], [0.32, 0.4], [0.68, 0.4], [0.5, 0.5], [0.32, 0.6], [0.68, 0.6], [0.32, 0.8], [0.68, 0.8]],
-  10: [[0.32, 0.2], [0.68, 0.2], [0.5, 0.31], [0.32, 0.41], [0.68, 0.41], [0.32, 0.59], [0.68, 0.59], [0.5, 0.69], [0.32, 0.8], [0.68, 0.8]]
-});
+// Naipes 3D (proporcionados a la mesa y a la cámara en primera persona)
+const CARD_W = 0.14;
+const CARD_T = 0.004;
+const CARD_D = 0.20;
+const CARD_POOL_SIZE = 24;
+const PLAYER_CARD_SCALE = 1.12;
+const PLAYER_CARD_STEP = 0.118;
+const DEALER_CARD_STEP = 0.105;
+const SHOE_CARD_YAW = -1.15;
+const DEAL_INTERVAL = 0.28;
+const DEAL_FLIGHT = 0.34;
+const FLIP_TIME = 0.42;
+const COLLECT_TIME = 0.26;
+const DEALER_DRAW_PAUSE = 0.45;
+const OWNER_PLAYER = 0;
+const OWNER_DEALER = 1;
+const ANIM_NONE = 0;
+const ANIM_DEAL = 1;
+const ANIM_FLIP = 2;
+const ANIM_COLLECT = 3;
+const OP_DEAL = 1;
+const OP_FLIP = 2;
+const OP_CALL = 3;
+const OP_COLLECT = 4;
+const CB_INITIAL = 1;
+const CB_NATURAL = 2;
+const CB_AFTER_HIT = 3;
+const CB_AFTER_DOUBLE = 4;
+const CB_DEALER_LOOP = 5;
+const CB_RESOLVE = 6;
+const CB_PLAYER_BUST = 7;
 
 function toVec3(src, out = new THREE.Vector3()) {
   if (!src) return out.set(0, 0, 0);
@@ -42,10 +63,12 @@ function easeOutCubic(t) {
   return 1 - Math.pow(1 - t, 3);
 }
 
-function calcHandValue(hand) {
+/** Total de las n primeras cartas de una mano (sin asignaciones). */
+function handTotal(hand, n = hand.length) {
   let total = 0;
   let aces = 0;
-  for (const card of hand) {
+  for (let i = 0; i < n; i++) {
+    const card = hand[i];
     if (card.rank === 'A') {
       aces += 1;
       total += 11;
@@ -59,7 +82,7 @@ function calcHandValue(hand) {
     total -= 10;
     aces -= 1;
   }
-  return { total, isSoft: aces > 0 };
+  return total;
 }
 
 function cardSingleValue(card) {
@@ -116,7 +139,8 @@ export class CasinoGames {
   #cardBackTex = null;
   #cardBackMat = null;
   #cardEdgeMat = null;
-  #cardCache = new Map(); // `${suit}_${rank}` -> { texture, material }
+  #cardCache = new Map(); // palo+rango -> { texture, material } (dibujado bajo demanda, una sola vez)
+  #cardPool = [];
   #coinGeo = null;
   #coinMat = null;
 
@@ -138,14 +162,17 @@ export class CasinoGames {
   #bjDeck = [];
   #bjPlayerHand = [];
   #bjDealerHand = [];
-  #bjTableGroup = null;
-  #bjCardMeshes = [];
-  #bjAnimations = [];
-  #bjTimeline = [];
-  #bjReadyFns = [];
-  #bjYawTowardPlayer = 0;
-  #bjRightLocal = new THREE.Vector3(1, 0, 0);
-  #bjForwardLocal = new THREE.Vector3(0, 0, 1);
+  #bjPlayerLanded = 0;
+  #bjDealerLanded = 0;
+  #bjHoleRevealed = false;
+  #bjCanDouble = false;
+  #bjInFlight = 0;
+  #bjQueue = Array.from({ length: 32 }, () => ({ op: 0, owner: 0, index: 0, faceUp: true, wait: 0, cb: 0 }));
+  #bjQueueHead = 0;
+  #bjQueueLen = 0;
+  #bjStepTimer = 0;
+  #slotTmp = { x: 0, y: 0, z: 0, yaw: 0 };
+  #uiState = { phase: 'betting', bet: 10, playerScore: '-', dealerScore: '-', canDouble: false, resultText: undefined, isBlackjack: false };
 
   constructor({
     scene,
@@ -175,39 +202,19 @@ export class CasinoGames {
     this.#ui = new CasinoUI();
     this.#ui.init();
 
-    // Geometría compartida exacta para cartas 3D
-    this.#cardGeometry = new THREE.BoxGeometry(0.16, 0.004, 0.23);
+    // Geometría ultrafina compartida para todos los naipes 3D
+    this.#cardGeometry = new THREE.BoxGeometry(CARD_W, CARD_T, CARD_D);
 
-    // Reverso real dorado/rosa
+    // Dorso único compartido (burdeos imperial con filigrana y corona dorada)
     this.#cardBackTex = this.#createCardBackTexture();
-    this.#cardBackMat = new THREE.MeshStandardMaterial({
-      map: this.#cardBackTex,
-      roughness: 0.35,
-      metalness: 0.08
-    });
+    this.#cardBackMat = new THREE.MeshStandardMaterial({ map: this.#cardBackTex, roughness: 0.4, metalness: 0.06 });
     this.#cardBackMat.userData.preserveRoughness = true;
-
-    this.#cardEdgeMat = new THREE.MeshStandardMaterial({
-      color: 0xf4ead8,
-      roughness: 0.35,
-      metalness: 0.04
-    });
+    this.#cardEdgeMat = new THREE.MeshStandardMaterial({ color: 0xf6eedd, roughness: 0.45, metalness: 0.02 });
     this.#cardEdgeMat.userData.preserveRoughness = true;
+    this.#buildCardPool();
 
-    // Caché completa de las 52 cartas
-    for (const suit of SUITS) {
-      for (const rank of RANKS) {
-        const key = `${suit}_${rank}`;
-        const texture = this.#createCardFrontTexture(suit, rank);
-        const material = new THREE.MeshStandardMaterial({
-          map: texture,
-          roughness: 0.35,
-          metalness: 0.04
-        });
-        material.userData.preserveRoughness = true;
-        this.#cardCache.set(key, { texture, material });
-      }
-    }
+    // LOD de las Princesas Crupier: referencia viva a la posición del jugador
+    this.#casinoDome?.setDealerViewer?.(this.#player?.getPosition?.() ?? null);
 
     // Geometría y material VFX compartidos para lluvia de monedas
     this.#coinGeo = new THREE.CylinderGeometry(0.052, 0.052, 0.012, 16);
@@ -253,93 +260,73 @@ export class CasinoGames {
   }
 
   #createCardFrontTexture(suit, rank) {
+    const W = 280;
+    const H = 400;
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 368;
+    canvas.width = W;
+    canvas.height = H;
     const ctx = canvas.getContext('2d');
     const isRed = suit === '♥' || suit === '♦';
-    const ink = isRed ? '#c62448' : '#1e1624';
+    const ink = isRed ? '#c2183f' : '#1c1422';
+    const suitFont = (px) => `${px}px "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", Arial, sans-serif`;
 
-    // Marfil cálido para evitar reflejo blanco bajo bloom
-    ctx.fillStyle = '#fcf6ec';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Marfil cálido + borde dorado sutil (doble filete)
+    ctx.fillStyle = '#fdf8ee';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#d6aa58';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(9, 9, W - 18, H - 18);
+    ctx.strokeStyle = 'rgba(214, 170, 88, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(19, 19, W - 38, H - 38);
 
-    // Doble marco dorado sutil
-    ctx.strokeStyle = '#d4a857';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
-    ctx.strokeStyle = 'rgba(212, 168, 87, 0.45)';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(15, 15, canvas.width - 30, canvas.height - 30);
-
-    // Índices esquina superior izquierda
-    ctx.fillStyle = ink;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = 'bold 34px "Segoe UI", Arial, sans-serif';
-    ctx.fillText(rank, 35, 42);
-    ctx.font = '28px "Segoe UI Symbol", "Apple Color Emoji", Arial, sans-serif';
-    ctx.fillText(suit, 35, 74);
-
-    // Índices esquina inferior derecha invertidos
-    ctx.save();
-    ctx.translate(canvas.width - 35, canvas.height - 42);
-    ctx.rotate(Math.PI);
-    ctx.font = 'bold 34px "Segoe UI", Arial, sans-serif';
-    ctx.fillText(rank, 0, 0);
-    ctx.font = '28px "Segoe UI Symbol", "Apple Color Emoji", Arial, sans-serif';
-    ctx.fillText(suit, 0, 32);
-    ctx.restore();
-
-    // Dibujo central
-    const numVal = Number(rank);
-    if (rank === 'A') {
+    ctx.fillStyle = ink;
+    const corner = (x, y, rot) => {
       ctx.save();
-      ctx.strokeStyle = 'rgba(212, 168, 87, 0.55)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(128, 184, 58, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = ink;
-      ctx.font = '94px "Segoe UI Symbol", "Apple Color Emoji", Arial, sans-serif';
-      ctx.fillText(suit, 128, 188);
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.font = `bold ${rank === '10' ? 50 : 60}px Georgia, "Times New Roman", serif`;
+      ctx.fillText(rank, 0, 0);
+      ctx.font = suitFont(46);
+      ctx.fillText(suit, 0, 52);
       ctx.restore();
-    } else if (rank === 'J' || rank === 'Q' || rank === 'K') {
-      ctx.save();
-      ctx.fillStyle = isRed ? 'rgba(232, 92, 138, 0.12)' : 'rgba(42, 26, 52, 0.08)';
-      ctx.fillRect(58, 72, 140, 224);
-      ctx.strokeStyle = '#d4a857';
+    };
+    corner(46, 54, 0);
+    corner(W - 46, H - 54, Math.PI);
+
+    // Palo grande y nítido en el centro (figuras con corona dorada)
+    const face = rank === 'J' || rank === 'Q' || rank === 'K';
+    if (face) {
+      ctx.fillStyle = isRed ? 'rgba(232, 92, 138, 0.10)' : 'rgba(42, 26, 52, 0.07)';
+      ctx.fillRect(76, 92, W - 152, H - 184);
+      ctx.strokeStyle = '#d6aa58';
       ctx.lineWidth = 3;
-      ctx.strokeRect(58, 72, 140, 224);
-
-      const emblem = rank === 'K' ? '♛' : rank === 'Q' ? '👑' : '⚜️';
-      ctx.font = '46px "Segoe UI Symbol", "Apple Color Emoji", Arial, sans-serif';
-      ctx.fillStyle = '#c88c32';
-      ctx.fillText(emblem, 128, 134);
-
+      ctx.strokeRect(76, 92, W - 152, H - 184);
+      ctx.fillStyle = '#c98f2e';
+      ctx.font = suitFont(58);
+      ctx.fillText('♛', W / 2, 150);
       ctx.fillStyle = ink;
-      ctx.font = 'bold 58px Georgia, serif';
-      ctx.fillText(rank, 128, 194);
-      ctx.font = '44px "Segoe UI Symbol", "Apple Color Emoji", Arial, sans-serif';
-      ctx.fillText(suit, 128, 248);
-      ctx.restore();
-    } else if (PIP_LAYOUTS[numVal]) {
-      ctx.fillStyle = ink;
-      ctx.font = '38px "Segoe UI Symbol", "Apple Color Emoji", Arial, sans-serif';
-      for (const [nx, ny] of PIP_LAYOUTS[numVal]) {
-        const px = 56 + (nx - 0.3) * (144 / 0.4);
-        const py = 54 + (ny - 0.18) * (260 / 0.64);
-        ctx.save();
-        ctx.translate(px, py);
-        if (ny > 0.55) ctx.rotate(Math.PI);
-        ctx.fillText(suit, 0, 0);
-        ctx.restore();
+      ctx.font = 'bold 74px Georgia, "Times New Roman", serif';
+      ctx.fillText(rank, W / 2, 222);
+      ctx.font = suitFont(64);
+      ctx.fillText(suit, W / 2, 290);
+    } else {
+      if (rank === 'A') {
+        ctx.strokeStyle = 'rgba(214, 170, 88, 0.6)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(W / 2, H / 2, 84, 0, Math.PI * 2);
+        ctx.stroke();
       }
+      ctx.font = suitFont(rank === 'A' ? 150 : 132);
+      ctx.fillText(suit, W / 2, H / 2 + 6);
     }
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
+    tex.anisotropy = 8;
     tex.needsUpdate = true;
     return tex;
   }
@@ -472,11 +459,9 @@ export class CasinoGames {
         onExit: () => this.exitStation()
       });
     } else {
-      this.#initBlackjackTableFrame();
-      this.#bjPhase = 'betting';
-      this.#bjDeck = [];
-      this.#bjPlayerHand = [];
-      this.#bjDealerHand = [];
+      this.#resetBlackjackRound();
+      this.#casinoDome?.setActiveBlackjackTable?.(station.id);
+      station.dealer?.playIdle();
       this.#ui.openBlackjack({
         balance: this.#getBalance(),
         onDeal: (bet) => this.#handleBlackjackDeal(bet),
@@ -495,7 +480,16 @@ export class CasinoGames {
     if (rigRoot) rigRoot.visible = true;
     this.#localRigHidden = false;
 
-    this.#cleanupSessionVisuals();
+    // Recogida rápida de las cartas mientras la cámara sale (vuelven al pool al terminar)
+    if (this.#mode === 'blackjack') {
+      this.#resetQueue();
+      this.#execCollect();
+      this.#station?.dealer?.playIdle();
+    }
+    this.#slotsSpin = null;
+    this.#removeFirstPersonArm();
+    if (this.#station?.leverPivot) this.#station.leverPivot.rotation.x = 0;
+    this.#clearCoinRain();
     this.#ui?.close();
     this.#onActivityChange?.(null);
 
@@ -529,6 +523,8 @@ export class CasinoGames {
   }
 
   #finishExit() {
+    this.#resetBlackjackRound();
+    this.#casinoDome?.setActiveBlackjackTable?.(null);
     this.#state = 'idle';
     this.#station = null;
     this.#mode = null;
@@ -898,43 +894,345 @@ export class CasinoGames {
   }
 
   // =========================================================================
-  // MECÁNICA 2: BLACKJACK ANIMADO CON CARTAS 3D
+  // MECÁNICA 2: BLACKJACK CON PRINCESA CRUPIER Y CARTAS 3D EN EL TAPETE
   // =========================================================================
 
-  #initBlackjackTableFrame() {
-    this.#clearCards();
-    this.#bjTableGroup = new THREE.Group();
-    if (this.#station?.group) {
-      this.#station.group.add(this.#bjTableGroup);
-    } else {
-      this.#scene.add(this.#bjTableGroup);
+  /** Material de la cara frontal (caché global: cada naipe se dibuja una sola vez, bajo demanda). */
+  #getFrontMaterial(card) {
+    const key = card.suit + card.rank;
+    let entry = this.#cardCache.get(key);
+    if (!entry) {
+      const texture = this.#createCardFrontTexture(card.suit, card.rank);
+      const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.42, metalness: 0.02 });
+      material.userData.preserveRoughness = true;
+      entry = { texture, material };
+      this.#cardCache.set(key, entry);
     }
+    return entry.material;
+  }
 
-    // Orientación de cartas hacia el jugador en espacio local de station.group
-    const playerLocal = new THREE.Vector3();
-    const lookLocal = new THREE.Vector3();
-    toVec3(this.#station?.playerStandPos, playerLocal);
-    toVec3(this.#station?.cameraLookAt, lookLocal);
-    if (this.#station?.group) {
-      this.#station.group.worldToLocal(playerLocal);
-      this.#station.group.worldToLocal(lookLocal);
+  /** Object Pool fijo de naipes 3D: geometría y materiales de dorso/canto compartidos. */
+  #buildCardPool() {
+    for (let i = 0; i < CARD_POOL_SIZE; i++) {
+      // Caras de BoxGeometry: 0 +X, 1 -X, 2 +Y (frente), 3 -Y (dorso), 4 +Z, 5 -Z
+      const mats = [this.#cardEdgeMat, this.#cardEdgeMat, this.#cardEdgeMat, this.#cardBackMat, this.#cardEdgeMat, this.#cardEdgeMat];
+      const mesh = new THREE.Mesh(this.#cardGeometry, mats);
+      mesh.name = 'BlackjackCard';
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      mesh.visible = false;
+      this.#cardPool.push({
+        mesh,
+        mats,
+        active: false,
+        owner: 0,
+        index: 0,
+        faceUp: true,
+        anim: ANIM_NONE,
+        delay: 0,
+        t: 0,
+        dur: 0,
+        sx: 0, sy: 0, sz: 0,
+        ex: 0, ey: 0, ez: 0,
+        yaw0: 0, yaw1: 0,
+        rz0: 0, rz1: 0,
+        arc: 0
+      });
     }
+  }
 
-    const dx = playerLocal.x - lookLocal.x;
-    const dz = playerLocal.z - lookLocal.z;
-    this.#bjYawTowardPlayer = Math.atan2(dx, dz);
-    this.#bjForwardLocal.set(Math.sin(this.#bjYawTowardPlayer), 0, Math.cos(this.#bjYawTowardPlayer));
-    this.#bjRightLocal.set(Math.cos(this.#bjYawTowardPlayer), 0, -Math.sin(this.#bjYawTowardPlayer));
+  #acquireCard() {
+    for (let i = 0; i < this.#cardPool.length; i++) {
+      const c = this.#cardPool[i];
+      if (!c.active) {
+        c.active = true;
+        return c;
+      }
+    }
+    return null;
+  }
+
+  #releaseCard(c) {
+    c.active = false;
+    c.anim = ANIM_NONE;
+    c.mesh.visible = false;
+    c.mesh.removeFromParent();
+  }
+
+  #releaseAllCards() {
+    for (let i = 0; i < this.#cardPool.length; i++) {
+      if (this.#cardPool[i].active) this.#releaseCard(this.#cardPool[i]);
+    }
+    this.#bjInFlight = 0;
+  }
+
+  /** Posición/orientación final de un naipe (marco de cardsContainer). */
+  #slotFor(owner, index, out) {
+    const st = this.#station;
+    const isPlayer = owner === OWNER_PLAYER;
+    const row = isPlayer ? st?.playerRowLocal : st?.dealerRowLocal;
+    const step = isPlayer ? PLAYER_CARD_STEP : DEALER_CARD_STEP;
+    const scale = isPlayer ? PLAYER_CARD_SCALE : 1;
+    out.x = (row?.x ?? 0) + index * step;
+    out.z = (row?.z ?? 0) + (isPlayer ? (index % 2) * 0.008 : 0);
+    // +2 mm por carta: sin z-fighting en el solapamiento
+    out.y = (CARD_T * scale) * 0.5 + index * 0.002;
+    out.yaw = (((index * 37) % 7) - 3) * 0.011;
+    return out;
+  }
+
+  // --- Cola de pasos (sin closures: códigos de operación y de continuación) ---
+
+  #pushStep(op, owner = 0, index = 0, faceUp = true, wait = 0, cb = 0) {
+    if (this.#bjQueueLen >= this.#bjQueue.length) return;
+    const s = this.#bjQueue[(this.#bjQueueHead + this.#bjQueueLen) % this.#bjQueue.length];
+    s.op = op;
+    s.owner = owner;
+    s.index = index;
+    s.faceUp = faceUp;
+    s.wait = wait;
+    s.cb = cb;
+    this.#bjQueueLen++;
+  }
+
+  #resetQueue() {
+    this.#bjQueueHead = 0;
+    this.#bjQueueLen = 0;
+    this.#bjStepTimer = 0;
+  }
+
+  #processQueue(dt) {
+    if (this.#bjStepTimer > 0) this.#bjStepTimer -= dt;
+    while (this.#bjQueueLen > 0 && this.#bjStepTimer <= 0) {
+      const s = this.#bjQueue[this.#bjQueueHead];
+      // Las continuaciones esperan a que aterricen todas las cartas en vuelo
+      if ((s.op === OP_CALL || s.op === OP_FLIP) && this.#bjInFlight > 0) return;
+      this.#bjQueueHead = (this.#bjQueueHead + 1) % this.#bjQueue.length;
+      this.#bjQueueLen--;
+      this.#bjStepTimer = s.wait;
+      const op = s.op;
+      const owner = s.owner;
+      const index = s.index;
+      const faceUp = s.faceUp;
+      const cb = s.cb;
+      if (op === OP_DEAL) this.#execDeal(owner, index, faceUp);
+      else if (op === OP_FLIP) this.#execFlipHole();
+      else if (op === OP_COLLECT) this.#execCollect();
+      else if (op === OP_CALL) this.#runCallback(cb);
+    }
+  }
+
+  #execDeal(owner, index, faceUp) {
+    const hand = owner === OWNER_PLAYER ? this.#bjPlayerHand : this.#bjDealerHand;
+    const card = hand[index];
+    const st = this.#station;
+    const c = this.#acquireCard();
+    if (!card || !c || !st?.cardsContainer) {
+      if (c) this.#releaseCard(c);
+      this.#onCardLanded(owner);
+      return;
+    }
+    c.mats[2] = this.#getFrontMaterial(card);
+    c.owner = owner;
+    c.index = index;
+    c.faceUp = faceUp;
+    card.pool = c;
+
+    const mouth = st.shoeMouthLocal;
+    const slot = this.#slotFor(owner, index, this.#slotTmp);
+    c.sx = mouth?.x ?? 0.3;
+    c.sy = (mouth?.y ?? 0.03) + 0.004;
+    c.sz = mouth?.z ?? -0.2;
+    c.ex = slot.x;
+    c.ey = slot.y;
+    c.ez = slot.z;
+    c.yaw0 = SHOE_CARD_YAW;
+    c.yaw1 = slot.yaw;
+    c.rz0 = Math.PI; // sale del zapato boca abajo
+    c.rz1 = faceUp ? 0 : Math.PI;
+    c.arc = owner === OWNER_PLAYER ? 0.13 : 0.09;
+    c.anim = ANIM_DEAL;
+    c.delay = DEALER_DEAL_LEAD;
+    c.t = 0;
+    c.dur = DEAL_FLIGHT;
+    const s = owner === OWNER_PLAYER ? PLAYER_CARD_SCALE : 1;
+    c.mesh.scale.set(s, 1, s);
+    c.mesh.visible = false;
+    c.mesh.position.set(c.sx, c.sy, c.sz);
+    c.mesh.rotation.set(0, c.yaw0, c.rz0);
+    st.cardsContainer.add(c.mesh);
+    this.#bjInFlight++;
+
+    // La crupier lleva la mano al zapato y desliza la carta hacia su sitio
+    st.dealer?.playDeal(slot.x, slot.z);
+    this.#audio?.playCardDeal?.();
+  }
+
+  #execFlipHole() {
+    const hole = this.#bjDealerHand[1];
+    const c = hole?.pool;
+    if (!c || !c.active) {
+      this.#bjHoleRevealed = true;
+      return;
+    }
+    c.anim = ANIM_FLIP;
+    c.delay = 0.16;
+    c.t = 0;
+    c.dur = FLIP_TIME;
+    c.sy = c.mesh.position.y;
+    c.rz0 = Math.PI;
+    c.rz1 = 0;
+    this.#bjInFlight++;
+    this.#station?.dealer?.playFlip(c.ex, c.ez);
+    this.#audio?.playCardDeal?.();
+  }
+
+  /** Recogida rápida hacia la bandeja de descartes; al terminar vuelven al pool. */
+  #execCollect() {
+    const discard = this.#station?.discardLocal;
+    let k = 0;
+    for (let i = 0; i < this.#cardPool.length; i++) {
+      const c = this.#cardPool[i];
+      if (!c.active) continue;
+      c.anim = ANIM_COLLECT;
+      c.delay = k * 0.025;
+      c.t = 0;
+      c.dur = COLLECT_TIME;
+      c.sx = c.mesh.position.x;
+      c.sy = c.mesh.position.y;
+      c.sz = c.mesh.position.z;
+      c.ex = discard?.x ?? -0.6;
+      c.ey = 0.003 + k * 0.002;
+      c.ez = discard?.z ?? -0.1;
+      c.yaw0 = c.mesh.rotation.y;
+      c.yaw1 = 0.35;
+      c.rz0 = c.mesh.rotation.z;
+      c.rz1 = Math.PI;
+      this.#bjInFlight++;
+      k++;
+    }
+    this.#bjHoleRevealed = false;
+  }
+
+  #updateCardAnims(dt) {
+    for (let i = 0; i < this.#cardPool.length; i++) {
+      const c = this.#cardPool[i];
+      if (!c.active || c.anim === ANIM_NONE) continue;
+      if (c.delay > 0) {
+        c.delay -= dt;
+        if (c.delay > 0) continue;
+      }
+      c.mesh.visible = true;
+      c.t += dt;
+      const u = Math.min(1, c.t / c.dur);
+      const m = c.mesh;
+
+      if (c.anim === ANIM_DEAL) {
+        // Trayectoria parabólica suave + giro de 180° en Z para aterrizar boca arriba
+        const h = easeOutCubic(u);
+        m.position.set(
+          c.sx + (c.ex - c.sx) * h,
+          c.sy + (c.ey - c.sy) * h + Math.sin(u * Math.PI) * c.arc,
+          c.sz + (c.ez - c.sz) * h
+        );
+        const f = easeInOutCubic(u);
+        m.rotation.set(Math.sin(u * Math.PI) * 0.22, c.yaw0 + (c.yaw1 - c.yaw0) * h, c.rz0 + (c.rz1 - c.rz0) * f);
+      } else if (c.anim === ANIM_FLIP) {
+        // Se eleva, gira 180° en el aire y aterriza boca arriba
+        m.position.y = c.sy + Math.sin(u * Math.PI) * 0.085;
+        m.rotation.x = Math.sin(u * Math.PI) * 0.18;
+        m.rotation.z = c.rz0 + (c.rz1 - c.rz0) * easeInOutCubic(u);
+      } else if (c.anim === ANIM_COLLECT) {
+        const h = easeInOutCubic(u);
+        m.position.set(
+          c.sx + (c.ex - c.sx) * h,
+          c.sy + (c.ey - c.sy) * h + Math.sin(u * Math.PI) * 0.04,
+          c.sz + (c.ez - c.sz) * h
+        );
+        m.rotation.set(0, c.yaw0 + (c.yaw1 - c.yaw0) * h, c.rz0 + (c.rz1 - c.rz0) * h);
+      }
+
+      if (u >= 1) {
+        const anim = c.anim;
+        c.anim = ANIM_NONE;
+        this.#bjInFlight = Math.max(0, this.#bjInFlight - 1);
+        if (anim === ANIM_DEAL) {
+          m.position.set(c.ex, c.ey, c.ez);
+          m.rotation.set(0, c.yaw1, c.rz1);
+          this.#onCardLanded(c.owner);
+        } else if (anim === ANIM_FLIP) {
+          m.position.y = c.sy;
+          m.rotation.set(0, m.rotation.y, 0);
+          this.#bjHoleRevealed = true;
+          this.#refreshScores();
+        } else {
+          this.#releaseCard(c);
+        }
+      }
+    }
+  }
+
+  /** El HUD se actualiza justo cuando aterriza cada carta. */
+  #onCardLanded(owner) {
+    if (owner === OWNER_PLAYER) this.#bjPlayerLanded++;
+    else this.#bjDealerLanded++;
+    this.#refreshScores();
+  }
+
+  #refreshScores() {
+    const s = this.#uiState;
+    const pN = Math.min(this.#bjPlayerLanded, this.#bjPlayerHand.length);
+    s.playerScore = pN > 0 ? handTotal(this.#bjPlayerHand, pN) : '...';
+    s.dealerScore = this.#dealerScoreLabel();
+    s.phase = this.#bjPhase;
+    s.bet = this.#bjBet;
+    s.canDouble = this.#bjCanDouble && this.#bjPhase === 'playerTurn';
+    s.resultText = undefined;
+    s.isBlackjack = false;
+    this.#ui?.setBlackjackState(s);
+  }
+
+  #dealerScoreLabel() {
+    const n = Math.min(this.#bjDealerLanded, this.#bjDealerHand.length);
+    if (n === 0) return '?';
+    if (!this.#bjHoleRevealed) return n >= 2 ? `${cardSingleValue(this.#bjDealerHand[0])} + ?` : String(cardSingleValue(this.#bjDealerHand[0]));
+    return handTotal(this.#bjDealerHand, n);
+  }
+
+  #setUI(phase, resultText, isBlackjack = false) {
+    this.#bjPhase = phase;
+    const s = this.#uiState;
+    const pN = Math.min(this.#bjPlayerLanded, this.#bjPlayerHand.length);
+    s.phase = phase;
+    s.bet = this.#bjBet;
+    s.playerScore = pN > 0 ? handTotal(this.#bjPlayerHand, pN) : '-';
+    s.dealerScore = this.#dealerScoreLabel();
+    s.canDouble = this.#bjCanDouble && phase === 'playerTurn';
+    s.resultText = resultText;
+    s.isBlackjack = isBlackjack;
+    this.#ui?.setBlackjackState(s);
+  }
+
+  #runCallback(cb) {
+    if (!this.isInSession() || this.#mode !== 'blackjack') return;
+    switch (cb) {
+      case CB_INITIAL: this.#onInitialDealComplete(); break;
+      case CB_NATURAL: this.#resolveNaturalBlackjack(); break;
+      case CB_AFTER_HIT: this.#afterPlayerCard(false); break;
+      case CB_AFTER_DOUBLE: this.#afterPlayerCard(true); break;
+      case CB_DEALER_LOOP: this.#continueDealerDraw(); break;
+      case CB_RESOLVE: this.#resolveBlackjackHand(); break;
+      case CB_PLAYER_BUST: this.#resolvePlayerBust(); break;
+      default: break;
+    }
   }
 
   #buildShuffledDeck() {
-    const deck = [];
+    const deck = this.#bjDeck;
+    deck.length = 0;
     for (const suit of SUITS) {
-      for (const rank of RANKS) {
-        deck.push({ suit, rank });
-      }
+      for (const rank of RANKS) deck.push({ suit, rank, pool: null });
     }
-    // Fisher-Yates
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       const tmp = deck[i];
@@ -942,89 +1240,6 @@ export class CasinoGames {
       deck[j] = tmp;
     }
     return deck;
-  }
-
-  #createCardMesh(card) {
-    const entry = this.#cardCache.get(`${card.suit}_${card.rank}`);
-    const frontMat = entry?.material || this.#cardEdgeMat;
-
-    // BoxGeometry faces: 0:+X, 1:-X, 2:+Y(cara), 3:-Y(reverso), 4:+Z, 5:-Z
-    const mats = [
-      this.#cardEdgeMat,
-      this.#cardEdgeMat,
-      frontMat,
-      this.#cardBackMat,
-      this.#cardEdgeMat,
-      this.#cardEdgeMat
-    ];
-
-    const holder = new THREE.Group();
-    holder.rotation.y = this.#bjYawTowardPlayer;
-
-    const mesh = new THREE.Mesh(this.#cardGeometry, mats);
-    mesh.castShadow = false;
-    mesh.receiveShadow = true;
-    mesh.rotation.z = Math.PI; // empieza boca abajo
-    holder.add(mesh);
-
-    this.#bjTableGroup?.add(holder);
-    this.#bjCardMeshes.push(holder);
-    return { holder, mesh };
-  }
-
-  #getCardTargetPos(owner, index) {
-    const origin = owner === 'player'
-      ? toVec3(this.#station?.playerCardOriginLocal, new THREE.Vector3(0, 0.92, 0.25))
-      : toVec3(this.#station?.dealerCardOriginLocal, new THREE.Vector3(0, 0.92, -0.25));
-
-    const lateralOffset = (index - 0.5) * 0.105;
-    const forwardOffset = index * 0.022;
-    const stackY = index * 0.0048;
-
-    return origin
-      .addScaledVector(this.#bjRightLocal, lateralOffset)
-      .addScaledVector(this.#bjForwardLocal, forwardOffset)
-      .add(new THREE.Vector3(0, stackY, 0));
-  }
-
-  #queueDealAnimation(card, owner, index, faceUp, onLanded) {
-    const { holder, mesh } = this.#createCardMesh(card);
-    const startPos = toVec3(this.#station?.shoeLocalPos, new THREE.Vector3(0.42, 0.96, -0.18));
-    const endPos = this.#getCardTargetPos(owner, index);
-
-    holder.position.copy(startPos);
-    this.#audio?.playCardDeal?.();
-
-    const anim = {
-      type: 'deal',
-      holder,
-      mesh,
-      startPos,
-      endPos,
-      faceUp,
-      elapsed: 0,
-      duration: 0.38,
-      onDone: onLanded
-    };
-    this.#bjAnimations.push(anim);
-    return anim;
-  }
-
-  #queueFlipReveal(cardObj, onRevealed) {
-    this.#audio?.playCardDeal?.();
-    this.#bjAnimations.push({
-      type: 'flip',
-      holder: cardObj.holder,
-      mesh: cardObj.mesh,
-      baseY: cardObj.holder.position.y,
-      elapsed: 0,
-      duration: 0.36,
-      onDone: onRevealed
-    });
-  }
-
-  #scheduleStep(delay, fn) {
-    this.#bjTimeline.push({ remaining: delay, fn });
   }
 
   #handleBlackjackDeal(bet) {
@@ -1035,249 +1250,129 @@ export class CasinoGames {
     if (this.#coinSystem && !this.#coinSystem.spendCoins(bet)) {
       this.#audio?.playMiss?.();
       this.#ui.setBalance(this.#getBalance());
-      this.#ui.setBlackjackState({
-        phase: this.#bjPhase,
-        bet,
-        resultText: 'No tienes suficientes monedas para esta apuesta.',
-        isBlackjack: false
-      });
+      this.#setUI(this.#bjPhase, 'No tienes suficientes monedas para esta apuesta.');
       return;
     }
 
     this.#bjBet = bet;
     this.#ui.setBalance(this.#getBalance());
+    this.#resetQueue();
+    this.#station?.dealer?.playIdle();
 
-    this.#clearCards();
-    this.#bjDeck = this.#buildShuffledDeck();
-    this.#bjPlayerHand = [];
-    this.#bjDealerHand = [];
-    this.#bjPhase = 'dealing';
+    // Recoge la ronda anterior (vuelve al pool) y reparte la nueva
+    let hasCards = false;
+    for (let i = 0; i < this.#cardPool.length; i++) hasCards = hasCards || this.#cardPool[i].active;
+    if (hasCards) this.#pushStep(OP_COLLECT, 0, 0, true, COLLECT_TIME + 0.12);
 
-    this.#ui.setBlackjackState({
-      phase: 'dealing',
-      bet: this.#bjBet,
-      playerScore: '...',
-      dealerScore: '?',
-      canDouble: false,
-      resultText: 'Repartiendo cartas desde el zapato real...',
-      isBlackjack: false
-    });
+    this.#buildShuffledDeck();
+    this.#bjPlayerHand.length = 0;
+    this.#bjDealerHand.length = 0;
+    this.#bjPlayerLanded = 0;
+    this.#bjDealerLanded = 0;
+    this.#bjHoleRevealed = false;
+    this.#bjCanDouble = false;
+    this.#bjPlayerHand.push(this.#bjDeck.pop(), this.#bjDeck.pop());
+    this.#bjDealerHand.push(this.#bjDeck.pop(), this.#bjDeck.pop());
+    this.#setUI('dealing', 'La Princesa Crupier reparte desde el zapato real...');
 
-    const p1 = this.#bjDeck.pop();
-    const d1 = this.#bjDeck.pop();
-    const p2 = this.#bjDeck.pop();
-    const d2 = this.#bjDeck.pop();
-
-    this.#bjPlayerHand.push(p1, p2);
-    this.#bjDealerHand.push(d1, d2);
-
-    this.#scheduleStep(0.02, () => {
-      p1.visual = this.#queueDealAnimation(p1, 'player', 0, true);
-    });
-    this.#scheduleStep(0.22, () => {
-      d1.visual = this.#queueDealAnimation(d1, 'dealer', 0, true);
-    });
-    this.#scheduleStep(0.42, () => {
-      p2.visual = this.#queueDealAnimation(p2, 'player', 1, true);
-    });
-    this.#scheduleStep(0.62, () => {
-      d2.visual = this.#queueDealAnimation(d2, 'dealer', 1, false, () => {
-        this.#onInitialDealComplete();
-      });
-    });
+    // Jugador ↑, banca ↑, jugador ↑, banca ↓ (oculta) cada ~0.28 s
+    this.#pushStep(OP_DEAL, OWNER_PLAYER, 0, true, DEAL_INTERVAL);
+    this.#pushStep(OP_DEAL, OWNER_DEALER, 0, true, DEAL_INTERVAL);
+    this.#pushStep(OP_DEAL, OWNER_PLAYER, 1, true, DEAL_INTERVAL);
+    this.#pushStep(OP_DEAL, OWNER_DEALER, 1, false, 0);
+    this.#pushStep(OP_CALL, 0, 0, true, 0, CB_INITIAL);
   }
 
   #onInitialDealComplete() {
-    if (!this.isInSession() || this.#mode !== 'blackjack') return;
-
-    const pVal = calcHandValue(this.#bjPlayerHand);
-    const dVal = calcHandValue(this.#bjDealerHand);
-    const dUp = cardSingleValue(this.#bjDealerHand[0]);
-
-    if (pVal.total === 21 || dVal.total === 21) {
-      // Revelar la 2ª carta de la banca antes de liquidar Blackjack natural
-      this.#bjPhase = 'dealerTurn';
-      this.#ui.setBlackjackState({
-        phase: 'dealerTurn',
-        bet: this.#bjBet,
-        playerScore: pVal.total,
-        dealerScore: `${dUp} + ?`,
-        canDouble: false,
-        resultText: pVal.total === 21 ? '¡Posible Blackjack! Comprobando la banca...' : 'La banca comprueba su carta oculta...'
-      });
-
-      this.#scheduleStep(0.18, () => {
-        const hole = this.#bjDealerHand[1];
-        this.#queueFlipReveal(hole.visual, () => {
-          this.#resolveNaturalBlackjack(pVal.total, dVal.total);
-        });
-      });
+    const pTotal = handTotal(this.#bjPlayerHand, this.#bjPlayerHand.length);
+    const dTotal = handTotal(this.#bjDealerHand, this.#bjDealerHand.length);
+    if (pTotal === 21 || dTotal === 21) {
+      this.#setUI('dealerTurn', pTotal === 21 ? '¡Posible Blackjack! La crupier comprueba su carta...' : 'La banca comprueba su carta oculta...');
+      this.#pushStep(OP_FLIP, 0, 0, true, 0.1);
+      this.#pushStep(OP_CALL, 0, 0, true, 0, CB_NATURAL);
       return;
     }
-
-    const canAffordDouble = typeof this.#coinSystem?.canAfford === 'function'
+    this.#bjCanDouble = typeof this.#coinSystem?.canAfford === 'function'
       ? this.#coinSystem.canAfford(this.#bjBet)
       : this.#getBalance() >= this.#bjBet;
-
-    this.#bjPhase = 'playerTurn';
-    this.#ui.setBlackjackState({
-      phase: 'playerTurn',
-      bet: this.#bjBet,
-      playerScore: pVal.total,
-      dealerScore: `${dUp} + ?`,
-      canDouble: canAffordDouble,
-      resultText: 'Tu turno: pide carta, plántate o dobla tu apuesta.'
-    });
+    this.#setUI('playerTurn', 'Tu turno: pide carta, plántate o dobla tu apuesta.');
   }
 
-  #resolveNaturalBlackjack(pTotal, dTotal) {
-    this.#bjPhase = 'result';
-    let resultText = '';
-    let isBlackjack = false;
-
+  #resolveNaturalBlackjack() {
+    const pTotal = handTotal(this.#bjPlayerHand, this.#bjPlayerHand.length);
+    const dTotal = handTotal(this.#bjDealerHand, this.#bjDealerHand.length);
+    const dealer = this.#station?.dealer;
+    let text;
+    let isBJ = false;
     if (pTotal === 21 && dTotal === 21) {
       this.#addCoins(this.#bjBet);
-      resultText = `Empate de Blackjack (21 vs 21). Recuperas ${this.#bjBet} 🪙.`;
+      text = `Empate de Blackjack (21 vs 21). Recuperas ${this.#bjBet} 🪙.`;
+      dealer?.playIdle();
     } else if (pTotal === 21) {
       const payout = Math.round(this.#bjBet * 2.5);
       this.#addCoins(payout);
-      isBlackjack = true;
-      resultText = `¡BLACKJACK NATURAL! Pago 3:2 · +${payout} 🪙`;
+      isBJ = true;
+      text = `¡BLACKJACK NATURAL! Pago 3:2 · +${payout} 🪙`;
       this.#triggerBlackjackCelebration(payout);
+      dealer?.playCelebrate();
     } else {
       this.#audio?.playMiss?.();
-      resultText = `La banca tiene Blackjack (21 contra ${pTotal}).`;
+      text = `La banca tiene Blackjack (21 contra ${pTotal}).`;
+      dealer?.playBow();
     }
-
     this.#ui.setBalance(this.#getBalance());
-    this.#ui.setBlackjackState({
-      phase: 'result',
-      bet: this.#bjBet,
-      playerScore: pTotal,
-      dealerScore: dTotal,
-      canDouble: false,
-      resultText,
-      isBlackjack
-    });
+    this.#setUI('result', text, isBJ);
   }
 
   #handleBlackjackHit() {
     if (!this.isInSession() || this.#mode !== 'blackjack' || this.#bjPhase !== 'playerTurn') return;
-
     const card = this.#bjDeck.pop();
     if (!card) return;
-    const idx = this.#bjPlayerHand.length;
     this.#bjPlayerHand.push(card);
-    this.#bjPhase = 'dealing';
-
-    const dUp = cardSingleValue(this.#bjDealerHand[0]);
-    this.#ui.setBlackjackState({
-      phase: 'dealing',
-      bet: this.#bjBet,
-      playerScore: calcHandValue(this.#bjPlayerHand.slice(0, -1)).total,
-      dealerScore: `${dUp} + ?`,
-      canDouble: false,
-      resultText: 'Repartiendo carta...'
-    });
-
-    card.visual = this.#queueDealAnimation(card, 'player', idx, true, () => {
-      const pVal = calcHandValue(this.#bjPlayerHand);
-      if (pVal.total > 21) {
-        this.#bjPhase = 'dealerTurn';
-        this.#ui.setBlackjackState({
-          phase: 'dealerTurn',
-          bet: this.#bjBet,
-          playerScore: pVal.total,
-          dealerScore: `${dUp} + ?`,
-          canDouble: false,
-          resultText: `Te pasaste con ${pVal.total}...`
-        });
-        this.#scheduleStep(0.18, () => {
-          const hole = this.#bjDealerHand[1];
-          this.#queueFlipReveal(hole.visual, () => {
-            this.#bjPhase = 'result';
-            this.#audio?.playMiss?.();
-            this.#ui.setBalance(this.#getBalance());
-            this.#ui.setBlackjackState({
-              phase: 'result',
-              bet: this.#bjBet,
-              playerScore: pVal.total,
-              dealerScore: calcHandValue(this.#bjDealerHand).total,
-              canDouble: false,
-              resultText: `Te pasaste (${pVal.total}). Gana la banca.`,
-              isBlackjack: false
-            });
-          });
-        });
-      } else if (pVal.total === 21) {
-        this.#startDealerTurn();
-      } else {
-        this.#bjPhase = 'playerTurn';
-        this.#ui.setBlackjackState({
-          phase: 'playerTurn',
-          bet: this.#bjBet,
-          playerScore: pVal.total,
-          dealerScore: `${dUp} + ?`,
-          canDouble: false,
-          resultText: 'Tu turno: ¿pides otra carta o te plantas?'
-        });
-      }
-    });
+    this.#bjCanDouble = false;
+    // Botones bloqueados mientras la crupier reparte la nueva carta (~0.35 s)
+    this.#setUI('dealing', 'Repartiendo carta...');
+    this.#pushStep(OP_DEAL, OWNER_PLAYER, this.#bjPlayerHand.length - 1, true, 0);
+    this.#pushStep(OP_CALL, 0, 0, true, 0, CB_AFTER_HIT);
   }
 
   #handleBlackjackDouble() {
     if (!this.isInSession() || this.#mode !== 'blackjack' || this.#bjPhase !== 'playerTurn') return;
     if (this.#bjPlayerHand.length !== 2) return;
-
     if (this.#coinSystem && !this.#coinSystem.spendCoins(this.#bjBet)) {
       this.#audio?.playMiss?.();
       return;
     }
-
     this.#bjBet *= 2;
     this.#ui.setBalance(this.#getBalance());
-
     const card = this.#bjDeck.pop();
     if (!card) return;
-    const idx = this.#bjPlayerHand.length;
     this.#bjPlayerHand.push(card);
-    this.#bjPhase = 'dealing';
+    this.#bjCanDouble = false;
+    this.#setUI('dealing', `¡Apuesta doblada a ${this.#bjBet} 🪙! Carta final...`);
+    this.#pushStep(OP_DEAL, OWNER_PLAYER, this.#bjPlayerHand.length - 1, true, 0);
+    this.#pushStep(OP_CALL, 0, 0, true, 0, CB_AFTER_DOUBLE);
+  }
 
-    const dUp = cardSingleValue(this.#bjDealerHand[0]);
-    this.#ui.setBlackjackState({
-      phase: 'dealing',
-      bet: this.#bjBet,
-      playerScore: calcHandValue(this.#bjPlayerHand.slice(0, -1)).total,
-      dealerScore: `${dUp} + ?`,
-      canDouble: false,
-      resultText: `¡Apuesta doblada a ${this.#bjBet} 🪙! Repartiendo carta final...`
-    });
+  #afterPlayerCard(doubled) {
+    const pTotal = handTotal(this.#bjPlayerHand, this.#bjPlayerHand.length);
+    if (pTotal > 21) {
+      this.#setUI('dealerTurn', doubled ? `Te pasaste al doblar (${pTotal})...` : `Te pasaste con ${pTotal}...`);
+      this.#pushStep(OP_FLIP, 0, 0, true, 0.1);
+      this.#pushStep(OP_CALL, 0, 0, true, 0, CB_PLAYER_BUST);
+    } else if (doubled || pTotal === 21) {
+      this.#startDealerTurn();
+    } else {
+      this.#setUI('playerTurn', 'Tu turno: ¿pides otra carta o te plantas?');
+    }
+  }
 
-    card.visual = this.#queueDealAnimation(card, 'player', idx, true, () => {
-      const pVal = calcHandValue(this.#bjPlayerHand);
-      if (pVal.total > 21) {
-        this.#bjPhase = 'dealerTurn';
-        this.#scheduleStep(0.18, () => {
-          const hole = this.#bjDealerHand[1];
-          this.#queueFlipReveal(hole.visual, () => {
-            this.#bjPhase = 'result';
-            this.#audio?.playMiss?.();
-            this.#ui.setBalance(this.#getBalance());
-            this.#ui.setBlackjackState({
-              phase: 'result',
-              bet: this.#bjBet,
-              playerScore: pVal.total,
-              dealerScore: calcHandValue(this.#bjDealerHand).total,
-              canDouble: false,
-              resultText: `Te pasaste al doblar (${pVal.total}). Gana la banca.`,
-              isBlackjack: false
-            });
-          });
-        });
-      } else {
-        this.#startDealerTurn();
-      }
-    });
+  #resolvePlayerBust() {
+    const pTotal = handTotal(this.#bjPlayerHand, this.#bjPlayerHand.length);
+    this.#audio?.playMiss?.();
+    this.#station?.dealer?.playBow();
+    this.#ui.setBalance(this.#getBalance());
+    this.#setUI('result', `Te pasaste (${pTotal}). Gana la banca.`);
   }
 
   #handleBlackjackStand() {
@@ -1285,105 +1380,67 @@ export class CasinoGames {
     this.#startDealerTurn();
   }
 
+  /** La carta oculta se eleva, gira 180° y aterriza; después la banca juega. */
   #startDealerTurn() {
-    this.#bjPhase = 'dealerTurn';
-    const pTotal = calcHandValue(this.#bjPlayerHand).total;
-    const dUp = cardSingleValue(this.#bjDealerHand[0]);
-
-    this.#ui.setBlackjackState({
-      phase: 'dealerTurn',
-      bet: this.#bjBet,
-      playerScore: pTotal,
-      dealerScore: `${dUp} + ?`,
-      canDouble: false,
-      resultText: 'Turno de la banca: revelando carta oculta...'
-    });
-
-    this.#scheduleStep(0.16, () => {
-      const hole = this.#bjDealerHand[1];
-      this.#queueFlipReveal(hole.visual, () => {
-        this.#continueDealerDraw();
-      });
-    });
+    this.#setUI('dealerTurn', 'Turno de la banca: la crupier revela su carta oculta...');
+    this.#pushStep(OP_FLIP, 0, 0, true, 0.12);
+    this.#pushStep(OP_CALL, 0, 0, true, 0, CB_DEALER_LOOP);
   }
 
   #continueDealerDraw() {
-    if (!this.isInSession() || this.#mode !== 'blackjack') return;
-
-    const pTotal = calcHandValue(this.#bjPlayerHand).total;
-    const dVal = calcHandValue(this.#bjDealerHand);
-
-    this.#ui.setBlackjackState({
-      phase: 'dealerTurn',
-      bet: this.#bjBet,
-      playerScore: pTotal,
-      dealerScore: dVal.total,
-      canDouble: false,
-      resultText: dVal.total < 17 ? `Banca con ${dVal.total}: pide carta...` : `Banca se planta con ${dVal.total}.`
-    });
-
-    if (dVal.total < 17) {
-      this.#scheduleStep(0.28, () => {
-        const card = this.#bjDeck.pop();
-        if (!card) {
-          this.#resolveBlackjackHand();
-          return;
-        }
-        const idx = this.#bjDealerHand.length;
-        this.#bjDealerHand.push(card);
-        card.visual = this.#queueDealAnimation(card, 'dealer', idx, true, () => {
-          this.#continueDealerDraw();
-        });
-      });
-    } else {
-      this.#scheduleStep(0.24, () => {
+    const dTotal = handTotal(this.#bjDealerHand, this.#bjDealerHand.length);
+    if (dTotal < 17) {
+      const card = this.#bjDeck.pop();
+      if (!card) {
         this.#resolveBlackjackHand();
-      });
+        return;
+      }
+      this.#bjDealerHand.push(card);
+      this.#setUI('dealerTurn', `Banca con ${dTotal}: la crupier se reparte otra carta...`);
+      // Pausa natural antes de cada carta de la banca
+      this.#bjStepTimer = Math.max(this.#bjStepTimer, DEALER_DRAW_PAUSE);
+      this.#pushStep(OP_DEAL, OWNER_DEALER, this.#bjDealerHand.length - 1, true, 0);
+      this.#pushStep(OP_CALL, 0, 0, true, 0, CB_DEALER_LOOP);
+    } else {
+      this.#setUI('dealerTurn', `La banca se planta con ${dTotal}.`);
+      this.#bjStepTimer = Math.max(this.#bjStepTimer, 0.3);
+      this.#pushStep(OP_CALL, 0, 0, true, 0, CB_RESOLVE);
     }
   }
 
   #resolveBlackjackHand() {
-    if (!this.isInSession() || this.#mode !== 'blackjack') return;
-
-    this.#bjPhase = 'result';
-    const pTotal = calcHandValue(this.#bjPlayerHand).total;
-    const dTotal = calcHandValue(this.#bjDealerHand).total;
-
-    let resultText = '';
-    let isBlackjack = false;
+    const pTotal = handTotal(this.#bjPlayerHand, this.#bjPlayerHand.length);
+    const dTotal = handTotal(this.#bjDealerHand, this.#bjDealerHand.length);
+    const dealer = this.#station?.dealer;
+    let text;
+    let isBJ = false;
 
     if (dTotal > 21 || pTotal > dTotal) {
       const payout = this.#bjBet * 2;
       this.#addCoins(payout);
+      dealer?.playCelebrate();
       if (pTotal === 21) {
-        isBlackjack = true;
-        resultText = `¡VICTORIA CON 21 REAL! · +${payout} 🪙`;
+        isBJ = true;
+        text = `¡VICTORIA CON 21 REAL! · +${payout} 🪙`;
         this.#triggerBlackjackCelebration(payout);
       } else {
         this.#audio?.playWin?.(false);
         this.#spawnCoinRain(18);
-        resultText = dTotal > 21
+        text = dTotal > 21
           ? `¡La banca se pasó (${dTotal})! Ganas +${payout} 🪙`
           : `¡Victoria! ${pTotal} contra ${dTotal} · +${payout} 🪙`;
       }
     } else if (pTotal === dTotal) {
       this.#addCoins(this.#bjBet);
-      resultText = `Empate (${pTotal} vs ${dTotal}). Recuperas ${this.#bjBet} 🪙.`;
+      dealer?.playIdle();
+      text = `Empate (${pTotal} vs ${dTotal}). Recuperas ${this.#bjBet} 🪙.`;
     } else {
       this.#audio?.playMiss?.();
-      resultText = `La banca gana (${dTotal} contra ${pTotal}).`;
+      dealer?.playBow();
+      text = `La banca gana (${dTotal} contra ${pTotal}).`;
     }
-
     this.#ui.setBalance(this.#getBalance());
-    this.#ui.setBlackjackState({
-      phase: 'result',
-      bet: this.#bjBet,
-      playerScore: pTotal,
-      dealerScore: dTotal,
-      canDouble: false,
-      resultText,
-      isBlackjack
-    });
+    this.#setUI('result', text, isBJ);
   }
 
   #triggerBlackjackCelebration(payout) {
@@ -1396,72 +1453,20 @@ export class CasinoGames {
   }
 
   #updateBlackjack(dt) {
-    if (this.#bjTimeline.length > 0) {
-      this.#bjReadyFns.length = 0;
-      for (let i = this.#bjTimeline.length - 1; i >= 0; i--) {
-        this.#bjTimeline[i].remaining -= dt;
-        if (this.#bjTimeline[i].remaining <= 0) {
-          this.#bjReadyFns.push(this.#bjTimeline[i].fn);
-          this.#bjTimeline.splice(i, 1);
-        }
-      }
-      for (let i = 0; i < this.#bjReadyFns.length; i++) {
-        this.#bjReadyFns[i]();
-      }
-      this.#bjReadyFns.length = 0;
-    }
-
-    for (let i = this.#bjAnimations.length - 1; i >= 0; i--) {
-      const anim = this.#bjAnimations[i];
-      anim.elapsed += dt;
-      const u = Math.min(1, anim.elapsed / anim.duration);
-
-      if (anim.type === 'deal') {
-        const horiz = easeOutCubic(u);
-        anim.holder.position.x = THREE.MathUtils.lerp(anim.startPos.x, anim.endPos.x, horiz);
-        anim.holder.position.z = THREE.MathUtils.lerp(anim.startPos.z, anim.endPos.z, horiz);
-        anim.holder.position.y = THREE.MathUtils.lerp(anim.startPos.y, anim.endPos.y, horiz) + Math.sin(u * Math.PI) * 0.17;
-
-        if (anim.faceUp) {
-          anim.mesh.rotation.z = Math.PI * (1 - easeInOutCubic(u));
-          anim.mesh.rotation.x = Math.sin(u * Math.PI) * 0.22;
-        } else {
-          anim.mesh.rotation.z = Math.PI;
-          anim.mesh.rotation.x = Math.sin(u * Math.PI) * 0.12;
-        }
-      } else if (anim.type === 'flip') {
-        anim.holder.position.y = anim.baseY + Math.sin(u * Math.PI) * 0.10;
-        anim.mesh.rotation.z = Math.PI * (1 - easeInOutCubic(u));
-        anim.mesh.rotation.x = Math.sin(u * Math.PI) * 0.16;
-      }
-
-      if (u >= 1) {
-        if (anim.type === 'deal') {
-          anim.holder.position.copy(anim.endPos);
-          anim.mesh.rotation.z = anim.faceUp ? 0 : Math.PI;
-          anim.mesh.rotation.x = 0;
-        } else if (anim.type === 'flip') {
-          anim.holder.position.y = anim.baseY;
-          anim.mesh.rotation.z = 0;
-          anim.mesh.rotation.x = 0;
-        }
-        this.#bjAnimations.splice(i, 1);
-        anim.onDone?.();
-      }
-    }
+    this.#processQueue(dt);
+    this.#updateCardAnims(dt);
   }
 
-  #clearCards() {
-    this.#bjTimeline.length = 0;
-    this.#bjAnimations.length = 0;
-    for (const holder of this.#bjCardMeshes) {
-      this.#bjTableGroup?.remove(holder);
-    }
-    this.#bjCardMeshes.length = 0;
-    if (this.#bjTableGroup) {
-      this.#bjTableGroup.parent?.remove(this.#bjTableGroup);
-      this.#bjTableGroup = null;
-    }
+  #resetBlackjackRound() {
+    this.#resetQueue();
+    this.#releaseAllCards();
+    this.#bjPlayerHand.length = 0;
+    this.#bjDealerHand.length = 0;
+    this.#bjPlayerLanded = 0;
+    this.#bjDealerLanded = 0;
+    this.#bjHoleRevealed = false;
+    this.#bjCanDouble = false;
+    this.#bjPhase = 'betting';
   }
 
   // =========================================================================
@@ -1595,7 +1600,8 @@ export class CasinoGames {
     if (this.#station?.leverPivot) {
       this.#station.leverPivot.rotation.x = 0;
     }
-    this.#clearCards();
+    this.#resetBlackjackRound();
+    this.#casinoDome?.setActiveBlackjackTable?.(null);
     this.#clearCoinRain();
   }
 
@@ -1640,6 +1646,7 @@ export class CasinoGames {
       this.#tmpLook.lerpVectors(this.#camStartLookAt, this.#camTargetLookAt, ease);
       this.#camera.lookAt(this.#tmpLook);
 
+      if (this.#mode === 'blackjack') this.#updateCardAnims(step);
       if (t >= 1) {
         this.#finishExit();
       }
@@ -1683,6 +1690,8 @@ export class CasinoGames {
       entry.material.dispose();
     }
     this.#cardCache.clear();
+    for (const c of this.#cardPool) c.mesh.removeFromParent();
+    this.#cardPool.length = 0;
 
     if (this.#coinRainMesh) {
       this.#scene?.remove(this.#coinRainMesh);
