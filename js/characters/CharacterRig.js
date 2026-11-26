@@ -25,6 +25,23 @@ const _hairPivot = new THREE.Vector3(0, 0.06, -0.05);
 const _tmpEuler = new THREE.Euler();
 const _tmpQuat = new THREE.Quaternion();
 const _oneVec = new THREE.Vector3(1, 1, 1);
+const _normalMatrix = new THREE.Matrix3();
+const _tmpNormal = new THREE.Vector3();
+
+const COURT_STYLE_MAP = Object.freeze({
+  princess_light: 'ballgown',
+  empire_shawl: 'ice_gown',
+  court_tiered: 'tiered_gown',
+  court_starry: 'starry_gown',
+  court_chic: 'chic_midi'
+});
+
+const SOFT_WARM_AO = Object.freeze({
+  aoStrength: 0.08,
+  minAO: 0.88,
+  shadowTint: 0xe8bec8,
+  shadowTintStrength: 0.12
+});
 
 /**
  * Rig 3D estilizado RPG/Anime de alta costura para Protagonista, Príncipe y Corte Imperial.
@@ -196,7 +213,7 @@ export class CharacterRig {
     const baseZ = this.#getBaseArmZ();
     this.#leftShoulder.rotation.set(0, 0, baseZ);
     this.#rightShoulder.rotation.set(0, 0, -baseZ);
-    ensureVertexColors(this.#root, { aoStrength: 0.18, shadowTint: 0x3b224d });
+    ensureVertexColors(this.#root, SOFT_WARM_AO);
     return this.#root;
   }
 
@@ -237,199 +254,222 @@ export class CharacterRig {
   }
 
   /**
-   * Fusiona hijos THREE.Mesh estáticos con el mismo material preservando todos los atributos
+   * Fusiona hijos THREE.Mesh estáticos con el mismo material (y mismo rideBias) preservando todos los atributos
    * estándar y custom (color, aSmoothNormal, aSwayWeight, aStrandPhase).
-   * Mallas con userData.noMerge o morphTargetInfluences no se fusionan.
+   * Mallas con userData.noMerge, rideBias !== 0 distinto o morphTargetInfluences no se fusionan indebidamente.
    */
   static mergeGroupByMaterial(group, track = null) {
     if (!group) return new Set();
     const buckets = new Map();
+    const getBias = (mesh) => (typeof mesh.userData?.rideBias === 'number' ? mesh.userData.rideBias : 0);
+    const isExcluded = (mesh) =>
+      !mesh.isMesh ||
+      !mesh.geometry ||
+      !mesh.material ||
+      mesh.userData?.isEye ||
+      mesh.userData?.noMerge ||
+      (mesh.morphTargetInfluences && mesh.morphTargetInfluences.length > 0);
+
     for (const child of group.children) {
-      if (
-        !child.isMesh ||
-        !child.geometry ||
-        !child.material ||
-        child.userData?.isEye ||
-        child.userData?.noMerge ||
-        (child.morphTargetInfluences && child.morphTargetInfluences.length > 0)
-      ) {
-        continue;
+      if (isExcluded(child)) continue;
+      const bias = getBias(child);
+      let biasMap = buckets.get(child.material);
+      if (!biasMap) {
+        biasMap = new Map();
+        buckets.set(child.material, biasMap);
       }
-      let list = buckets.get(child.material);
+      let list = biasMap.get(bias);
       if (!list) {
         list = [];
-        buckets.set(child.material, list);
+        biasMap.set(bias, list);
       }
       list.push(child);
     }
 
     const keptGeos = new Set();
     for (const child of group.children) {
-      if (child.isMesh && child.geometry) {
-        const list = buckets.get(child.material);
-        if (!list || list.length < 2) keptGeos.add(child.geometry);
+      if (!child.isMesh || !child.geometry) continue;
+      if (isExcluded(child)) {
+        keptGeos.add(child.geometry);
+        continue;
       }
+      const list = buckets.get(child.material)?.get(getBias(child));
+      if (!list || list.length < 2) keptGeos.add(child.geometry);
     }
 
     const disposed = new Set();
-    for (const [material, meshes] of buckets.entries()) {
-      if (meshes.length < 2) continue;
+    for (const [material, biasMap] of buckets.entries()) {
+      for (const [, meshes] of biasMap.entries()) {
+        if (meshes.length < 2) continue;
 
-      const pieces = [];
-      let totalVerts = 0;
-      let castShadow = false;
-      let receiveShadow = false;
-      let renderOrder = 0;
-      let hasColor = false;
-      let hasSmooth = false;
-      let hasSway = false;
-      let hasPhase = false;
-      let preservedSkirtPart = false;
-      let preservedRideBias = 0;
+        const pieces = [];
+        let totalVerts = 0;
+        let castShadow = false;
+        let receiveShadow = false;
+        let renderOrder = 0;
+        let hasColor = false;
+        let hasSmooth = false;
+        let hasSway = false;
+        let hasPhase = false;
+        let preservedSkirtPart = false;
+        let preservedRideBias = 0;
 
-      for (const mesh of meshes) {
-        mesh.updateMatrix();
-        const srcGeo = mesh.geometry;
-        const g = srcGeo.index ? srcGeo.toNonIndexed() : srcGeo.clone();
-        if (!g.attributes.normal) g.computeVertexNormals();
-        g.applyMatrix4(mesh.matrix);
+        for (const mesh of meshes) {
+          mesh.updateMatrix();
+          const srcGeo = mesh.geometry;
+          const g = srcGeo.index ? srcGeo.toNonIndexed() : srcGeo.clone();
+          if (!g.attributes.normal) g.computeVertexNormals();
+          g.applyMatrix4(mesh.matrix);
 
-        const posAttr = g.attributes.position;
-        const count = posAttr ? posAttr.count : 0;
-        if (count === 0) {
-          g.dispose();
-          continue;
-        }
+          const posAttr = g.attributes.position;
+          const count = posAttr ? posAttr.count : 0;
+          if (count === 0) {
+            g.dispose();
+            continue;
+          }
 
-        const normAttr = g.attributes.normal;
-        const uvAttr = g.attributes.uv;
-        const colorAttr = g.attributes.color;
-        const smoothAttr = g.attributes.aSmoothNormal;
-        const swayAttr = g.attributes.aSwayWeight;
-        const phaseAttr = g.attributes.aStrandPhase;
+          const normAttr = g.attributes.normal;
+          const uvAttr = g.attributes.uv;
+          const colorAttr = g.attributes.color;
+          const smoothAttr = g.attributes.aSmoothNormal;
+          const swayAttr = g.attributes.aSwayWeight;
+          const phaseAttr = g.attributes.aStrandPhase;
 
-        const posArr = posAttr.array;
-        const normArr = normAttr.array;
-        const uvArr = uvAttr ? uvAttr.array : null;
-        const colorArr = colorAttr ? colorAttr.array : null;
-        const colorItemSize = colorAttr ? colorAttr.itemSize : 3;
-        const smoothArr = smoothAttr ? smoothAttr.array : null;
-        const swayArr = swayAttr ? swayAttr.array : null;
-        const phaseArr = phaseAttr ? phaseAttr.array : null;
+          const posArr = posAttr.array;
+          const normArr = normAttr.array;
+          const uvArr = uvAttr ? uvAttr.array : null;
+          const colorArr = colorAttr ? colorAttr.array : null;
+          const colorItemSize = colorAttr ? colorAttr.itemSize : 3;
+          const smoothArr = smoothAttr ? smoothAttr.array : null;
+          const swayArr = swayAttr ? swayAttr.array : null;
+          const phaseArr = phaseAttr ? phaseAttr.array : null;
 
-        if (colorArr) hasColor = true;
-        if (smoothArr) hasSmooth = true;
-        if (swayArr) hasSway = true;
-        if (phaseArr) hasPhase = true;
-        if (mesh.userData?.skirtPart) preservedSkirtPart = true;
-        if (typeof mesh.userData?.rideBias === 'number') preservedRideBias = mesh.userData.rideBias;
-
-        if (mesh.matrix.determinant() < 0) {
-          for (let v = 0; v + 2 < count; v += 3) {
-            const i1 = (v + 1) * 3;
-            const i2 = (v + 2) * 3;
-            for (let k = 0; k < 3; k++) {
-              const tp = posArr[i1 + k]; posArr[i1 + k] = posArr[i2 + k]; posArr[i2 + k] = tp;
-              const tn = normArr[i1 + k]; normArr[i1 + k] = normArr[i2 + k]; normArr[i2 + k] = tn;
-              if (smoothArr) {
-                const ts = smoothArr[i1 + k]; smoothArr[i1 + k] = smoothArr[i2 + k]; smoothArr[i2 + k] = ts;
-              }
-            }
-            if (uvArr) {
-              const u1 = (v + 1) * 2;
-              const u2 = (v + 2) * 2;
-              for (let k = 0; k < 2; k++) {
-                const tu = uvArr[u1 + k]; uvArr[u1 + k] = uvArr[u2 + k]; uvArr[u2 + k] = tu;
-              }
-            }
-            if (colorArr) {
-              const c1 = (v + 1) * colorItemSize;
-              const c2 = (v + 2) * colorItemSize;
-              for (let k = 0; k < colorItemSize; k++) {
-                const tc = colorArr[c1 + k]; colorArr[c1 + k] = colorArr[c2 + k]; colorArr[c2 + k] = tc;
-              }
-            }
-            if (swayArr) {
-              const ts = swayArr[v + 1]; swayArr[v + 1] = swayArr[v + 2]; swayArr[v + 2] = ts;
-            }
-            if (phaseArr) {
-              const tp = phaseArr[v + 1]; phaseArr[v + 1] = phaseArr[v + 2]; phaseArr[v + 2] = tp;
+          if (smoothArr) {
+            _normalMatrix.getNormalMatrix(mesh.matrix);
+            for (let v = 0; v < count; v++) {
+              const off = v * 3;
+              _tmpNormal.set(smoothArr[off], smoothArr[off + 1], smoothArr[off + 2]).applyMatrix3(_normalMatrix);
+              if (_tmpNormal.lengthSq() > 1e-10) _tmpNormal.normalize();
+              smoothArr[off] = _tmpNormal.x;
+              smoothArr[off + 1] = _tmpNormal.y;
+              smoothArr[off + 2] = _tmpNormal.z;
             }
           }
-        }
 
-        castShadow = castShadow || mesh.castShadow;
-        receiveShadow = receiveShadow || mesh.receiveShadow;
-        if (mesh.renderOrder > renderOrder) renderOrder = mesh.renderOrder;
-        totalVerts += count;
-        pieces.push({ g, count, posArr, normArr, uvArr, colorArr, colorItemSize, smoothArr, swayArr, phaseArr });
-      }
+          if (colorArr) hasColor = true;
+          if (smoothArr) hasSmooth = true;
+          if (swayArr) hasSway = true;
+          if (phaseArr) hasPhase = true;
+          if (mesh.userData?.skirtPart) preservedSkirtPart = true;
+          if (typeof mesh.userData?.rideBias === 'number') preservedRideBias = mesh.userData.rideBias;
 
-      if (pieces.length === 0) continue;
-
-      const positions = new Float32Array(totalVerts * 3);
-      const normals = new Float32Array(totalVerts * 3);
-      const uvs = new Float32Array(totalVerts * 2);
-      const colors = hasColor ? new Float32Array(totalVerts * 3) : null;
-      const smooths = hasSmooth ? new Float32Array(totalVerts * 3) : null;
-      const sways = hasSway ? new Float32Array(totalVerts) : null;
-      const phases = hasPhase ? new Float32Array(totalVerts) : null;
-
-      let vOffset = 0;
-      for (const p of pieces) {
-        positions.set(p.posArr.subarray(0, p.count * 3), vOffset * 3);
-        normals.set(p.normArr.subarray(0, p.count * 3), vOffset * 3);
-        if (p.uvArr) uvs.set(p.uvArr.subarray(0, p.count * 2), vOffset * 2);
-        if (colors) {
-          if (p.colorArr && p.colorItemSize === 3) {
-            colors.set(p.colorArr.subarray(0, p.count * 3), vOffset * 3);
-          } else if (p.colorArr) {
-            for (let k = 0; k < p.count; k++) {
-              colors[(vOffset + k) * 3] = p.colorArr[k * p.colorItemSize];
-              colors[(vOffset + k) * 3 + 1] = p.colorArr[k * p.colorItemSize + 1];
-              colors[(vOffset + k) * 3 + 2] = p.colorArr[k * p.colorItemSize + 2];
+          if (mesh.matrix.determinant() < 0) {
+            for (let v = 0; v + 2 < count; v += 3) {
+              const i1 = (v + 1) * 3;
+              const i2 = (v + 2) * 3;
+              for (let k = 0; k < 3; k++) {
+                const tp = posArr[i1 + k]; posArr[i1 + k] = posArr[i2 + k]; posArr[i2 + k] = tp;
+                const tn = normArr[i1 + k]; normArr[i1 + k] = normArr[i2 + k]; normArr[i2 + k] = tn;
+                if (smoothArr) {
+                  const ts = smoothArr[i1 + k]; smoothArr[i1 + k] = smoothArr[i2 + k]; smoothArr[i2 + k] = ts;
+                }
+              }
+              if (uvArr) {
+                const u1 = (v + 1) * 2;
+                const u2 = (v + 2) * 2;
+                for (let k = 0; k < 2; k++) {
+                  const tu = uvArr[u1 + k]; uvArr[u1 + k] = uvArr[u2 + k]; uvArr[u2 + k] = tu;
+                }
+              }
+              if (colorArr) {
+                const c1 = (v + 1) * colorItemSize;
+                const c2 = (v + 2) * colorItemSize;
+                for (let k = 0; k < colorItemSize; k++) {
+                  const tc = colorArr[c1 + k]; colorArr[c1 + k] = colorArr[c2 + k]; colorArr[c2 + k] = tc;
+                }
+              }
+              if (swayArr) {
+                const ts = swayArr[v + 1]; swayArr[v + 1] = swayArr[v + 2]; swayArr[v + 2] = ts;
+              }
+              if (phaseArr) {
+                const tp = phaseArr[v + 1]; phaseArr[v + 1] = phaseArr[v + 2]; phaseArr[v + 2] = tp;
+              }
             }
-          } else {
-            colors.fill(1, vOffset * 3, (vOffset + p.count) * 3);
           }
+
+          castShadow = castShadow || mesh.castShadow;
+          receiveShadow = receiveShadow || mesh.receiveShadow;
+          if (mesh.renderOrder > renderOrder) renderOrder = mesh.renderOrder;
+          totalVerts += count;
+          pieces.push({ g, count, posArr, normArr, uvArr, colorArr, colorItemSize, smoothArr, swayArr, phaseArr });
         }
-        if (smooths) {
-          if (p.smoothArr) smooths.set(p.smoothArr.subarray(0, p.count * 3), vOffset * 3);
-          else smooths.set(p.normArr.subarray(0, p.count * 3), vOffset * 3);
+
+        if (pieces.length === 0) continue;
+
+        const positions = new Float32Array(totalVerts * 3);
+        const normals = new Float32Array(totalVerts * 3);
+        const uvs = new Float32Array(totalVerts * 2);
+        const colors = hasColor ? new Float32Array(totalVerts * 3) : null;
+        const smooths = hasSmooth ? new Float32Array(totalVerts * 3) : null;
+        const sways = hasSway ? new Float32Array(totalVerts) : null;
+        const phases = hasPhase ? new Float32Array(totalVerts) : null;
+
+        let vOffset = 0;
+        for (const p of pieces) {
+          positions.set(p.posArr.subarray(0, p.count * 3), vOffset * 3);
+          normals.set(p.normArr.subarray(0, p.count * 3), vOffset * 3);
+          if (p.uvArr) uvs.set(p.uvArr.subarray(0, p.count * 2), vOffset * 2);
+          if (colors) {
+            if (p.colorArr && p.colorItemSize === 3) {
+              colors.set(p.colorArr.subarray(0, p.count * 3), vOffset * 3);
+            } else if (p.colorArr) {
+              for (let k = 0; k < p.count; k++) {
+                colors[(vOffset + k) * 3] = p.colorArr[k * p.colorItemSize];
+                colors[(vOffset + k) * 3 + 1] = p.colorArr[k * p.colorItemSize + 1];
+                colors[(vOffset + k) * 3 + 2] = p.colorArr[k * p.colorItemSize + 2];
+              }
+            } else {
+              colors.fill(1, vOffset * 3, (vOffset + p.count) * 3);
+            }
+          }
+          if (smooths) {
+            if (p.smoothArr) smooths.set(p.smoothArr.subarray(0, p.count * 3), vOffset * 3);
+            else smooths.set(p.normArr.subarray(0, p.count * 3), vOffset * 3);
+          }
+          if (sways && p.swayArr) sways.set(p.swayArr.subarray(0, p.count), vOffset);
+          if (phases && p.phaseArr) phases.set(p.phaseArr.subarray(0, p.count), vOffset);
+
+          vOffset += p.count;
+          p.g.dispose();
         }
-        if (sways && p.swayArr) sways.set(p.swayArr.subarray(0, p.count), vOffset);
-        if (phases && p.phaseArr) phases.set(p.phaseArr.subarray(0, p.count), vOffset);
 
-        vOffset += p.count;
-        p.g.dispose();
-      }
+        const merged = new THREE.BufferGeometry();
+        merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+        merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+        if (colors) merged.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        if (smooths) merged.setAttribute('aSmoothNormal', new THREE.BufferAttribute(smooths, 3));
+        if (sways) merged.setAttribute('aSwayWeight', new THREE.BufferAttribute(sways, 1));
+        if (phases) merged.setAttribute('aStrandPhase', new THREE.BufferAttribute(phases, 1));
+        initCharacterVertexAttributes(merged);
+        merged.computeBoundingBox();
+        merged.computeBoundingSphere();
 
-      const merged = new THREE.BufferGeometry();
-      merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-      merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-      if (colors) merged.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      if (smooths) merged.setAttribute('aSmoothNormal', new THREE.BufferAttribute(smooths, 3));
-      if (sways) merged.setAttribute('aSwayWeight', new THREE.BufferAttribute(sways, 1));
-      if (phases) merged.setAttribute('aStrandPhase', new THREE.BufferAttribute(phases, 1));
-      initCharacterVertexAttributes(merged);
-      merged.computeBoundingBox();
-      merged.computeBoundingSphere();
+        if (track) track(merged);
 
-      if (track) track(merged);
+        const mergedMesh = new THREE.Mesh(merged, material);
+        mergedMesh.castShadow = castShadow;
+        mergedMesh.receiveShadow = receiveShadow;
+        mergedMesh.renderOrder = renderOrder;
+        if (preservedSkirtPart) mergedMesh.userData.skirtPart = true;
+        if (preservedRideBias !== 0) mergedMesh.userData.rideBias = preservedRideBias;
+        group.add(mergedMesh);
 
-      const mergedMesh = new THREE.Mesh(merged, material);
-      mergedMesh.castShadow = castShadow;
-      mergedMesh.receiveShadow = receiveShadow;
-      mergedMesh.renderOrder = renderOrder;
-      if (preservedSkirtPart) mergedMesh.userData.skirtPart = true;
-      if (preservedRideBias !== 0) mergedMesh.userData.rideBias = preservedRideBias;
-      group.add(mergedMesh);
-
-      for (const mesh of meshes) {
-        group.remove(mesh);
-        if (!keptGeos.has(mesh.geometry)) {
-          disposed.add(mesh.geometry);
+        for (const mesh of meshes) {
+          group.remove(mesh);
+          if (!keptGeos.has(mesh.geometry)) {
+            disposed.add(mesh.geometry);
+          }
         }
       }
     }
@@ -445,6 +485,13 @@ export class CharacterRig {
     }
   }
 
+  #mergeDynamicGroup(group) {
+    const disposed = CharacterRig.mergeGroupByMaterial(group, (g) => this.#dynamicGeos.push(g));
+    if (disposed.size > 0) {
+      this.#dynamicGeos = this.#dynamicGeos.filter((g) => !disposed.has(g));
+    }
+  }
+
   #createMaterials() {
     const m = this.#materials;
     const mu = this.#motionUniforms;
@@ -456,7 +503,10 @@ export class CharacterRig {
     // Corpiño/levita sin textura de dobladillo; falda usa m.primary con bordado imperial
     m.bodice = createCharacterMaterial(this.#isMale ? 'velvet' : 'silk', { color: 0xf18bb8 }, mu);
     m.primary = createCharacterMaterial(this.#isMale ? 'velvet' : 'silk', { color: 0xffffff }, mu);
+    m.peplum = createCharacterMaterial('silk', { color: 0xffffff }, mu);
     m.secondary = createCharacterMaterial('silk', { color: 0xffffff }, mu);
+    m.trouser = createCharacterMaterial('velvet', { color: 0x1a2a58 }, mu);
+    m.slipper = createCharacterMaterial('silk', { color: 0xffdce9 }, mu);
     m.tulle = createCharacterMaterial('tulleSparkle', { color: 0xffffff, opacity: 0.44 }, mu);
     m.shawl = m.tulle;
 
@@ -563,10 +613,10 @@ export class CharacterRig {
 
     // Texturas textiles PBR cacheadas
     const skirtTex = getCoutureTextures(this.#isMale ? 'royal_velvet' : 'silk_embroidery', outfit);
+    const peplumTex = getCoutureTextures('peplum_silk', outfit);
     const bodiceTex = getCoutureTextures('corset_lace', outfit);
     const tulleTex = getCoutureTextures('starlight_tulle', outfit);
 
-    m.bodice.color.setHex(outfit.primary);
     m.primary.map = skirtTex.map;
     m.primary.bumpMap = skirtTex.bumpMap;
     m.primary.bumpScale = 0.008;
@@ -574,12 +624,45 @@ export class CharacterRig {
     m.primary.color.setHex(0xffffff);
     m.primary.needsUpdate = true;
 
-    m.secondary.map = bodiceTex.map;
-    m.secondary.bumpMap = bodiceTex.bumpMap;
-    m.secondary.bumpScale = 0.006;
-    m.secondary.roughnessMap = bodiceTex.roughnessMap;
-    m.secondary.color.setHex(0xffffff);
-    m.secondary.needsUpdate = true;
+    m.peplum.map = peplumTex.map;
+    m.peplum.bumpMap = peplumTex.bumpMap;
+    m.peplum.bumpScale = 0.005;
+    m.peplum.roughnessMap = peplumTex.roughnessMap;
+    m.peplum.color.setHex(0xffffff);
+    m.peplum.needsUpdate = true;
+
+    if (this.#isMale) {
+      m.bodice.map = null;
+      m.bodice.bumpMap = null;
+      m.bodice.roughnessMap = null;
+      m.bodice.color.setHex(outfit.primary ?? 0x243b73);
+      m.bodice.needsUpdate = true;
+
+      m.secondary.map = bodiceTex.map;
+      m.secondary.bumpMap = bodiceTex.bumpMap;
+      m.secondary.bumpScale = 0.006;
+      m.secondary.roughnessMap = bodiceTex.roughnessMap;
+      m.secondary.color.setHex(0xffffff);
+      m.secondary.needsUpdate = true;
+    } else {
+      m.bodice.map = bodiceTex.map;
+      m.bodice.bumpMap = bodiceTex.bumpMap;
+      m.bodice.bumpScale = 0.005;
+      m.bodice.roughnessMap = bodiceTex.roughnessMap;
+      m.bodice.color.setHex(0xffffff);
+      m.bodice.needsUpdate = true;
+
+      m.secondary.map = null;
+      m.secondary.bumpMap = null;
+      m.secondary.roughnessMap = null;
+      m.secondary.color.setHex(outfit.secondary || 0xffdce9);
+      m.secondary.needsUpdate = true;
+    }
+
+    m.trouser.color.setHex(outfit.deep || 0x1a2a58);
+    m.trouser.needsUpdate = true;
+    m.slipper.color.setHex(outfit.secondary || 0xffdce9);
+    m.slipper.needsUpdate = true;
 
     m.tulle.map = tulleTex.map;
     m.tulle.alphaMap = tulleTex.alphaMap || null;
@@ -595,26 +678,29 @@ export class CharacterRig {
     if (this.#isMale) {
       this.#torso.material = m.bodice;
       for (const am of this.#armMeshes) am.material = m.bodice;
-      for (const th of this.#thighMeshes) th.material = m.secondary;
+      for (const th of this.#thighMeshes) th.material = m.trouser;
       for (const sh of this.#shinMeshes) sh.material = m.dark;
       for (const so of this.#shoeMeshes) so.material = m.dark;
 
       const regalia = buildPrinceRegalia(outfit, m, this.#metrics, {
         outfitGroup: this.#outfitGroup,
         forearmL: this.#leftForearm,
-        forearmR: this.#rightForearm
+        forearmR: this.#rightForearm,
+        shinL: this.#leftShin,
+        shinR: this.#rightShin
       });
       this.#dynamicGeos.push(...regalia.geometries);
       this.#cuffNodes.push(...regalia.cuffNodes);
     } else {
-      const longSleeves = outfit.style === 'chic_midi' || outfit.style === 'riding';
-      const tallBoots = outfit.style === 'chic_midi' || outfit.style === 'riding';
-      const ridingBreeches = outfit.style === 'riding';
-      this.#torso.material = outfit.style === 'ballgown' || outfit.style === 'tiered_gown' ? m.secondary : m.bodice;
+      const resolvedStyle = COURT_STYLE_MAP[outfit.style] || outfit.style;
+      const longSleeves = resolvedStyle === 'chic_midi' || resolvedStyle === 'riding';
+      const tallBoots = longSleeves;
+      const ridingBreeches = resolvedStyle === 'riding';
+      this.#torso.material = longSleeves ? m.bodice : m.skin;
       for (const am of this.#armMeshes) am.material = longSleeves ? m.bodice : m.skin;
       for (const th of this.#thighMeshes) th.material = ridingBreeches ? m.secondary : m.skin;
       for (const sh of this.#shinMeshes) sh.material = tallBoots ? m.dark : m.skin;
-      for (const so of this.#shoeMeshes) so.material = tallBoots ? m.dark : m.roseGold;
+      for (const so of this.#shoeMeshes) so.material = tallBoots ? m.dark : m.slipper;
 
       const gown = this.#courtMeta.courtSilhouette
         ? buildCourtOutfit({ ...outfit, gender: 'female' }, m, this.#metrics, {
@@ -633,14 +719,14 @@ export class CharacterRig {
 
     // Mueve faldas/faldones a skirtInner para vuelo y morphs de monta
     this.#moveMeshes(this.#outfitGroup, this.#skirtInner, (mesh) => this.#isSkirtPart(mesh));
-    // Marca enagua interior con noMerge para preservar rideBias negativo
+    // Marca capas con rideBias !== 0 como noMerge para preservar offsets exactos en RidingDrape
     for (const c of this.#skirtInner.children) {
-      if (c.isMesh && typeof c.userData.rideBias === 'number' && c.userData.rideBias < 0) {
+      if (c.isMesh && typeof c.userData.rideBias === 'number' && c.userData.rideBias !== 0) {
         c.userData.noMerge = true;
       }
     }
-    CharacterRig.mergeGroupByMaterial(this.#outfitGroup);
-    CharacterRig.mergeGroupByMaterial(this.#skirtInner);
+    this.#mergeDynamicGroup(this.#outfitGroup);
+    this.#mergeDynamicGroup(this.#skirtInner);
 
     // Reconstruye cabello volumétrico por mechones 3D
     const hairStyle = this.#courtMeta.hairStyleOverride || (this.#isMale ? 'prince_royal_tousled' : ap.hairId);
@@ -658,8 +744,8 @@ export class CharacterRig {
       this.#hairGroup.add(this.#hairSwing);
     }
     this.#moveMeshes(this.#hairGroup, this.#hairSwingInner, (mesh) => this.#isLongHair(mesh));
-    CharacterRig.mergeGroupByMaterial(this.#hairGroup);
-    CharacterRig.mergeGroupByMaterial(this.#hairSwingInner);
+    this.#mergeDynamicGroup(this.#hairGroup);
+    this.#mergeDynamicGroup(this.#hairSwingInner);
 
     this.#motion?.setBaseArmZ(this.#getBaseArmZ());
 
@@ -673,7 +759,7 @@ export class CharacterRig {
       node.visible = activeAcc.has(id);
     }
 
-    ensureVertexColors(this.#root, { aoStrength: 0.18, shadowTint: 0x3b224d });
+    ensureVertexColors(this.#root, SOFT_WARM_AO);
   }
 
   getAppearance() {
@@ -691,9 +777,10 @@ export class CharacterRig {
   getRoot() { return this.#root; }
 
   #getBaseArmZ() {
-    if (this.#isMale) return 0.30;
-    const wideSkirt = ['ballgown', 'tiered_gown', 'starry_gown', 'princess_light'].includes(this.#outfitStyle);
-    return wideSkirt ? 0.35 : 0.31;
+    if (this.#isMale) return 0.11;
+    const resolvedStyle = COURT_STYLE_MAP[this.#outfitStyle] || this.#outfitStyle;
+    const wideSkirt = ['ballgown', 'ice_gown', 'tiered_gown', 'starry_gown'].includes(resolvedStyle);
+    return wideSkirt ? 0.21 : 0.13;
   }
 
   setWading(active) { this.#motion?.setWading?.(active); }
@@ -819,7 +906,7 @@ export class CharacterRig {
     for (const g of this.#geometries) g.dispose();
     this.#geometries.length = 0;
 
-    for (const mat of Object.values(this.#materials)) mat.dispose();
+    for (const mat of new Set(Object.values(this.#materials))) mat.dispose();
     this.#materials = {};
     this.#sharedMats = null;
     this.#rideMeshes.length = 0;

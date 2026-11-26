@@ -3,9 +3,47 @@ import { bakeProceduralVertexAO } from '../core/LumenArtPipeline.js';
 
 const TAU = Math.PI * 2;
 const _tmpV = new THREE.Vector3();
-const _tmpA = new THREE.Vector3();
-const _tmpB = new THREE.Vector3();
-const _tmpC = new THREE.Vector3();
+const _tmpP0 = new THREE.Vector3();
+const _tmpP1 = new THREE.Vector3();
+const _tmpP2 = new THREE.Vector3();
+const _tmpE1 = new THREE.Vector3();
+const _tmpE2 = new THREE.Vector3();
+const _tmpTriN = new THREE.Vector3();
+const _tmpCentroid = new THREE.Vector3();
+const _tmpCenter = new THREE.Vector3();
+const _tmpBboxCenter = new THREE.Vector3();
+
+const WINDING_SWAP_ATTRS = ['position', 'uv', 'color', 'aSmoothNormal', 'aSwayWeight', 'aStrandPhase'];
+
+const SOFT_AO_DEFAULTS = Object.freeze({
+  aoStrength: 0.09,
+  minAO: 0.86,
+  shadowTint: 0xe8b0b2,
+  shadowTintStrength: 0.14,
+  baseWeight: 0.05,
+  cavityWeight: 0.12,
+  undersideWeight: 0.08,
+  ridgeHighlight: 0.03,
+  noiseStrength: 0.0
+});
+
+function bakeSoftVertexAO(geometry, options = {}) {
+  const baseColor = options.baseColor ?? 0xffffff;
+  const topColor = options.topColor ?? 0xffffff;
+  bakeProceduralVertexAO(geometry, {
+    ...SOFT_AO_DEFAULTS,
+    baseColor,
+    topColor,
+    ...options
+  });
+  if (baseColor === 0xffffff && topColor === 0xffffff && geometry.attributes?.color) {
+    const arr = geometry.attributes.color.array;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i] > 1.0) arr[i] = 1.0;
+    }
+  }
+  return geometry;
+}
 
 /**
  * Métricas anatómicas estandarizadas (canon estilizado 6.5–7 cabezas, suelo exacto en y = 0).
@@ -127,30 +165,77 @@ export function initCharacterVertexAttributes(geometry, swayWeight = 0.0, strand
 }
 
 /**
- * Garantiza normales orientadas hacia el exterior de la malla lofted.
+ * Garantiza normales orientadas hacia el exterior (soportando geometrías indexadas y no indexadas).
+ * @param {THREE.BufferGeometry} geometry
+ * @param {((centroid: THREE.Vector3, out: THREE.Vector3) => THREE.Vector3)|null} [centerFn=null]
+ * @returns {THREE.BufferGeometry}
  */
-function ensureOutwardWinding(geometry, rings) {
-  const pos = geometry.attributes.position;
-  const nrm = geometry.attributes.normal;
-  const mid = rings[Math.floor(rings.length * 0.5)];
-  let score = 0;
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i);
-    if (Math.abs(y - mid[0]) > 0.18) continue;
-    const dx = pos.getX(i);
-    const dz = pos.getZ(i) - mid[1];
-    score += dx * nrm.getX(i) + dz * nrm.getZ(i);
+export function ensureOutwardWinding(geometry, centerFn = null) {
+  const pos = geometry?.attributes?.position;
+  if (!pos || pos.count < 3) return geometry;
+
+  if (!centerFn) {
+    if (!geometry.boundingBox) geometry.computeBoundingBox();
+    geometry.boundingBox.getCenter(_tmpBboxCenter);
   }
-  if (score < 0 && geometry.index) {
-    const arr = geometry.index.array;
-    for (let i = 0; i < arr.length; i += 3) {
-      const tmp = arr[i + 1];
-      arr[i + 1] = arr[i + 2];
-      arr[i + 2] = tmp;
+
+  const idx = geometry.index;
+  const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3);
+  let score = 0;
+
+  for (let t = 0; t < triCount; t++) {
+    const base = t * 3;
+    const i0 = idx ? idx.getX(base) : base;
+    const i1 = idx ? idx.getX(base + 1) : base + 1;
+    const i2 = idx ? idx.getX(base + 2) : base + 2;
+
+    _tmpP0.fromBufferAttribute(pos, i0);
+    _tmpP1.fromBufferAttribute(pos, i1);
+    _tmpP2.fromBufferAttribute(pos, i2);
+
+    _tmpE1.subVectors(_tmpP1, _tmpP0);
+    _tmpE2.subVectors(_tmpP2, _tmpP0);
+    _tmpTriN.crossVectors(_tmpE1, _tmpE2);
+
+    _tmpCentroid.copy(_tmpP0).add(_tmpP1).add(_tmpP2).multiplyScalar(1 / 3);
+    const center = centerFn ? (centerFn(_tmpCentroid, _tmpCenter) || _tmpCenter) : _tmpBboxCenter;
+    _tmpV.subVectors(_tmpCentroid, center);
+    score += _tmpTriN.dot(_tmpV);
+  }
+
+  if (score < 0) {
+    if (idx) {
+      const arr = idx.array;
+      for (let i = 0; i + 2 < arr.length; i += 3) {
+        const tmp = arr[i + 1];
+        arr[i + 1] = arr[i + 2];
+        arr[i + 2] = tmp;
+      }
+      idx.needsUpdate = true;
+    } else {
+      for (let a = 0; a < WINDING_SWAP_ATTRS.length; a++) {
+        const attr = geometry.attributes[WINDING_SWAP_ATTRS[a]];
+        if (!attr) continue;
+        const itemSize = attr.itemSize;
+        const arr = attr.array;
+        for (let v = 0; v + 2 < pos.count; v += 3) {
+          const o1 = (v + 1) * itemSize;
+          const o2 = (v + 2) * itemSize;
+          for (let k = 0; k < itemSize; k++) {
+            const tmp = arr[o1 + k];
+            arr[o1 + k] = arr[o2 + k];
+            arr[o2 + k] = tmp;
+          }
+        }
+        attr.needsUpdate = true;
+      }
     }
-    geometry.index.needsUpdate = true;
+    geometry.computeVertexNormals();
+  } else if (!geometry.attributes.normal) {
     geometry.computeVertexNormals();
   }
+
+  return geometry;
 }
 
 /**
@@ -241,9 +326,15 @@ function mergeAnatomyGeometries(geos) {
 export function createLoftedLimb(rings, radialSegs = 16, options = {}) {
   const {
     resampleSteps = Math.max(rings.length, 14),
-    aoStrength = 0.24,
-    shadowTint = 0x522a3a,
-    shadowTintStrength = 0.30,
+    aoStrength = SOFT_AO_DEFAULTS.aoStrength,
+    minAO = SOFT_AO_DEFAULTS.minAO,
+    shadowTint = SOFT_AO_DEFAULTS.shadowTint,
+    shadowTintStrength = SOFT_AO_DEFAULTS.shadowTintStrength,
+    baseWeight = SOFT_AO_DEFAULTS.baseWeight,
+    cavityWeight = SOFT_AO_DEFAULTS.cavityWeight,
+    undersideWeight = SOFT_AO_DEFAULTS.undersideWeight,
+    ridgeHighlight = SOFT_AO_DEFAULTS.ridgeHighlight,
+    noiseStrength = SOFT_AO_DEFAULTS.noiseStrength,
     baseColor = 0xffffff,
     topColor = 0xffffff,
     pinchAxis = 0.0,
@@ -275,7 +366,7 @@ export function createLoftedLimb(rings, radialSegs = 16, options = {}) {
     } else {
       for (let j = 0; j <= radialSegs; j++) {
         const uCoord = j / radialSegs;
-        const ang = uCoord * TAU + twist;
+        const ang = (uCoord - 0.5) * TAU + twist;
         const sa = Math.sin(ang);
         const ca = Math.cos(ang);
         const rz = ca >= 0 ? rzF : rzB;
@@ -286,7 +377,6 @@ export function createLoftedLimb(rings, radialSegs = 16, options = {}) {
     }
   }
 
-  const stride = radialSegs + 1;
   for (let i = 0; i < n - 1; i++) {
     const A = starts[i];
     const B = starts[i + 1];
@@ -306,25 +396,58 @@ export function createLoftedLimb(rings, radialSegs = 16, options = {}) {
     }
   }
 
+  const ascending = n < 2 || sampled[n - 1][0] >= sampled[0][0];
+  const zOffInterp = (y) => {
+    if (n === 0) return 0;
+    if (n === 1) return sampled[0][1];
+    if (ascending) {
+      if (y <= sampled[0][0]) return sampled[0][1];
+      if (y >= sampled[n - 1][0]) return sampled[n - 1][1];
+      for (let i = 0; i < n - 1; i++) {
+        const yA = sampled[i][0];
+        const yB = sampled[i + 1][0];
+        if (y >= yA && y <= yB) {
+          const span = yB - yA;
+          const t = Math.abs(span) > 1e-6 ? (y - yA) / span : 0;
+          return sampled[i][1] + (sampled[i + 1][1] - sampled[i][1]) * t;
+        }
+      }
+    } else {
+      if (y >= sampled[0][0]) return sampled[0][1];
+      if (y <= sampled[n - 1][0]) return sampled[n - 1][1];
+      for (let i = 0; i < n - 1; i++) {
+        const yA = sampled[i][0];
+        const yB = sampled[i + 1][0];
+        if (y <= yA && y >= yB) {
+          const span = yB - yA;
+          const t = Math.abs(span) > 1e-6 ? (y - yA) / span : 0;
+          return sampled[i][1] + (sampled[i + 1][1] - sampled[i][1]) * t;
+        }
+      }
+    }
+    return sampled[n - 1][1];
+  };
+  const axisCenterFn = (c, out) => out.set(0, c.y, zOffInterp(c.y));
+
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
   geo.computeVertexNormals();
-  ensureOutwardWinding(geo, sampled);
+  ensureOutwardWinding(geo, axisCenterFn);
 
-  bakeProceduralVertexAO(geo, {
+  bakeSoftVertexAO(geo, {
     baseColor,
     topColor,
     aoStrength,
-    minAO: 0.56,
+    minAO,
     shadowTint,
     shadowTintStrength,
-    ridgeHighlight: 0.05,
-    noiseStrength: 0.02,
-    baseWeight: 0.34,
-    cavityWeight: 0.32,
-    undersideWeight: 0.24
+    baseWeight,
+    cavityWeight,
+    undersideWeight,
+    ridgeHighlight,
+    noiseStrength
   });
   initCharacterVertexAttributes(geo, 0, 0);
   geo.computeBoundingBox();
@@ -361,18 +484,15 @@ export function createSculptedTorso(archetype = 'female', options = {}) {
         [0.935, 0.000, 0.132, 0.092, 0.105],
         [1.035, 0.008, 0.092, 0.070, 0.074],
         [1.120, 0.012, 0.106, 0.082, 0.080],
-        [1.215, 0.016, 0.132, 0.108, 0.084],
-        [1.275, 0.012, 0.138, 0.104, 0.084],
-        [1.342, 0.002, 0.136, 0.078, 0.076],
-        [1.376, -0.004, 0.056, 0.048, 0.048],
-        [1.390, -0.006, 0.000, 0.000, 0.000]
+        [1.215, 0.016, 0.130, 0.106, 0.084],
+        [1.275, 0.010, 0.142, 0.094, 0.082],
+        [1.335, 0.002, 0.152, 0.074, 0.072],
+        [1.372, -0.004, 0.068, 0.056, 0.056],
+        [1.392, -0.006, 0.000, 0.000, 0.000]
       ];
 
   return createLoftedLimb(rings, 24, {
     resampleSteps: 22,
-    aoStrength: 0.25,
-    shadowTint: 0x452248,
-    shadowTintStrength: 0.32,
     pinchAxis: isMale ? -0.02 : -0.035,
     pinchFreq: 2.0,
     ...options
@@ -380,32 +500,34 @@ export function createSculptedTorso(archetype = 'female', options = {}) {
 }
 
 /**
- * Construye cuello estilizado continuo con suave transición trapecio/clavícula.
+ * Construye cuello estilizado continuo con suave transición trapecio/clavícula
+ * y penetración profunda en torso y base craneal (> 2.5 cm).
  */
 function createSculptedNeck(archetype = 'female') {
   const isMale = archetype === 'male';
   const rings = isMale
     ? [
-        [1.455, -0.006, 0.000, 0.000, 0.000],
-        [1.465, -0.006, 0.068, 0.062, 0.062],
-        [1.515, -0.004, 0.054, 0.052, 0.052],
-        [1.575, 0.000, 0.051, 0.050, 0.050],
-        [1.615, 0.004, 0.052, 0.051, 0.051],
-        [1.630, 0.005, 0.000, 0.000, 0.000]
+        [1.422, -0.006, 0.000, 0.000, 0.000],
+        [1.430, -0.006, 0.084, 0.070, 0.070],
+        [1.480, -0.004, 0.062, 0.058, 0.058],
+        [1.535, -0.001, 0.052, 0.051, 0.051],
+        [1.610, 0.003, 0.051, 0.050, 0.050],
+        [1.665, 0.005, 0.052, 0.051, 0.051],
+        [1.678, 0.006, 0.000, 0.000, 0.000]
       ]
     : [
-        [1.372, -0.006, 0.000, 0.000, 0.000],
-        [1.382, -0.006, 0.052, 0.046, 0.048],
-        [1.425, -0.003, 0.040, 0.039, 0.040],
-        [1.475, 0.000, 0.038, 0.038, 0.038],
-        [1.515, 0.003, 0.039, 0.039, 0.039],
-        [1.530, 0.004, 0.000, 0.000, 0.000]
+        [1.332, -0.006, 0.000, 0.000, 0.000],
+        [1.340, -0.006, 0.072, 0.060, 0.060],
+        [1.385, -0.005, 0.052, 0.046, 0.048],
+        [1.425, -0.002, 0.039, 0.039, 0.040],
+        [1.495, 0.001, 0.038, 0.038, 0.038],
+        [1.560, 0.004, 0.040, 0.040, 0.040],
+        [1.572, 0.005, 0.000, 0.000, 0.000]
       ];
   return createLoftedLimb(rings, 16, {
-    resampleSteps: 12,
-    aoStrength: 0.16,
-    shadowTint: 0x6a3b45,
-    shadowTintStrength: 0.25
+    resampleSteps: 14,
+    aoStrength: 0.08,
+    minAO: 0.86
   });
 }
 
@@ -420,12 +542,12 @@ export function createSculptedHand(side = 1, archetype = 'female') {
 
   // Palma grácil afinada desde muñeca hacia nudillos
   const palm = createLoftedLimb([
-    [0.012 * s, 0.000, 0.000, 0.000, 0.000],
-    [0.006 * s, 0.000, 0.016 * s, 0.011 * s, 0.011 * s],
+    [0.016 * s, 0.000, 0.000, 0.000, 0.000],
+    [0.006 * s, 0.000, 0.0175 * s, 0.013 * s, 0.013 * s],
     [-0.018 * s, 0.002 * s, 0.022 * s, 0.012 * s, 0.011 * s],
     [-0.042 * s, 0.004 * s, 0.021 * s, 0.010 * s, 0.010 * s],
     [-0.050 * s, 0.004 * s, 0.000, 0.000, 0.000]
-  ], 12, { resampleSteps: 8, aoStrength: 0.16 });
+  ], 12, { resampleSteps: 9 });
 
   // Bloque de dedos ligeramente curvado hacia el interior (pose relajada / agarre suave de riendas)
   const fingers = createLoftedLimb([
@@ -434,28 +556,26 @@ export function createSculptedHand(side = 1, archetype = 'female') {
     [-0.062 * s, 0.002 * s, 0.017 * s, 0.008 * s, 0.008 * s],
     [-0.084 * s, -0.006 * s, 0.012 * s, 0.006 * s, 0.006 * s],
     [-0.095 * s, -0.012 * s, 0.000, 0.000, 0.000]
-  ], 12, { resampleSteps: 8, aoStrength: 0.18 });
-  fingers.translate(-side * 0.003 * s, 0, 0);
+  ], 14, { resampleSteps: 10 });
+  fingers.translate(-side * 0.0025 * s, 0, 0);
 
   // Pulgar separado orientado hacia adelante/interior
   const thumb = createLoftedLimb([
-    [0.000, 0.000, 0.000, 0.000, 0.000],
+    [0.002 * s, 0.000, 0.000, 0.000, 0.000],
     [-0.008 * s, 0.000, 0.0075 * s, 0.0075 * s, 0.0075 * s],
     [-0.024 * s, 0.002 * s, 0.0068 * s, 0.0068 * s, 0.0068 * s],
     [-0.038 * s, 0.001 * s, 0.0048 * s, 0.0048 * s, 0.0048 * s],
     [-0.044 * s, 0.000, 0.000, 0.000, 0.000]
-  ], 10, { resampleSteps: 7, aoStrength: 0.16 });
+  ], 10, { resampleSteps: 8 });
   thumb.rotateZ(side * -0.45);
   thumb.rotateX(-0.35);
   thumb.translate(-side * 0.016 * s, -0.014 * s, 0.012 * s);
 
   const merged = mergeAnatomyGeometries([palm, fingers, thumb]);
-  bakeProceduralVertexAO(merged, {
-    aoStrength: 0.22,
-    minAO: 0.60,
-    shadowTint: 0x5c3040,
-    shadowTintStrength: 0.26
-  });
+  ensureOutwardWinding(merged);
+  bakeSoftVertexAO(merged);
+  merged.computeBoundingBox();
+  merged.computeBoundingSphere();
   return merged;
 }
 
@@ -471,6 +591,7 @@ export function createSculptedFoot(archetype = 'female', style = 'heel') {
   const isMale = archetype === 'male';
   const isBoot = style === 'boot' || isMale;
   const soleY = isMale ? -0.060 : -0.050;
+  let merged;
 
   if (isBoot) {
     // Bota estilizada de montar: empeine esculpido + punta fina + suela y tacón definidos
@@ -481,43 +602,63 @@ export function createSculptedFoot(archetype = 'female', style = 'heel') {
       [-0.036, 0.038, 0.041, 0.088, 0.054],
       [-0.048, 0.045, 0.038, 0.095, 0.052],
       [-0.054, 0.048, 0.000, 0.000, 0.000]
-    ], 16, { resampleSteps: 10, aoStrength: 0.26, shadowTint: 0x201532 });
+    ], 16, { resampleSteps: 10 });
 
     const heel = createLoftedLimb([
       [-0.028, -0.025, 0.000, 0.000, 0.000],
       [-0.034, -0.025, 0.028, 0.028, 0.028],
       [soleY + 0.003, -0.025, 0.026, 0.026, 0.026],
       [soleY, -0.025, 0.000, 0.000, 0.000]
-    ], 12, { resampleSteps: 6, aoStrength: 0.28, shadowTint: 0x181028 });
+    ], 12, { resampleSteps: 6 });
 
     const toeCap = createLoftedLimb([
       [-0.036, 0.092, 0.000, 0.000, 0.000],
       [-0.040, 0.092, 0.032, 0.046, 0.036],
       [soleY + 0.004, 0.096, 0.030, 0.048, 0.034],
       [soleY, 0.096, 0.000, 0.000, 0.000]
-    ], 14, { resampleSteps: 6, aoStrength: 0.24, shadowTint: 0x1e1430 });
+    ], 14, { resampleSteps: 6 });
 
-    return mergeAnatomyGeometries([bootUpper, heel, toeCap]);
+    merged = mergeAnatomyGeometries([bootUpper, heel, toeCap]);
+  } else {
+    // Zapatilla real de salón para damas: horma delicada, punta almendrada y tacón bajo grácil
+    const vamp = createLoftedLimb([
+      [0.004, 0.012, 0.000, 0.000, 0.000],
+      [-0.006, 0.020, 0.033, 0.052, 0.042],
+      [-0.026, 0.038, 0.035, 0.082, 0.046],
+      [-0.042, 0.045, 0.033, 0.088, 0.044],
+      [soleY + 0.004, 0.046, 0.028, 0.082, 0.040],
+      [soleY, 0.046, 0.000, 0.000, 0.000]
+    ], 16, { resampleSteps: 10 });
+
+    const heel = createLoftedLimb([
+      [-0.018, -0.028, 0.000, 0.000, 0.000],
+      [-0.025, -0.028, 0.016, 0.016, 0.016],
+      [soleY + 0.003, -0.030, 0.012, 0.012, 0.012],
+      [soleY, -0.030, 0.000, 0.000, 0.000]
+    ], 10, { resampleSteps: 6 });
+
+    merged = mergeAnatomyGeometries([vamp, heel]);
   }
 
-  // Zapatilla real de salón para damas: horma delicada, punta almendrada y tacón bajo grácil
-  const vamp = createLoftedLimb([
-    [-0.002, 0.015, 0.000, 0.000, 0.000],
-    [-0.008, 0.022, 0.034, 0.056, 0.044],
-    [-0.026, 0.038, 0.036, 0.082, 0.048],
-    [-0.042, 0.045, 0.034, 0.088, 0.046],
-    [soleY + 0.004, 0.046, 0.028, 0.082, 0.040],
-    [soleY, 0.046, 0.000, 0.000, 0.000]
-  ], 16, { resampleSteps: 10, aoStrength: 0.24, shadowTint: 0x422040 });
+  // Garantiza apoyo estricto de la suela en soleY y winding exterior
+  const pos = merged.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    if (pos.getY(i) < soleY) pos.setY(i, soleY);
+  }
+  pos.needsUpdate = true;
+  ensureOutwardWinding(merged);
+  bakeSoftVertexAO(merged);
+  merged.computeBoundingBox();
+  merged.computeBoundingSphere();
+  return merged;
+}
 
-  const heel = createLoftedLimb([
-    [-0.020, -0.028, 0.000, 0.000, 0.000],
-    [-0.025, -0.028, 0.016, 0.016, 0.016],
-    [soleY + 0.003, -0.030, 0.012, 0.012, 0.012],
-    [soleY, -0.030, 0.000, 0.000, 0.000]
-  ], 10, { resampleSteps: 6, aoStrength: 0.26, shadowTint: 0x351a38 });
-
-  return mergeAnatomyGeometries([vamp, heel]);
+function createJointSphere(radius, widthSegments = 14, heightSegments = 10) {
+  const geo = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
+  ensureOutwardWinding(geo);
+  bakeSoftVertexAO(geo, { aoStrength: 0.08, minAO: 0.86 });
+  initCharacterVertexAttributes(geo, 0, 0);
+  return geo;
 }
 
 function makePivot(parent, x, y, z) {
@@ -601,7 +742,7 @@ export function buildStylizedSkeleton(archetype = 'female', options = {}) {
         [0.015, 0.000, 0.072, 0.074, 0.078],
         [-0.14, 0.004, 0.068, 0.070, 0.072],
         [-0.30, 0.003, 0.056, 0.058, 0.058],
-        [-thighLen, 0.000, 0.050, 0.052, 0.050],
+        [-thighLen, 0.000, 0.052, 0.052, 0.051],
         [-thighLen - 0.025, 0.000, 0.000, 0.000, 0.000]
       ]
     : [
@@ -609,13 +750,13 @@ export function buildStylizedSkeleton(archetype = 'female', options = {}) {
         [0.012, 0.000, 0.062, 0.064, 0.070],
         [-0.13, 0.004, 0.059, 0.062, 0.065],
         [-0.29, 0.002, 0.047, 0.049, 0.049],
-        [-thighLen, 0.000, 0.042, 0.044, 0.042],
+        [-thighLen, 0.000, 0.043, 0.044, 0.043],
         [-thighLen - 0.022, 0.000, 0.000, 0.000, 0.000]
       ];
   const shinRings = isMale
     ? [
         [0.025, 0.000, 0.000, 0.000, 0.000],
-        [0.004, 0.002, 0.051, 0.054, 0.051],
+        [0.004, 0.002, 0.052, 0.054, 0.052],
         [-0.14, -0.005, 0.054, 0.052, 0.062],
         [-0.30, -0.004, 0.043, 0.044, 0.046],
         [-shinLen, 0.000, 0.038, 0.040, 0.040],
@@ -623,7 +764,7 @@ export function buildStylizedSkeleton(archetype = 'female', options = {}) {
       ]
     : [
         [0.022, 0.000, 0.000, 0.000, 0.000],
-        [0.004, 0.002, 0.042, 0.044, 0.042],
+        [0.004, 0.002, 0.043, 0.044, 0.043],
         [-0.13, -0.005, 0.045, 0.042, 0.053],
         [-0.29, -0.003, 0.033, 0.034, 0.036],
         [-shinLen, 0.000, 0.029, 0.031, 0.031],
@@ -631,7 +772,9 @@ export function buildStylizedSkeleton(archetype = 'female', options = {}) {
       ];
 
   const thighGeo = track(createLoftedLimb(thighRings, 16, { resampleSteps: 14 }));
-  const shinGeo = track(createLoftedLimb(shinRings, 16, { resampleSteps: 14 }));
+  const shinLoft = createLoftedLimb(shinRings, 16, { resampleSteps: 14 });
+  const kneeSphere = createJointSphere(isMale ? 0.052 : 0.043, 14, 10);
+  const shinGeo = track(mergeAnatomyGeometries([shinLoft, kneeSphere]));
   const shoeGeo = track(createSculptedFoot(metrics.archetype, isMale ? 'boot' : 'heel'));
 
   const thighL = new THREE.Group();
@@ -693,40 +836,43 @@ export function buildStylizedSkeleton(archetype = 'female', options = {}) {
   const upperArmRings = isMale
     ? [
         [0.036, 0.000, 0.000, 0.000, 0.000],
-        [0.012, 0.000, 0.056, 0.056, 0.056],
+        [0.012, 0.000, 0.055, 0.055, 0.055],
         [-0.08, 0.000, 0.049, 0.050, 0.050],
-        [-0.20, 0.000, 0.042, 0.043, 0.043],
-        [-upperLen, 0.000, 0.038, 0.039, 0.039],
-        [-upperLen - 0.022, 0.000, 0.000, 0.000, 0.000]
+        [-0.20, 0.000, 0.043, 0.044, 0.044],
+        [-upperLen, 0.000, 0.040, 0.040, 0.040],
+        [-upperLen - 0.020, 0.000, 0.000, 0.000, 0.000]
       ]
     : [
         [0.032, 0.000, 0.000, 0.000, 0.000],
-        [0.010, 0.000, 0.040, 0.040, 0.040],
-        [-0.07, 0.000, 0.034, 0.035, 0.035],
-        [-0.18, 0.000, 0.029, 0.030, 0.030],
-        [-upperLen, 0.000, 0.026, 0.027, 0.027],
-        [-upperLen - 0.018, 0.000, 0.000, 0.000, 0.000]
+        [0.010, 0.000, 0.041, 0.041, 0.041],
+        [-0.07, 0.000, 0.0355, 0.036, 0.036],
+        [-0.18, 0.000, 0.0305, 0.031, 0.031],
+        [-upperLen, 0.000, 0.0285, 0.0285, 0.0285],
+        [-upperLen - 0.016, 0.000, 0.000, 0.000, 0.000]
       ];
   const forearmRings = isMale
     ? [
         [0.024, 0.000, 0.000, 0.000, 0.000],
         [0.004, 0.000, 0.040, 0.040, 0.040],
-        [-0.09, 0.002, 0.038, 0.038, 0.038],
-        [-0.20, 0.001, 0.030, 0.029, 0.029],
+        [-0.09, 0.002, 0.039, 0.039, 0.039],
+        [-0.20, 0.001, 0.031, 0.030, 0.030],
         [-foreLen, 0.000, 0.026, 0.023, 0.023],
         [-foreLen - 0.014, 0.000, 0.000, 0.000, 0.000]
       ]
     : [
         [0.020, 0.000, 0.000, 0.000, 0.000],
-        [0.004, 0.000, 0.028, 0.028, 0.028],
-        [-0.08, 0.002, 0.027, 0.027, 0.027],
-        [-0.18, 0.001, 0.021, 0.020, 0.020],
-        [-foreLen, 0.000, 0.018, 0.015, 0.015],
+        [0.004, 0.000, 0.0285, 0.0285, 0.0285],
+        [-0.08, 0.002, 0.0275, 0.0275, 0.0275],
+        [-0.18, 0.001, 0.0225, 0.0215, 0.0215],
+        [-foreLen, 0.000, 0.0195, 0.0165, 0.0165],
         [-foreLen - 0.012, 0.000, 0.000, 0.000, 0.000]
       ];
 
+  const deltoidGeo = track(createJointSphere(isMale ? 0.055 : 0.043, 14, 12));
   const upperArmGeo = track(createLoftedLimb(upperArmRings, 14, { resampleSteps: 12 }));
-  const forearmGeo = track(createLoftedLimb(forearmRings, 14, { resampleSteps: 12 }));
+  const forearmLoft = createLoftedLimb(forearmRings, 14, { resampleSteps: 12 });
+  const elbowSphere = createJointSphere(isMale ? 0.040 : 0.0285, 14, 10);
+  const forearmGeo = track(mergeAnatomyGeometries([forearmLoft, elbowSphere]));
   const handGeoL = track(createSculptedHand(1, metrics.archetype));
   const handGeoR = track(createSculptedHand(-1, metrics.archetype));
 
@@ -747,6 +893,12 @@ export function buildStylizedSkeleton(archetype = 'female', options = {}) {
   [shoulderL, shoulderR].forEach((armGroup, idx) => {
     const side = idx === 0 ? 1 : -1;
     const armMat = isMale ? (mats.primary || mats.skin) : mats.skin;
+
+    const deltoid = new THREE.Mesh(deltoidGeo, armMat);
+    deltoid.position.set(-side * 0.012, 0, 0);
+    deltoid.castShadow = true;
+    deltoid.receiveShadow = true;
+    armGroup.add(deltoid);
 
     const upper = new THREE.Mesh(upperArmGeo, armMat);
     upper.castShadow = true;
@@ -774,7 +926,7 @@ export function buildStylizedSkeleton(archetype = 'female', options = {}) {
     armGroup.add(forearm);
     spineInner.add(armGroup);
 
-    armMeshes.push(upper, lower);
+    armMeshes.push(deltoid, upper, lower);
     handMeshes.push(hand);
 
     if (idx === 0) {

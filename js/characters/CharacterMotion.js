@@ -37,12 +37,13 @@ const GESTURE_KEYS_NO_LOOK = GESTURE_KEYS_ALL.filter((id) => id !== 'look');
  * Biblioteca de poses absolutas para el rig estilizado (0 asignaciones por frame).
  */
 export class PoseLibrary {
-  static reset(p, baseZ) {
+  static reset(p, baseZ, isMale = false) {
     p.bodyX = 0; p.bodyY = 0; p.bodyRotX = 0; p.bodyRotY = 0; p.bodyRotZ = 0;
     p.spineX = 0; p.spineY = 0; p.spineZ = 0;
     p.headX = 0; p.headY = 0; p.headZ = 0;
     p.lArmX = 0; p.lArmZ = baseZ; p.rArmX = 0; p.rArmZ = -baseZ;
-    p.lForeX = -0.24; p.lForeZ = 0.09; p.rForeX = -0.24; p.rForeZ = -0.09;
+    p.lForeX = isMale ? -0.18 : -0.22; p.lForeZ = isMale ? 0.05 : 0.07;
+    p.rForeX = isMale ? -0.18 : -0.22; p.rForeZ = isMale ? -0.05 : -0.07;
     p.lLegX = 0; p.rLegX = 0; p.lLegZ = 0; p.rLegZ = 0;
     p.lShinX = 0; p.rShinX = 0; p.lShinZ = 0; p.rShinZ = 0;
     p.breath = 0; p.flare = 0;
@@ -74,23 +75,23 @@ export class PoseLibrary {
     p.headX = Math.sin(t * 0.58) * 0.032 - breath * 0.012;
 
     if (isMale) {
-      p.lArmZ = baseZ + breath * 0.014 + sway * 0.008;
-      p.rArmZ = -(baseZ + breath * 0.014 - sway * 0.008);
-      p.lArmX = Math.sin(t * 0.48 + 0.6) * 0.024 - 0.03;
-      p.rArmX = Math.sin(t * 0.48 + 2.2) * 0.024 - 0.06;
-      p.lForeX = -0.22;
-      p.rForeX = -0.32;
-      p.lForeZ = 0.06;
-      p.rForeZ = -0.08;
+      p.lArmZ = baseZ + breath * 0.012 + sway * 0.006;
+      p.rArmZ = -(baseZ + breath * 0.012 - sway * 0.006);
+      p.lArmX = Math.sin(t * 0.48 + 0.6) * 0.022 - 0.025;
+      p.rArmX = Math.sin(t * 0.48 + 2.2) * 0.022 - 0.035;
+      p.lForeX = -0.18 + breath * 0.012;
+      p.rForeX = -0.18 + breath * 0.012;
+      p.lForeZ = 0.05;
+      p.rForeZ = -0.05;
     } else {
-      p.lArmZ = baseZ + breath * 0.018 + sway * 0.012;
-      p.rArmZ = -(baseZ + breath * 0.018 - sway * 0.012);
-      p.lArmX = Math.sin(t * 0.48 + 0.8) * 0.032;
-      p.rArmX = Math.sin(t * 0.48 + 2.4) * 0.032;
-      p.lForeX = -0.26 + breath * 0.016;
-      p.rForeX = -0.26 + breath * 0.016;
-      p.lForeZ = 0.10;
-      p.rForeZ = -0.10;
+      p.lArmZ = baseZ + breath * 0.015 + sway * 0.010;
+      p.rArmZ = -(baseZ + breath * 0.015 - sway * 0.010);
+      p.lArmX = Math.sin(t * 0.48 + 0.8) * 0.028 - 0.02;
+      p.rArmX = Math.sin(t * 0.48 + 2.4) * 0.028 - 0.02;
+      p.lForeX = -0.22 + breath * 0.016;
+      p.rForeX = -0.22 + breath * 0.016;
+      p.lForeZ = 0.07 + sway * 0.006;
+      p.rForeZ = -0.07 + sway * 0.006;
     }
 
     p.rLegX = -Math.max(0, sway) * (isMale ? 0.035 : 0.055);
@@ -106,6 +107,7 @@ export class PoseLibrary {
     const c = Math.cos(ph);
     const stride = run ? (isMale ? 0.68 : 0.64) : (isMale ? 0.40 : 0.34);
     const arm = run ? 0.60 : (isMale ? 0.40 : 0.34);
+    const baseElbow = isMale ? -0.18 : -0.22;
 
     p.lLegX = s * stride;
     p.rLegX = -s * stride;
@@ -114,12 +116,12 @@ export class PoseLibrary {
 
     p.lArmX = -s * arm;
     p.rArmX = s * arm;
-    p.lArmZ = baseZ + (run ? 0.08 : 0.03);
+    p.lArmZ = baseZ + (run ? 0.07 : 0.025) + Math.abs(s) * 0.014;
     p.rArmZ = -p.lArmZ;
-    p.lForeX = (run ? -0.82 : -0.32) - Math.max(0, s) * 0.22;
-    p.rForeX = (run ? -0.82 : -0.32) - Math.max(0, -s) * 0.22;
-    p.lForeZ = isMale ? 0.06 : 0.11;
-    p.rForeZ = isMale ? -0.06 : -0.11;
+    p.lForeX = (run ? -0.78 : (baseElbow - 0.08)) - Math.max(0, s) * (run ? 0.22 : 0.18);
+    p.rForeX = (run ? -0.78 : (baseElbow - 0.08)) - Math.max(0, -s) * (run ? 0.22 : 0.18);
+    p.lForeZ = isMale ? 0.05 : 0.07;
+    p.rForeZ = isMale ? -0.05 : -0.07;
 
     p.bodyY = Math.max(0, Math.cos(ph * 2)) * (run ? 0.034 : 0.012);
     p.bodyRotX = run ? 0.035 : 0;
@@ -129,6 +131,7 @@ export class PoseLibrary {
     p.spineZ = c * (isMale ? 0.012 : 0.024);
     p.headY = s * (run ? 0.065 : 0.042);
     p.headX = -p.spineX * 0.55;
+    p.breath = Math.sin(t * (run ? 4.2 : 2.2)) * (run ? 0.65 : 0.4);
     return s;
   }
 
@@ -344,11 +347,11 @@ class SpringMotion {
 export class CharacterMotion {
   static EMOTES = EMOTE_DEFS;
 
-  #b; #isMale; #baseZ = 0.32; #t = Math.random() * 10;
+  #b; #isMale; #baseZ = 0.21; #t = Math.random() * 10;
   #thighLen = 0.44; #shinLen = 0.47; #legLen = 0.91;
   #pose = {}; #prevState = 'idle'; #landT = -1;
   #emote = null; #emoteSeq = 0;
-  #gesture = null; #gestureTimer = 3 + Math.random() * 4;
+  #gesture = { active: false, id: 'chest', t: 0, dur: 0 }; #gestureTimer = 3 + Math.random() * 4;
   #blinkTimer = 2.0 + Math.random() * 2.5; #blinkT = -1; #pendingBlink = false;
   #lookTarget = null; #lookW = 0;
   #springs = new SpringMotion();
@@ -380,7 +383,7 @@ export class CharacterMotion {
     }
     if (bones.torso) this.#torsoBase.copy(bones.torso.scale);
     this.#shoulderY = bones.lShoulder ? bones.lShoulder.position.y : 1.335;
-    PoseLibrary.reset(this.#pose, this.#baseZ);
+    PoseLibrary.reset(this.#pose, this.#baseZ, this.#isMale);
   }
 
   setBaseArmZ(z) { this.#baseZ = z; }
@@ -407,7 +410,7 @@ export class CharacterMotion {
     if (!def) return false;
     this.#emoteSeq += 1;
     this.#emote = { id, t: 0, def, seq: this.#emoteSeq };
-    this.#gesture = null;
+    this.#gesture.active = false;
     return true;
   }
 
@@ -430,7 +433,7 @@ export class CharacterMotion {
     const riding = state === 'riding';
     if (riding) this.#updateRider(dt, motion);
 
-    const p = PoseLibrary.reset(this.#pose, this.#baseZ);
+    const p = PoseLibrary.reset(this.#pose, this.#baseZ, this.#isMale);
     let sway = 0;
     switch (state) {
       case 'walk':
@@ -459,7 +462,7 @@ export class CharacterMotion {
     }
 
     if (state === 'idle' && (lod === 0 || this.#emote)) this.#updateGesture(dt, p);
-    else this.#gesture = null;
+    else this.#gesture.active = false;
     this.#updateEmote(dt, p);
 
     const hasEmote = Boolean(this.#emote);
@@ -656,18 +659,21 @@ export class CharacterMotion {
 
   #updateGesture(dt, p) {
     if (this.#emote) return;
-    if (!this.#gesture) {
+    const g = this.#gesture;
+    if (!g.active) {
       this.#gestureTimer -= dt;
       if (this.#gestureTimer > 0) return;
       const ids = this.#lookTarget ? GESTURE_KEYS_NO_LOOK : GESTURE_KEYS_ALL;
       const id = ids[Math.floor(Math.random() * ids.length)];
-      this.#gesture = { id, t: 0, dur: GESTURE_DEFS[id] };
+      g.active = true;
+      g.id = id;
+      g.t = 0;
+      g.dur = GESTURE_DEFS[id];
       this.#gestureTimer = 4 + Math.random() * 4;
     }
-    const g = this.#gesture;
     g.t += dt;
     if (g.t >= g.dur) {
-      this.#gesture = null;
+      g.active = false;
       return;
     }
     PoseLibrary.blend(p, PoseLibrary.gesture(g.id, g.t, this.#partialPose), PoseLibrary.envelope(g.t / g.dur, g.dur, 0.5, 0.6));

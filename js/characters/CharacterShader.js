@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GraphicsSync } from '../core/Engine.js';
+import { FACE_UV } from './CharacterFaceHair.js';
 
 const _neutralVec3 = new THREE.Vector3(0, 0, 0);
 
@@ -62,38 +63,39 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
 
   const defaults = {};
   if (isSkin) {
-    defaults.roughness = stdParams.roughness ?? 0.66;
+    defaults.roughness = stdParams.roughness ?? 0.82;
     defaults.metalness = stdParams.metalness ?? 0.0;
+    defaults.vertexColors = stdParams.vertexColors ?? true;
   } else if (isEyes) {
     defaults.roughness = stdParams.roughness ?? 0.16;
     defaults.metalness = stdParams.metalness ?? 0.04;
   } else if (isHair) {
-    defaults.roughness = stdParams.roughness ?? 0.34;
-    defaults.metalness = stdParams.metalness ?? 0.06;
+    defaults.roughness = stdParams.roughness ?? 0.56;
+    defaults.metalness = stdParams.metalness ?? 0.02;
     defaults.side = stdParams.side ?? THREE.DoubleSide;
     defaults.vertexColors = stdParams.vertexColors ?? true;
   } else if (isSilk) {
-    defaults.roughness = stdParams.roughness ?? 0.40;
-    defaults.metalness = stdParams.metalness ?? 0.08;
+    defaults.roughness = stdParams.roughness ?? 0.70;
+    defaults.metalness = stdParams.metalness ?? 0.02;
     defaults.vertexColors = stdParams.vertexColors ?? true;
   } else if (isVelvet) {
-    defaults.roughness = stdParams.roughness ?? 0.68;
-    defaults.metalness = stdParams.metalness ?? 0.04;
+    defaults.roughness = stdParams.roughness ?? 0.78;
+    defaults.metalness = stdParams.metalness ?? 0.02;
     defaults.vertexColors = stdParams.vertexColors ?? true;
   } else if (isTulle) {
-    defaults.roughness = stdParams.roughness ?? 0.24;
-    defaults.metalness = stdParams.metalness ?? 0.05;
+    defaults.roughness = stdParams.roughness ?? 0.45;
+    defaults.metalness = stdParams.metalness ?? 0.0;
     defaults.transparent = true;
     defaults.depthWrite = false;
-    defaults.side = THREE.DoubleSide;
-    defaults.opacity = stdParams.opacity ?? 0.44;
+    defaults.side = stdParams.side ?? THREE.FrontSide;
+    defaults.opacity = stdParams.opacity ?? 0.36;
   } else if (isGold) {
-    defaults.roughness = stdParams.roughness ?? 0.23;
-    defaults.metalness = stdParams.metalness ?? 0.86;
+    defaults.roughness = stdParams.roughness ?? 0.28;
+    defaults.metalness = stdParams.metalness ?? 0.78;
     defaults.vertexColors = stdParams.vertexColors ?? true;
   } else if (isGem) {
-    defaults.roughness = stdParams.roughness ?? 0.12;
-    defaults.metalness = stdParams.metalness ?? 0.15;
+    defaults.roughness = stdParams.roughness ?? 0.14;
+    defaults.metalness = stdParams.metalness ?? 0.12;
     defaults.emissiveIntensity = stdParams.emissiveIntensity ?? 0.92;
   }
 
@@ -110,7 +112,7 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
   const uShadowTintRef = {
     value: new THREE.Color(
       shadowTint ??
-        (isSkin ? 0xe2979c : isHair ? 0xb586b8 : isVelvet ? 0x201846 : 0x562c5c)
+        (isSkin ? 0xe2979c : isHair ? 0xc88a78 : isVelvet ? 0x201846 : 0x562c5c)
     )
   };
   const uSheenColRef = {
@@ -120,7 +122,7 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
     )
   };
   const uSheenStrengthRef = {
-    value: sheenStrength ?? (isSilk ? 0.36 : isVelvet ? 0.28 : isTulle ? 0.55 : isHair ? 0.34 : 0.22)
+    value: sheenStrength ?? (isSilk ? 0.34 : isVelvet ? 0.28 : isTulle ? 0.48 : isHair ? 0.32 : 0.22)
   };
 
   mat.userData.uBlinkMap = uBlinkMapRef;
@@ -128,7 +130,11 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
   mat.userData.uSheenCol = uSheenColRef;
   mat.userData.uShadowTint = uShadowTintRef;
 
-  const cacheKey = `char_npr_${preset}_v1`;
+  const eyeUL = (FACE_UV?.eyeUL ?? 0.375).toFixed(4);
+  const eyeUR = (FACE_UV?.eyeUR ?? 0.625).toFixed(4);
+  const eyeV = (FACE_UV?.eyeV ?? 0.487).toFixed(4);
+
+  const cacheKey = `char_npr_${preset}_v2`;
   mat.customProgramCacheKey = () => cacheKey;
 
   mat.onBeforeCompile = (shader) => {
@@ -161,6 +167,7 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
         '#include <common>',
         /* glsl */ `
         #include <common>
+        ${isSkin ? '#define USE_SMOOTH_NORMAL' : ''}
         attribute vec3 aSmoothNormal;
         attribute float aSwayWeight;
         attribute float aStrandPhase;
@@ -176,9 +183,21 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
 
         varying vec3 vCharWorldPos;
         varying vec3 vCharWorldNormal;
-        varying vec3 vCharSmoothNormal;
+        varying vec3 vCharViewNormal;
         varying vec2 vCharUv;
         varying float vCharSway;
+        `
+      )
+      .replace(
+        '#include <beginnormal_vertex>',
+        /* glsl */ `
+        #include <beginnormal_vertex>
+        #ifdef USE_SMOOTH_NORMAL
+          if (length(aSmoothNormal) > 0.01) {
+            float faceFrontMask = smoothstep(-0.1, 0.45, objectNormal.z);
+            objectNormal = normalize(mix(objectNormal, normalize(aSmoothNormal), 0.82 * faceFrontMask));
+          }
+        #endif
         `
       )
       .replace(
@@ -197,8 +216,8 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
           float ripple = cos(uTime * (uSwayFreq * 1.47) + phase * 1.7 + transformed.z * 5.0);
 
           // Arrastre hacia atrás al caminar/correr/galopar + brisa orgánica sin penetrar piernas
-          vec3 drag = vec3(-uMoveVel.x * 0.028, 0.0, -uMoveVel.z * 0.032);
-          float maxDrag = ${isHair ? '0.16' : '0.095'};
+          vec3 drag = vec3(-uMoveVel.x * 0.024, 0.0, -uMoveVel.z * 0.026);
+          float maxDrag = ${isHair ? '0.085' : '0.065'};
           float dragLen = length(drag);
           if (dragLen > maxDrag) {
             drag *= maxDrag / dragLen;
@@ -208,12 +227,12 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
           float radLen = length(radialDir);
           vec2 outXZ = radLen > 0.005 ? radialDir / radLen : vec2(0.0, -1.0);
 
-          float outPush = (0.012 + 0.016 * breeze) * (0.35 + uWindStrength * 0.65 + amp);
+          float outPush = (0.006 + 0.008 * breeze) * (0.35 + uWindStrength * 0.65 + amp);
           ${isHair
-            ? `transformed.x += (breeze * 0.020 * (0.4 + amp) + drag.x - uTurnVel * 0.014) * wCurve;
-               transformed.z += (ripple * 0.016 * (0.4 + amp) + drag.z - abs(uTurnVel) * 0.008) * wCurve;`
-            : `transformed.x += (outXZ.x * max(0.0, outPush) + ripple * 0.011 * (0.3 + amp) + drag.x - uTurnVel * 0.012) * wCurve;
-               transformed.z += (outXZ.y * max(0.0, outPush) + breeze * 0.011 * (0.3 + amp) + drag.z) * wCurve;`
+            ? `transformed.x += (breeze * 0.009 * (0.4 + amp) + drag.x - uTurnVel * 0.008) * wCurve;
+               transformed.z += (ripple * 0.007 * (0.4 + amp) + drag.z - abs(uTurnVel) * 0.005) * wCurve;`
+            : `transformed.x += (outXZ.x * max(0.0, outPush) + ripple * 0.006 * (0.3 + amp) + drag.x * dampRide - uTurnVel * 0.007 * dampRide) * wCurve;
+               transformed.z += (outXZ.y * max(0.0, outPush) + breeze * 0.006 * (0.3 + amp) + drag.z * dampRide) * wCurve;`
           }
         }
         ` : ''}
@@ -231,13 +250,12 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
         vCharWorldPos = charWp.xyz;
 
         vec3 charLocalN = objectNormal;
-        vec3 charSmoothLocal = length(aSmoothNormal) > 0.01 ? normalize(aSmoothNormal) : objectNormal;
         #ifdef USE_INSTANCING
           charLocalN = mat3(instanceMatrix) * charLocalN;
-          charSmoothLocal = mat3(instanceMatrix) * charSmoothLocal;
         #endif
-        vCharWorldNormal = normalize(mat3(modelMatrix) * charLocalN);
-        vCharSmoothNormal = normalize(mat3(modelMatrix) * charSmoothLocal);
+        vec3 charWorldN = mat3(modelMatrix) * charLocalN;
+        vCharWorldNormal = length(charWorldN) > 1e-5 ? normalize(charWorldN) : vec3(0.0, 1.0, 0.0);
+        vCharViewNormal = length(transformedNormal) > 1e-5 ? normalize(transformedNormal) : vec3(0.0, 0.0, 1.0);
         vCharSway = clamp(aSwayWeight, 0.0, 1.0);
 
         #ifdef USE_UV
@@ -267,7 +285,7 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
 
         varying vec3 vCharWorldPos;
         varying vec3 vCharWorldNormal;
-        varying vec3 vCharSmoothNormal;
+        varying vec3 vCharViewNormal;
         varying vec2 vCharUv;
         varying float vCharSway;
         `
@@ -278,11 +296,11 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
         #include <map_fragment>
         ${isFace ? /* glsl */ `
         if (uHasBlinkMap > 0.5 && uBlink > 0.002) {
-          // Ventana UV simétrica de ambos ojos en el atlas 1024x1024
-          float dxL = abs(vCharUv.x - 0.316);
-          float dxR = abs(vCharUv.x - 0.684);
+          // Ventana UV simétrica sincronizada con FACE_UV (eyeUL, eyeUR, eyeV)
+          float dxL = abs(vCharUv.x - ${eyeUL});
+          float dxR = abs(vCharUv.x - ${eyeUR});
           float dxEye = min(dxL, dxR);
-          float dyEye = abs(vCharUv.y - 0.485);
+          float dyEye = abs(vCharUv.y - ${eyeV});
           if (dxEye < 0.095 && dyEye < 0.085) {
             float maskX = 1.0 - smoothstep(0.068, 0.095, dxEye);
             float maskY = 1.0 - smoothstep(0.056, 0.085, dyEye);
@@ -301,42 +319,44 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
         vec3 charV = normalize(cameraPosition - vCharWorldPos);
         vec3 charN = normalize(vCharWorldNormal);
         if (!gl_FrontFacing) charN = -charN;
-        vec3 charSmoothN = normalize(vCharSmoothNormal);
-        if (!gl_FrontFacing) charSmoothN = -charSmoothN;
         vec3 charMoonDir = normalize(uMoonDir);
         float nightF = clamp(uNightFactor, 0.0, 1.0);
 
         ${isSkin ? /* glsl */ `
-        // Sombreado facial suavizado tipo anime/RPG 3D (sin sombras duras en nariz ni gris sucio)
-        float ndl = dot(charSmoothN, charMoonDir) * 0.5 + 0.5;
-        float shadowBand = 1.0 - smoothstep(0.32, 0.64, ndl);
-        vec3 warmSkinShadow = diffuseColor.rgb * mix(vec3(0.95, 0.74, 0.75), uShadowTint, 0.55);
-        vec3 nightLift = mix(vec3(0.0), vec3(0.055, 0.025, 0.065), nightF);
-        outgoingLight = mix(outgoingLight, max(outgoingLight * 0.82, warmSkinShadow + nightLift), shadowBand * 0.65);
+        // Iluminación retrato anime/RPG cálida y luminosa (normales ya suavizadas en vertex shader)
+        float hemiT = charN.y * 0.5 + 0.5;
+        vec3 portraitHemi = mix(vec3(0.94, 0.77, 0.76), vec3(0.97, 0.89, 0.93), hemiT);
+        vec3 portraitFill = diffuseColor.rgb * portraitHemi * mix(0.20, 0.38, nightF);
+
+        float ndl = dot(charN, charMoonDir) * 0.5 + 0.5;
+        float shadowBand = 1.0 - smoothstep(0.28, 0.62, ndl);
+        vec3 warmSkinShadow = diffuseColor.rgb * mix(vec3(0.96, 0.75, 0.76), uShadowTint, 0.42);
+        outgoingLight = max(outgoingLight, portraitFill * 0.85);
+        outgoingLight = mix(outgoingLight, max(outgoingLight, warmSkinShadow * 0.56 + portraitFill * 0.48), shadowBand * 0.72);
+        outgoingLight += portraitFill * 0.32;
 
         ${isFace ? /* glsl */ `
-        // Legibilidad nocturna suave solo en la zona del iris/ojos sin quemar bloom
-        float fDx = min(abs(vCharUv.x - 0.316), abs(vCharUv.x - 0.684));
-        float fDy = abs(vCharUv.y - 0.485);
-        float irisWin = (1.0 - smoothstep(0.036, 0.066, fDx)) * (1.0 - smoothstep(0.032, 0.058, fDy));
-        outgoingLight += diffuseColor.rgb * irisWin * (1.0 - clamp(uBlink, 0.0, 1.0)) * mix(0.10, 0.24, nightF);
+        // Lift unlit controlado en región frontal/ocular (iris zafiro, pestañas y catchlights nítidos)
+        float fDx = min(abs(vCharUv.x - ${eyeUL}), abs(vCharUv.x - ${eyeUR}));
+        float fDy = abs(vCharUv.y - ${eyeV});
+        float irisWin = (1.0 - smoothstep(0.036, 0.072, fDx)) * (1.0 - smoothstep(0.030, 0.062, fDy));
+        outgoingLight += diffuseColor.rgb * irisWin * (1.0 - clamp(uBlink, 0.0, 1.0)) * mix(0.26, 0.30, nightF);
         ` : ''}
 
-        // Rim light lunar delicado en bordes de rostro/brazos, atenuado en el centro frontal
-        float skinFresnel = pow(1.0 - max(dot(charSmoothN, charV), 0.0), 3.2);
-        float skinMoonFace = 0.38 + 0.62 * max(dot(charSmoothN, charMoonDir), 0.0);
-        outgoingLight += skinFresnel * skinMoonFace * (0.14 + 0.22 * nightF) * uSheenCol;
+        // Rim light lunar delicado en bordes
+        float skinFresnel = pow(1.0 - max(dot(charN, charV), 0.0), 3.4);
+        outgoingLight += skinFresnel * 0.22 * uSheenCol;
 
         // Soft-clamp estricto anti-bloom en piel (< 0.775)
         float skinLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
-        if (skinLum > 0.58) {
-          float targetLum = 0.58 + (skinLum - 0.58) / (1.0 + (skinLum - 0.58) * 5.2);
+        if (skinLum > 0.56) {
+          float targetLum = 0.56 + (skinLum - 0.56) / (1.0 + (skinLum - 0.56) * 4.65);
           outgoingLight *= min(1.0, min(targetLum, 0.775) / max(skinLum, 1e-4));
         }
         ` : ''}
 
         ${isEyes ? /* glsl */ `
-        outgoingLight += diffuseColor.rgb * mix(0.12, 0.24, nightF);
+        outgoingLight += diffuseColor.rgb * mix(0.16, 0.28, nightF);
         float eyeLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
         if (eyeLum > 0.78) {
           outgoingLight *= 0.78 / eyeLum;
@@ -344,69 +364,112 @@ export function createCharacterMaterial(preset, params = {}, motionUniforms = nu
         ` : ''}
 
         ${isHair ? /* glsl */ `
-        // Banda especular anisotrópica "Angel Ring" + hebras finas y sombra cálida
-        vec3 hairT = normalize(vec3(0.0, 1.0, 0.0) - charN * charN.y + vec3(1e-4));
-        vec3 hairH = normalize(charMoonDir + charV);
-        float tDotH = dot(hairT, hairH);
-        float strandShift = (sin(vCharUv.x * 46.0) * 0.06 + cos(vCharUv.x * 19.0) * 0.04);
-        float angelBand = exp(-pow((tDotH - 0.22 + strandShift) * 5.8, 2.0));
-        float crownMask = smoothstep(0.08, 0.42, 1.0 - vCharUv.y) * smoothstep(0.0, 0.28, vCharUv.y);
-        float strandNoise = 0.74 + 0.26 * sin(vCharUv.x * 78.0 + vCharUv.y * 6.0);
-        outgoingLight += angelBand * crownMask * strandNoise * mix(0.24, 0.34, nightF) * uSheenCol * (0.45 + 0.55 * diffuseColor.rgb);
+        // Lift nocturno cálido para rubio champagne y caoba cálida en castaño oscuro
+        float hairLiftAmt = mix(0.26, 0.40, nightF);
+        outgoingLight += diffuseColor.rgb * hairLiftAmt;
 
         float hairLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
-        float hairDarkMask = 1.0 - smoothstep(0.04, 0.36, hairLum);
-        outgoingLight = mix(outgoingLight, max(outgoingLight, diffuseColor.rgb * uShadowTint * 0.85), 0.30 * nightF * hairDarkMask);
+        float hairDarkMask = 1.0 - smoothstep(0.03, 0.34, hairLum);
+        vec3 mahoganyLift = diffuseColor.rgb * vec3(1.28, 0.96, 0.86) * 0.48 + vec3(0.038, 0.018, 0.012);
+        outgoingLight = mix(outgoingLight, max(outgoingLight, mahoganyLift), (0.28 + 0.34 * nightF) * hairDarkMask);
 
-        float hairRim = pow(1.0 - max(dot(charN, charV), 0.0), 2.7);
-        outgoingLight += hairRim * (0.20 + 0.28 * nightF) * uSheenCol * (0.4 + 0.6 * diffuseColor.rgb);
+        // Banda especular anisotrópica "Angel Ring" en espacio de vista + hebras finas
+        vec3 hairViewN = normalize(vCharViewNormal);
+        if (!gl_FrontFacing) hairViewN = -hairViewN;
+        vec3 hairViewT = normalize(vec3(0.0, 1.0, 0.0) - hairViewN * hairViewN.y + vec3(1e-4, 0.0, 0.0));
+        vec3 hairViewMoon = normalize((viewMatrix * vec4(charMoonDir, 0.0)).xyz);
+        vec3 hairViewH = normalize(hairViewMoon * 0.55 + vec3(0.0, 0.35, 0.85));
+        float tDotH = dot(hairViewT, hairViewH);
+        float strandShift = (sin(vCharUv.x * 44.0) * 0.045 + cos(vCharUv.x * 18.0) * 0.03);
+        float angelBand = exp(-pow((tDotH - 0.18 + strandShift) * 5.2, 2.0));
+        float crownMask = smoothstep(0.08, 0.42, 1.0 - vCharUv.y) * smoothstep(0.0, 0.28, vCharUv.y);
+        float strandNoise = 0.78 + 0.22 * sin(vCharUv.x * 74.0 + vCharUv.y * 5.0);
+        outgoingLight += angelBand * crownMask * strandNoise * mix(0.20, 0.30, nightF) * uSheenCol * (0.45 + 0.55 * diffuseColor.rgb);
 
+        // Rim dorado-lunar suave
+        float hairRim = pow(1.0 - max(dot(charN, charV), 0.0), 2.8);
+        vec3 goldenLunarRim = mix(vec3(1.0, 0.90, 0.70), uSheenCol, 0.5);
+        outgoingLight += hairRim * (0.18 + 0.24 * nightF) * goldenLunarRim * (0.40 + 0.60 * diffuseColor.rgb);
+
+        // Soft-clamp estricto anti-bloom en cabello (< 0.78)
         float finalHairLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
-        if (finalHairLum > 0.78) {
-          outgoingLight *= (0.78 + (finalHairLum - 0.78) * 0.18) / finalHairLum;
+        if (finalHairLum > 0.58) {
+          float targetHairLum = 0.58 + (finalHairLum - 0.58) / (1.0 + (finalHairLum - 0.58) * 5.0);
+          outgoingLight *= min(1.0, min(targetHairLum, 0.78) / max(finalHairLum, 1e-4));
         }
         ` : ''}
 
         ${(isSilk || isVelvet) ? /* glsl */ `
-        // Sheen de seda satinada o terciopelo profundo + sombra enriquecida en pliegues
+        // Sheen satinado/terciopelo en pliegues + fill nocturno para rosas pastel y azul medianoche saturado
         float clothNdotV = max(dot(charN, charV), 0.0);
-        float sheenPower = ${isVelvet ? '2.1' : '2.9'};
+        float sheenPower = ${isVelvet ? '2.2' : '2.8'};
         float clothFresnel = pow(1.0 - clothNdotV, sheenPower);
-        float moonAlign = 0.35 + 0.65 * max(dot(charN, charMoonDir), 0.0);
-        outgoingLight += clothFresnel * moonAlign * uSheenStrength * (0.35 + 0.65 * nightF) * mix(diffuseColor.rgb, uSheenCol, 0.55);
+        float moonAlign = 0.45 + 0.55 * max(dot(charN, charMoonDir), 0.0);
+        outgoingLight += clothFresnel * moonAlign * uSheenStrength * (0.35 + 0.65 * nightF) * mix(diffuseColor.rgb, uSheenCol, 0.48);
 
         float cLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
-        float cDarkMask = 1.0 - smoothstep(0.02, 0.34, cLum);
-        outgoingLight = mix(outgoingLight, max(outgoingLight, diffuseColor.rgb * uShadowTint * 1.15), 0.24 * nightF * cDarkMask);
+        float cDarkMask = 1.0 - smoothstep(0.02, 0.42, cLum);
+        vec3 clothFillBase = ${isVelvet
+          ? 'max(diffuseColor.rgb * 0.42, diffuseColor.rgb * 0.30 + uSheenCol * 0.045)'
+          : 'diffuseColor.rgb * 0.34'};
+        outgoingLight += clothFillBase * mix(0.32, 1.0, nightF) * (0.45 + 0.55 * cDarkMask);
+        outgoingLight = mix(outgoingLight, max(outgoingLight, diffuseColor.rgb * mix(vec3(0.85), uShadowTint, 0.35) * 0.52), 0.28 * nightF * cDarkMask);
+
+        // Soft-clamp estricto anti-bloom en telas (< 0.79)
+        float finalClothLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
+        if (finalClothLum > 0.60) {
+          float targetClothLum = 0.60 + (finalClothLum - 0.60) / (1.0 + (finalClothLum - 0.60) * 5.26);
+          outgoingLight *= min(1.0, min(targetClothLum, 0.79) / max(finalClothLum, 1e-4));
+        }
         ` : ''}
 
         ${isTulle ? /* glsl */ `
-        // Tul estelar: más visible en siluetas Fresnel, translúcido en el centro + polvo estelar animado
+        // Tul estelar: transparencia Fresnel limpia (0.14 centro -> 0.42 silueta) + micro-destellos finos
         float tNdotV = max(dot(charN, charV), 0.0);
-        float tFresnel = pow(1.0 - tNdotV, 2.2);
-        diffuseColor.a = clamp(diffuseColor.a * (0.36 + tFresnel * 1.35), 0.12, 0.88);
-        outgoingLight += tFresnel * uSheenCol * uSheenStrength * (0.32 + 0.68 * nightF);
+        float tFresnel = pow(1.0 - tNdotV, 2.3);
+        diffuseColor.a = mix(0.14, 0.42, tFresnel);
+        outgoingLight += (diffuseColor.rgb * 0.22 + tFresnel * uSheenCol * uSheenStrength * 0.75) * (0.35 + 0.65 * nightF);
 
-        vec2 cell = floor(vCharUv * vec2(58.0, 42.0) * uSparkleDensity);
-        vec2 fCell = fract(vCharUv * vec2(58.0, 42.0) * uSparkleDensity) - 0.5;
+        vec2 cell = floor(vCharUv * vec2(120.0, 88.0) * uSparkleDensity);
+        vec2 fCell = fract(vCharUv * vec2(120.0, 88.0) * uSparkleDensity) - 0.5;
         float h = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
-        if (h > 0.90) {
+        if (h > 0.945) {
           float tw = 0.5 + 0.5 * sin(uTime * 3.4 + h * 40.0 + dot(charV, vec3(4.0, 3.0, 5.0)));
-          float starDot = exp(-dot(fCell, fCell) * 28.0);
-          float sparkle = starDot * tw * smoothstep(0.90, 0.99, h);
-          outgoingLight += vec3(1.0, 0.88, 0.98) * sparkle * (0.75 + 0.55 * nightF);
-          diffuseColor.a = max(diffuseColor.a, sparkle * 0.85);
+          float starDot = exp(-dot(fCell, fCell) * 68.0);
+          float sparkle = starDot * tw * smoothstep(0.945, 0.995, h);
+          outgoingLight += vec3(1.0, 0.90, 0.98) * sparkle * (0.42 + 0.30 * nightF);
+          diffuseColor.a = max(diffuseColor.a, sparkle * 0.62);
+        }
+
+        float finalTulleLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
+        if (finalTulleLum > 0.79) {
+          outgoingLight *= 0.79 / finalTulleLum;
         }
         ` : ''}
 
         ${isGold ? /* glsl */ `
-        float goldFresnel = pow(1.0 - max(dot(charN, charV), 0.0), 2.8);
-        outgoingLight += goldFresnel * vec3(1.0, 0.88, 0.64) * (0.18 + 0.22 * nightF);
+        float goldNdotV = max(dot(charN, charV), 0.0);
+        float goldFresnel = pow(1.0 - goldNdotV, 2.6);
+        float goldLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
+        float goldDarkMask = 1.0 - smoothstep(0.04, 0.38, goldLum);
+        vec3 satinGoldShadow = max(diffuseColor.rgb * vec3(0.68, 0.54, 0.32), vec3(0.18, 0.13, 0.06));
+        outgoingLight = mix(outgoingLight, max(outgoingLight, satinGoldShadow), (0.35 + 0.35 * nightF) * goldDarkMask);
+        outgoingLight += goldFresnel * vec3(1.0, 0.88, 0.64) * (0.16 + 0.18 * nightF);
+
+        float finalGoldLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
+        if (finalGoldLum > 0.78) {
+          outgoingLight *= 0.78 / finalGoldLum;
+        }
         ` : ''}
 
         ${isGem ? /* glsl */ `
-        float gemFresnel = pow(1.0 - max(dot(charN, charV), 0.0), 2.4);
-        outgoingLight += gemFresnel * uSheenCol * (0.28 + 0.34 * nightF);
+        float gemFresnel = pow(1.0 - max(dot(charN, charV), 0.0), 2.2);
+        outgoingLight += gemFresnel * uSheenCol * (0.30 + 0.36 * nightF);
+        float gemLum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
+        if (gemLum > 0.88) {
+          float targetGemLum = 0.88 + (gemLum - 0.88) / (1.0 + (gemLum - 0.88) * 5.0);
+          outgoingLight *= min(targetGemLum, 1.08) / gemLum;
+        }
         ` : ''}
 
         #include <opaque_fragment>
