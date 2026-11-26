@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { WorldThemes } from '../world/WorldThemes.js';
 import { StarrySkySystem } from '../world/StarrySkySystem.js';
 
@@ -285,6 +286,45 @@ export function buildProceduralEnvironment(renderer, themeKey = 'night', pmremGe
   return envRT;
 }
 
+const LumenGradeShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uNightFactor: GraphicsSync.uNightFactor,
+    uTime: GraphicsSync.uTime
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float uNightFactor;
+    uniform float uTime;
+    varying vec2 vUv;
+
+    void main() {
+      vec4 texel = texture2D(tDiffuse, vUv);
+      vec3 c = texel.rgb;
+
+      c = mix(c, c * c * (3.0 - 2.0 * c), mix(0.05, 0.16, uNightFactor));
+      float lum = dot(c, vec3(0.25, 0.60, 0.15));
+      c = mix(vec3(lum), c, mix(1.02, 1.10, uNightFactor));
+      c += vec3(0.0, 0.002, 0.008) * uNightFactor;
+
+      vec2 p = vUv * 2.0 - 1.0;
+      c *= 1.0 - mix(0.08, 0.22, uNightFactor) * smoothstep(0.45, 1.5, length(p * vec2(0.9, 1.0)));
+
+      float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy + fract(uTime) * 19.0, vec2(0.06711056, 0.00583715))));
+      c += (ign - 0.5) / 255.0;
+
+      gl_FragColor = vec4(clamp(c, 0.0, 1.0), texel.a);
+    }
+  `
+};
+
 /**
  * Motor 3D principal: WebGLRenderer HDR/MSAA, PMREM procedural, sombras texel-snapped y postprocesado.
  */
@@ -296,6 +336,7 @@ export class Engine {
   #composer = null;
   #composerRT = null;
   #bloomPass = null;
+  #gradePass = null;
   #pmremGenerator = null;
   #envRT = null;
   #currentEnvKey = 'night';
@@ -446,6 +487,8 @@ export class Engine {
       pixelRatio: this.#renderer.getPixelRatio()
     });
     this.#starrySky.init();
+    const viewHeight = (this.#container.clientHeight || window.innerHeight) * this.#renderer.getPixelRatio();
+    this.#starrySky.setViewportHeight(viewHeight);
 
     // Motas mágicas ambientales flotantes
     const moteCount = 240;
@@ -512,6 +555,12 @@ export class Engine {
     this.#bloomPass.radius = 0.62;
     this.#composer.addPass(this.#bloomPass);
     this.#composer.addPass(new OutputPass());
+
+    this.#gradePass = new ShaderPass(LumenGradeShader);
+    // ShaderPass clona uniforms con UniformsUtils.clone; re-enlazar referencias vivas a GraphicsSync
+    this.#gradePass.uniforms.uNightFactor = GraphicsSync.uNightFactor;
+    this.#gradePass.uniforms.uTime = GraphicsSync.uTime;
+    this.#composer.addPass(this.#gradePass);
   }
 
   #updateBloomSize(width, height) {
@@ -600,6 +649,7 @@ export class Engine {
     }
 
     this.#starrySky?.setQuality(quality, pixelRatio);
+    this.#starrySky?.setViewportHeight(height * pixelRatio);
     this.#starrySky?.syncToCamera(this.#camera);
 
     if (this.#scene.fog) {
@@ -915,6 +965,7 @@ export class Engine {
     const pixelRatio = Math.min(window.devicePixelRatio || 1, profile.maxPixelRatio);
     this.#renderer.setPixelRatio(pixelRatio);
     this.#starrySky?.setPixelRatio(pixelRatio);
+    this.#starrySky?.setViewportHeight(height * pixelRatio);
     this.#camera.aspect = width / height;
     this.#camera.updateProjectionMatrix();
     this.#renderer.setSize(width, height);
@@ -943,6 +994,8 @@ export class Engine {
     this.#composerRT?.dispose();
     this.#composerRT = null;
     this.#pmremGenerator?.dispose();
+    this.#gradePass?.dispose?.();
+    this.#gradePass = null;
     this.#composer?.dispose();
     this.#renderer?.dispose();
     if (this.#renderer?.domElement?.parentNode) {

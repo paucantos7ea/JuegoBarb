@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SpringValue } from '../core/SpringValue.js';
 import { GraphicsSync, createContactShadow } from '../core/Engine.js';
+import { bakeProceduralVertexAO, createLumenMaterial, ensureVertexColors } from '../core/LumenArtPipeline.js';
 import {
   HORSE_BODY_Y,
   TORSO_Z_MIN,
@@ -292,30 +293,49 @@ function flipGeometry(geo) {
   geo.computeVertexNormals();
 }
 
-/** Fusiona geometrías (indexadas o no) con position/normal/uv en una sola indexada. */
+/** Fusiona geometrías (indexadas o no) con position/normal/uv/(color) en una sola indexada. */
 function mergeGeos(list) {
   let vCount = 0;
   let iCount = 0;
+  let hasColor = false;
   const parts = [];
   for (const g of list) {
     const pos = g.attributes.position;
     if (!g.attributes.normal) g.computeVertexNormals();
+    const colorAttr = g.attributes.color;
+    if (colorAttr) hasColor = true;
     const count = pos.count;
     const index = g.index ? g.index.array : null;
-    parts.push({ g, count, index });
+    parts.push({ g, count, index, colorAttr });
     vCount += count;
     iCount += index ? index.length : count;
   }
   const P = new Float32Array(vCount * 3);
   const N = new Float32Array(vCount * 3);
   const U = new Float32Array(vCount * 2);
+  const C = hasColor ? new Float32Array(vCount * 3) : null;
   const I = new Uint32Array(iCount);
   let vo = 0;
   let io = 0;
-  for (const { g, count, index } of parts) {
+  for (const { g, count, index, colorAttr } of parts) {
     P.set(g.attributes.position.array.subarray(0, count * 3), vo * 3);
     N.set(g.attributes.normal.array.subarray(0, count * 3), vo * 3);
     if (g.attributes.uv) U.set(g.attributes.uv.array.subarray(0, count * 2), vo * 2);
+    if (C) {
+      if (colorAttr && colorAttr.itemSize === 3) {
+        C.set(colorAttr.array.subarray(0, count * 3), vo * 3);
+      } else if (colorAttr) {
+        const arr = colorAttr.array;
+        const stride = colorAttr.itemSize;
+        for (let k = 0; k < count; k++) {
+          C[(vo + k) * 3] = arr[k * stride];
+          C[(vo + k) * 3 + 1] = arr[k * stride + 1];
+          C[(vo + k) * 3 + 2] = arr[k * stride + 2];
+        }
+      } else {
+        C.fill(1, vo * 3, (vo + count) * 3);
+      }
+    }
     if (index) {
       for (let i = 0; i < index.length; i++) I[io++] = index[i] + vo;
     } else {
@@ -328,6 +348,7 @@ function mergeGeos(list) {
   geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+  if (C) geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
   geo.setIndex(new THREE.BufferAttribute(I, 1));
   geo.computeBoundingSphere();
   return geo;
@@ -914,6 +935,20 @@ function acquireSharedGeometries() {
     rein,
     halo: new THREE.RingGeometry(0.72, 0.92, 40)
   };
+
+  const bodyAO = { aoStrength: 0.34, undersideWeight: 0.46, cavityWeight: 0.24, baseWeight: 0.22, shadowTint: 0x2a1d4a, ridgeHighlight: 0.10 };
+  for (const key of ['torso', 'neck', 'head', 'frontUpper', 'hindUpper', 'frontLower', 'hindLower', 'foot', 'tailDock']) {
+    if (_sharedGeos[key]) bakeProceduralVertexAO(_sharedGeos[key], bodyAO);
+  }
+  const hairAO = { aoStrength: 0.38, baseWeight: 0.36, cavityWeight: 0.34, shadowTint: 0x281b44, ridgeHighlight: 0.12 };
+  for (const key of ['mane', 'forelock', 'tailHair1', 'tailHair2', 'tailHair3']) {
+    if (_sharedGeos[key]) bakeProceduralVertexAO(_sharedGeos[key], hairAO);
+  }
+  const tackAO = { aoStrength: 0.30, shadowTint: 0x2a1940 };
+  for (const key of ['blanket', 'leather', 'muzzle']) {
+    if (_sharedGeos[key]) bakeProceduralVertexAO(_sharedGeos[key], tackAO);
+  }
+
   return _sharedGeos;
 }
 
@@ -968,25 +1003,55 @@ function acquireMaterials(variant) {
   if (!entry) {
     const std = (o) => new THREE.MeshStandardMaterial(o);
     const coatTex = getHorseCoatTexture();
-    const gemMat = std({ color: variant.eye, emissive: variant.eye, emissiveIntensity: 1.45, roughness: 0.16, metalness: 0.25 });
+    const gemMat = createLumenMaterial(
+      { color: variant.eye, emissive: variant.eye, emissiveIntensity: 1.45, roughness: 0.16, metalness: 0.25 },
+      { preserveRoughness: true, rimStrength: 0.45, rimPower: 2.5, rimTint: 0xffe8fb, heightFog: false, cacheTag: `horse_gem_${variant.id}` }
+    );
     gemMat.userData.preserveRoughness = true;
-    const coatMat = std({ map: coatTex, color: variant.coat, roughness: 0.40, metalness: 0.04 });
+    const coatMat = createLumenMaterial(
+      { map: coatTex, color: variant.coat, roughness: 0.40, metalness: 0.04, vertexColors: true },
+      { preserveRoughness: true, rimStrength: 0.38, rimPower: 2.8, rimTint: 0xffe0f2, shadowLiftColor: 0x2b1d4a, shadowLiftStrength: 0.15, heightFog: false, cacheTag: `horse_coat_${variant.id}` }
+    );
     coatMat.userData.preserveRoughness = true;
     entry = {
       refs: 0,
       mats: {
         coat: coatMat,
-        muzzle: std({ color: variant.muzzle, roughness: 0.62, metalness: 0.0 }),
-        mane: std({ color: variant.mane, roughness: 0.38, metalness: 0.06, side: THREE.DoubleSide }),
-        hooves: std({ color: variant.hooves, roughness: 0.20, metalness: 0.38 }),
-        saddle: std({ color: variant.saddle, roughness: 0.48, metalness: 0.06, side: THREE.DoubleSide }),
-        leather: std({ color: variant.leather, roughness: 0.38, metalness: 0.08 }),
-        trim: std({ color: variant.trim, roughness: 0.22, metalness: 0.88 }),
+        muzzle: createLumenMaterial(
+          { color: variant.muzzle, roughness: 0.62, metalness: 0.0, vertexColors: true },
+          { rimStrength: 0.30, rimPower: 3.0, rimTint: 0xffe0f2, shadowLiftColor: 0x2b1d4a, shadowLiftStrength: 0.15, heightFog: false, cacheTag: `horse_muzzle_${variant.id}` }
+        ),
+        mane: createLumenMaterial(
+          { color: variant.mane, roughness: 0.38, metalness: 0.06, side: THREE.DoubleSide, vertexColors: true },
+          { rimStrength: 0.42, rimPower: 2.6, rimTint: 0xffd8f0, shadowLiftColor: 0x281b44, shadowLiftStrength: 0.14, heightFog: false, cacheTag: `horse_mane_${variant.id}` }
+        ),
+        hooves: createLumenMaterial(
+          { color: variant.hooves, roughness: 0.20, metalness: 0.38, vertexColors: true },
+          { rimStrength: 0.28, rimPower: 3.2, rimTint: 0xffe4d8, shadowLiftColor: 0x281c44, shadowLiftStrength: 0.12, heightFog: false, cacheTag: `horse_hooves_${variant.id}` }
+        ),
+        saddle: createLumenMaterial(
+          { color: variant.saddle, roughness: 0.48, metalness: 0.06, side: THREE.DoubleSide, vertexColors: true },
+          { rimStrength: 0.34, rimPower: 2.9, rimTint: 0xffcce8, shadowLiftColor: 0x2a1940, shadowLiftStrength: 0.15, heightFog: false, cacheTag: `horse_saddle_${variant.id}` }
+        ),
+        leather: createLumenMaterial(
+          { color: variant.leather, roughness: 0.38, metalness: 0.08, vertexColors: true },
+          { rimStrength: 0.30, rimPower: 3.0, rimTint: 0xffd8e8, shadowLiftColor: 0x2a1940, shadowLiftStrength: 0.14, heightFog: false, cacheTag: `horse_leather_${variant.id}` }
+        ),
+        trim: createLumenMaterial(
+          { color: variant.trim, roughness: 0.22, metalness: 0.88, vertexColors: true },
+          { rimStrength: 0.36, rimPower: 2.8, rimTint: 0xfff0d4, shadowLiftColor: 0x2a1d4a, shadowLiftStrength: 0.12, heightFog: false, cacheTag: `horse_trim_${variant.id}` }
+        ),
         gem: gemMat,
         eyeWhite: std({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.18, roughness: 0.18 }),
         iris: std({ color: variant.eye, emissive: variant.eye, emissiveIntensity: 0.35, roughness: 0.15, metalness: 0.08 }),
-        dark: std({ color: 0x18121c, roughness: 0.22, metalness: 0.05 }),
-        earInner: std({ color: 0xf6b6c8, roughness: 0.7, metalness: 0.0 })
+        dark: createLumenMaterial(
+          { color: 0x18121c, roughness: 0.22, metalness: 0.05 },
+          { rimStrength: 0.15, rimPower: 3.5, rimTint: 0xd4e8ff, shadowLiftColor: 0x201830, shadowLiftStrength: 0.10, heightFog: false, cacheTag: `horse_dark_${variant.id}` }
+        ),
+        earInner: createLumenMaterial(
+          { color: 0xf6b6c8, roughness: 0.7, metalness: 0.0 },
+          { rimStrength: 0.22, rimPower: 3.2, rimTint: 0xffd6ec, shadowLiftColor: 0x2b1d4a, shadowLiftStrength: 0.14, heightFog: false, cacheTag: `horse_ear_${variant.id}` }
+        )
       }
     };
     _matCache.set(variant.id, entry);
@@ -1215,6 +1280,7 @@ export function createHorseModel(variantId = 'imperial_white') {
       releaseSharedGeometries();
     }
   };
+  ensureVertexColors(root, { aoStrength: 0.20, shadowTint: 0x281c44 });
   updateHorseReins(model, null);
   return model;
 }

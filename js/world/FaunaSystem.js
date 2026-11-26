@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { getSharedContactShadowTexture } from '../core/Engine.js';
+import { bakeProceduralVertexAO, createLumenMaterial, ensureVertexColors } from '../core/LumenArtPipeline.js';
 
 const NEAR_LOD_DIST_SQ = 45 * 45; // 2025: < 45u anima a 60 Hz
 const FAR_LOD_DIST_SQ = 85 * 85;  // 7225: 45-85u a 1/3 fotogramas; > 85u en pausa
@@ -140,6 +141,7 @@ export class FaunaSystem {
     this.#buildKoiFish();
     this.#buildFireflies();
 
+    ensureVertexColors(this.#root, { aoStrength: 0.22, shadowTint: 0x281c4a });
     this.#scene.add(this.#root);
   }
 
@@ -182,6 +184,17 @@ export class FaunaSystem {
     return mat;
   }
 
+  #lumenMat(baseParams, lumenOverrides = null) {
+    return this.#trackMat(createLumenMaterial(baseParams, {
+      rimStrength: 0.34,
+      rimPower: 2.9,
+      rimTint: 0xd4e8ff,
+      shadowLiftColor: 0x281c4a,
+      heightFogStrength: 0.14,
+      ...lumenOverrides
+    }));
+  }
+
   #trackInst(inst) {
     this.#instancedMeshes.push(inst);
     return inst;
@@ -211,6 +224,7 @@ export class FaunaSystem {
   #mergeGeometries(pieces) {
     const normalized = [];
     let totalVerts = 0;
+    let hasColor = false;
 
     for (const { geo: srcGeo, matrix } of pieces) {
       const g = srcGeo.index ? srcGeo.toNonIndexed() : srcGeo.clone();
@@ -224,6 +238,8 @@ export class FaunaSystem {
       if (!g.getAttribute('uv')) {
         g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(count * 2), 2));
       }
+      const colorAttr = g.getAttribute('color');
+      if (colorAttr) hasColor = true;
 
       if (matrix.determinant() < 0) {
         const pos = g.getAttribute('position');
@@ -233,6 +249,9 @@ export class FaunaSystem {
           this.#swapAttrPair(pos, v + 1, v + 2, 3);
           this.#swapAttrPair(norm, v + 1, v + 2, 3);
           this.#swapAttrPair(uv, v + 1, v + 2, 2);
+          if (colorAttr) {
+            this.#swapAttrPair(colorAttr, v + 1, v + 2, colorAttr.itemSize);
+          }
         }
       }
 
@@ -243,13 +262,16 @@ export class FaunaSystem {
     const posArr = new Float32Array(totalVerts * 3);
     const normArr = new Float32Array(totalVerts * 3);
     const uvArr = new Float32Array(totalVerts * 2);
+    const colorArr = hasColor ? new Float32Array(totalVerts * 3) : null;
 
     let offset3 = 0;
     let offset2 = 0;
+    let colorOffset3 = 0;
     for (const g of normalized) {
       const p = g.getAttribute('position');
       const n = g.getAttribute('normal');
       const u = g.getAttribute('uv');
+      const col = g.getAttribute('color');
       const c = p.count;
 
       for (let i = 0; i < c; i++) {
@@ -265,6 +287,19 @@ export class FaunaSystem {
         uvArr[offset2] = u.getX(i);
         uvArr[offset2 + 1] = u.getY(i);
         offset2 += 2;
+
+        if (colorArr) {
+          if (col) {
+            colorArr[colorOffset3] = col.getX(i);
+            colorArr[colorOffset3 + 1] = col.getY(i);
+            colorArr[colorOffset3 + 2] = col.getZ(i);
+          } else {
+            colorArr[colorOffset3] = 1;
+            colorArr[colorOffset3 + 1] = 1;
+            colorArr[colorOffset3 + 2] = 1;
+          }
+          colorOffset3 += 3;
+        }
       }
       g.dispose();
     }
@@ -273,6 +308,9 @@ export class FaunaSystem {
     merged.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
     merged.setAttribute('normal', new THREE.BufferAttribute(normArr, 3));
     merged.setAttribute('uv', new THREE.BufferAttribute(uvArr, 2));
+    if (colorArr) {
+      merged.setAttribute('color', new THREE.BufferAttribute(colorArr, 3));
+    }
     merged.computeBoundingSphere();
     return merged;
   }
@@ -337,16 +375,17 @@ export class FaunaSystem {
     const leftWingGeo = this.#trackGeo(rightWingGeo.clone());
     leftWingGeo.scale(-1, 1, 1);
 
-    const bodyMat = this.#trackMat(new THREE.MeshStandardMaterial({
+    const bodyMat = this.#lumenMat({
       color: 0x3b2c35,
       roughness: 0.7
-    }));
-    const wingMat = this.#trackMat(new THREE.MeshStandardMaterial({
+    }, { rimStrength: 0.28, cacheTag: 'fauna_butterfly_body' });
+    const wingMat = this.#lumenMat({
       color: 0xffffff,
       roughness: 0.42,
       metalness: 0.06,
-      side: THREE.DoubleSide
-    }));
+      side: THREE.DoubleSide,
+      vertexColors: true
+    }, { rimStrength: 0.36, rimTint: 0xffe4f6, cacheTag: 'fauna_butterfly_wing' });
 
     const pastelColors = [
       0xff85c0, 0x7ad7ff, 0xffe066, 0xc89bff,
@@ -491,19 +530,20 @@ export class FaunaSystem {
     rawForeWing.dispose();
     rawHindWing.dispose();
 
-    const bodyMat = this.#trackMat(new THREE.MeshStandardMaterial({
+    const bodyMat = this.#lumenMat({
       color: 0xffffff,
       roughness: 0.24,
-      metalness: 0.52
-    }));
-    const wingMat = this.#trackMat(new THREE.MeshStandardMaterial({
+      metalness: 0.52,
+      vertexColors: true
+    }, { rimStrength: 0.38, cacheTag: 'fauna_dragonfly_body' });
+    const wingMat = this.#lumenMat({
       color: 0xe6fbff,
       roughness: 0.18,
       metalness: 0.15,
       transparent: true,
       opacity: 0.72,
       side: THREE.DoubleSide
-    }));
+    }, { cacheTag: 'fauna_dragonfly_wing' });
 
     const iridescentPalette = [
       0x1ee3cf, // Turquesa imperial
@@ -636,23 +676,26 @@ export class FaunaSystem {
   // 3. Cisnes Reales (9) y Familias de Patitos Dorados (14) + Estelas (64)
   // ---------------------------------------------------------------------------
   #buildSwansAndDucklings() {
-    const whiteMat = this.#trackMat(new THREE.MeshStandardMaterial({
+    const whiteMat = this.#lumenMat({
       color: 0xf6f3ee,
       roughness: 0.56,
-      metalness: 0.02
-    }));
-    const orangeMat = this.#trackMat(new THREE.MeshStandardMaterial({
+      metalness: 0.02,
+      vertexColors: true
+    }, { cacheTag: 'fauna_swan_white' });
+    const orangeMat = this.#lumenMat({
       color: 0xf4842c,
-      roughness: 0.45
-    }));
-    const darkMat = this.#trackMat(new THREE.MeshStandardMaterial({
+      roughness: 0.45,
+      vertexColors: true
+    }, { rimStrength: 0.30, rimTint: 0xffe4cc, cacheTag: 'fauna_beak_orange' });
+    const darkMat = this.#lumenMat({
       color: 0x1e1e24,
       roughness: 0.4
-    }));
-    const duckGoldMat = this.#trackMat(new THREE.MeshStandardMaterial({
+    }, { rimStrength: 0.20, cacheTag: 'fauna_eye_dark' });
+    const duckGoldMat = this.#lumenMat({
       color: 0xfad250,
-      roughness: 0.64
-    }));
+      roughness: 0.64,
+      vertexColors: true
+    }, { rimTint: 0xfff0c4, cacheTag: 'fauna_duck_gold' });
 
     const rawBody = new THREE.SphereGeometry(0.42, 14, 10);
     rawBody.scale(0.85, 0.65, 1.45);
@@ -672,6 +715,7 @@ export class FaunaSystem {
       { geo: rawWing, matrix: mWingR },
       { geo: rawTail, matrix: mTail }
     ]));
+    bakeProceduralVertexAO(swanBodyGeo, { aoStrength: 0.28, undersideWeight: 0.42, cavityWeight: 0.24, shadowTint: 0x281c4a, ridgeHighlight: 0.10 });
     rawBody.dispose();
     rawWing.dispose();
     rawTail.dispose();
@@ -688,6 +732,7 @@ export class FaunaSystem {
       { geo: rawNeck, matrix: new THREE.Matrix4() },
       { geo: rawHead, matrix: new THREE.Matrix4().makeTranslation(0, 1.03, 0.62) }
     ]));
+    bakeProceduralVertexAO(swanNeckGeo, { aoStrength: 0.28, undersideWeight: 0.42, cavityWeight: 0.24, shadowTint: 0x281c4a, ridgeHighlight: 0.10 });
     rawNeck.dispose();
     rawHead.dispose();
 
@@ -769,6 +814,7 @@ export class FaunaSystem {
       { geo: rawDuckBody, matrix: new THREE.Matrix4().makeTranslation(0, 0.08, 0) },
       { geo: rawDuckHead, matrix: new THREE.Matrix4().makeTranslation(0, 0.19, 0.12) }
     ]));
+    bakeProceduralVertexAO(duckBodyGeo, { aoStrength: 0.28, undersideWeight: 0.40, shadowTint: 0x322248, ridgeHighlight: 0.08 });
     rawDuckBody.dispose();
     rawDuckHead.dispose();
 
@@ -962,19 +1008,21 @@ export class FaunaSystem {
       { geo: rawHeadGeo, matrix: new THREE.Matrix4().makeTranslation(0, 0.08, 0.11) },
       { geo: rawBeakGeo, matrix: new THREE.Matrix4().makeTranslation(0, 0.075, 0.19) }
     ]));
+    bakeProceduralVertexAO(birdBodyGeo, { aoStrength: 0.26, undersideWeight: 0.38, shadowTint: 0x281c4a, ridgeHighlight: 0.08 });
     rawBodyGeo.dispose();
     rawHeadGeo.dispose();
     rawBeakGeo.dispose();
     rawTailGeo.dispose();
 
     const birdBellyGeo = this.#trackGeo(new THREE.SphereGeometry(0.085, 7, 7));
+    bakeProceduralVertexAO(birdBellyGeo, { aoStrength: 0.26, undersideWeight: 0.38, shadowTint: 0x281c4a, ridgeHighlight: 0.08 });
     const birdRightWingGeo = this.#trackGeo(new THREE.BoxGeometry(0.18, 0.015, 0.11));
     birdRightWingGeo.translate(0.09, 0, 0);
     const birdLeftWingGeo = this.#trackGeo(new THREE.BoxGeometry(0.18, 0.015, 0.11));
     birdLeftWingGeo.translate(-0.09, 0, 0);
 
-    const birdBodyMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.56 }));
-    const birdBellyMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62 }));
+    const birdBodyMat = this.#lumenMat({ color: 0xffffff, roughness: 0.56, vertexColors: true }, { cacheTag: 'fauna_bird_body' });
+    const birdBellyMat = this.#lumenMat({ color: 0xffffff, roughness: 0.62, vertexColors: true }, { rimStrength: 0.30, cacheTag: 'fauna_bird_belly' });
 
     const palettes = [
       { body: 0x4ea3eb, belly: 0xdcf0ff, scale: 1.0, flapFreq: 24 },  // Azulejo real
@@ -1071,32 +1119,38 @@ export class FaunaSystem {
   // 5. Ciervos Blancos Imperiales y Cervatos con Motas (15 ejemplares)
   // ---------------------------------------------------------------------------
   #buildDeerAndFawns() {
-    const coatMat = this.#trackMat(new THREE.MeshStandardMaterial({
+    const coatMat = this.#lumenMat({
       color: 0xffffff,
       roughness: 0.72,
-      metalness: 0.02
-    }));
-    const bellyMat = this.#trackMat(new THREE.MeshStandardMaterial({
+      metalness: 0.02,
+      vertexColors: true
+    }, { cacheTag: 'fauna_deer_coat' });
+    const bellyMat = this.#lumenMat({
       color: 0xfaf7f2,
-      roughness: 0.75
-    }));
-    const spotMat = this.#trackMat(new THREE.MeshStandardMaterial({
+      roughness: 0.75,
+      vertexColors: true
+    }, { rimStrength: 0.30, cacheTag: 'fauna_deer_belly' });
+    const spotMat = this.#lumenMat({
       color: 0xfffdf9,
-      roughness: 0.7
-    }));
-    const antlerMat = this.#trackMat(new THREE.MeshStandardMaterial({
+      roughness: 0.7,
+      vertexColors: true
+    }, { rimStrength: 0.30, cacheTag: 'fauna_deer_spot' });
+    const antlerMat = this.#lumenMat({
       color: 0xd9b87c,
       roughness: 0.42,
-      metalness: 0.22
-    }));
-    const noseMat = this.#trackMat(new THREE.MeshStandardMaterial({
+      metalness: 0.22,
+      vertexColors: true
+    }, { rimStrength: 0.36, rimTint: 0xffe8c8, cacheTag: 'fauna_deer_antler' });
+    const noseMat = this.#lumenMat({
       color: 0x3b2d2c,
       roughness: 0.5
-    }));
+    }, { rimStrength: 0.22, cacheTag: 'fauna_deer_nose' });
 
+    const deerAO = { aoStrength: 0.32, undersideWeight: 0.44, cavityWeight: 0.24, shadowTint: 0x281c4a, ridgeHighlight: 0.10 };
     const torsoGeo = this.#trackGeo(new THREE.CapsuleGeometry(0.32, 0.85, 6, 10));
     torsoGeo.rotateX(Math.PI / 2);
     torsoGeo.translate(0, 0.96, 0);
+    bakeProceduralVertexAO(torsoGeo, deerAO);
 
     const tailGeo = this.#trackGeo(new THREE.SphereGeometry(0.09, 6, 6));
     tailGeo.translate(0, 1.06, -0.62);
@@ -1129,6 +1183,7 @@ export class FaunaSystem {
       { geo: rawEar, matrix: new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(-0.2, 0, 0.55)).setPosition(-0.11, 0.7, 0.12) },
       { geo: rawEar, matrix: new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(-0.2, 0, -0.55)).setPosition(0.11, 0.7, 0.12) }
     ]));
+    bakeProceduralVertexAO(deerHeadGeo, deerAO);
     rawNeck.dispose();
     rawHead.dispose();
     rawEar.dispose();
@@ -1150,11 +1205,13 @@ export class FaunaSystem {
       });
     }
     const deerAntlerGeo = this.#trackGeo(this.#mergeGeometries(antlerPieces));
+    bakeProceduralVertexAO(deerAntlerGeo, deerAO);
     rawStem.dispose();
     rawTine.dispose();
 
     const legGeo = this.#trackGeo(new THREE.CylinderGeometry(0.055, 0.04, 0.82, 7));
     legGeo.translate(0, -0.41, 0);
+    bakeProceduralVertexAO(legGeo, deerAO);
 
     // Manadas en las 6 praderas del reino: [homeX, homeZ, initOffsetX, initOffsetZ, hasAntlers, isFawn, meadowRadius]
     const herdSpecs = [
@@ -1316,9 +1373,9 @@ export class FaunaSystem {
       0xf9cadb, // Rosa pálido pastel
       0xd6a47c  // Canela suave
     ];
-    const coatMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
-    const tailMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xfaf8f5, roughness: 0.85 }));
-    const pinkNoseMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xf29cb8, roughness: 0.58 }));
+    const coatMat = this.#lumenMat({ color: 0xffffff, roughness: 0.8, vertexColors: true }, { cacheTag: 'fauna_bunny_coat' });
+    const tailMat = this.#lumenMat({ color: 0xfaf8f5, roughness: 0.85, vertexColors: true }, { cacheTag: 'fauna_bunny_tail' });
+    const pinkNoseMat = this.#lumenMat({ color: 0xf29cb8, roughness: 0.58 }, { rimStrength: 0.26, rimTint: 0xffd6ec, cacheTag: 'fauna_bunny_nose' });
 
     const rawBody = new THREE.SphereGeometry(0.18, 10, 8);
     rawBody.scale(0.85, 0.85, 1.2);
@@ -1326,12 +1383,14 @@ export class FaunaSystem {
     const rawPaw = new THREE.SphereGeometry(0.055, 6, 6);
     rawPaw.scale(0.8, 0.5, 1.4);
 
+    const bunnyAO = { aoStrength: 0.30, undersideWeight: 0.40, shadowTint: 0x281c4a, ridgeHighlight: 0.08 };
     const bunnyBodyGeo = this.#trackGeo(this.#mergeGeometries([
       { geo: rawBody, matrix: new THREE.Matrix4().makeTranslation(0, 0.15, 0) },
       { geo: rawHead, matrix: new THREE.Matrix4().makeTranslation(0, 0.27, 0.17) },
       { geo: rawPaw, matrix: new THREE.Matrix4().makeTranslation(-0.09, 0.03, 0.08) },
       { geo: rawPaw, matrix: new THREE.Matrix4().makeTranslation(0.09, 0.03, 0.08) }
     ]));
+    bakeProceduralVertexAO(bunnyBodyGeo, bunnyAO);
     rawBody.dispose();
     rawHead.dispose();
     rawPaw.dispose();
@@ -1341,6 +1400,7 @@ export class FaunaSystem {
     const noseGeo = this.#trackGeo(new THREE.SphereGeometry(0.024, 6, 6));
     noseGeo.translate(0, 0.27, 0.29);
     const earGeo = this.#trackGeo(new THREE.CapsuleGeometry(0.028, 0.14, 4, 6));
+    bakeProceduralVertexAO(earGeo, bunnyAO);
 
     // [bx, bz, maxRadius] — Palacio, Bulevar Imperial y anillo alrededor de la Cúpula del Casino
     const spots = [
@@ -1453,9 +1513,9 @@ export class FaunaSystem {
   // 7. Ardillas Reales Estilizadas (16 instancias con gran cola en S)
   // ---------------------------------------------------------------------------
   #buildSquirrels() {
-    const furMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.76 }));
-    const bellyMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0xf7ebd9, roughness: 0.8 }));
-    const darkMat = this.#trackMat(new THREE.MeshStandardMaterial({ color: 0x221a18, roughness: 0.45 }));
+    const furMat = this.#lumenMat({ color: 0xffffff, roughness: 0.76, vertexColors: true }, { cacheTag: 'fauna_squirrel_fur' });
+    const bellyMat = this.#lumenMat({ color: 0xf7ebd9, roughness: 0.8, vertexColors: true }, { rimStrength: 0.30, cacheTag: 'fauna_squirrel_belly' });
+    const darkMat = this.#lumenMat({ color: 0x221a18, roughness: 0.45 }, { rimStrength: 0.20, cacheTag: 'fauna_squirrel_dark' });
 
     const rawTorso = new THREE.CapsuleGeometry(0.085, 0.13, 5, 8);
     const rawHead = new THREE.SphereGeometry(0.082, 8, 8);
@@ -1465,6 +1525,7 @@ export class FaunaSystem {
     rawHindPaw.scale(0.75, 0.55, 1.35);
     const rawFrontPaw = new THREE.SphereGeometry(0.03, 6, 5);
 
+    const squirrelAO = { aoStrength: 0.34, undersideWeight: 0.40, cavityWeight: 0.28, shadowTint: 0x281a40, ridgeHighlight: 0.10 };
     const squirrelBodyGeo = this.#trackGeo(this.#mergeGeometries([
       { geo: rawTorso, matrix: new THREE.Matrix4().makeRotationX(0.95).setPosition(0, 0.12, 0.01) },
       { geo: rawHead, matrix: new THREE.Matrix4().makeTranslation(0, 0.23, 0.13) },
@@ -1475,6 +1536,7 @@ export class FaunaSystem {
       { geo: rawFrontPaw, matrix: new THREE.Matrix4().makeTranslation(-0.045, 0.09, 0.11) },
       { geo: rawFrontPaw, matrix: new THREE.Matrix4().makeTranslation(0.045, 0.09, 0.11) }
     ]));
+    bakeProceduralVertexAO(squirrelBodyGeo, squirrelAO);
     rawTorso.dispose();
     rawHead.dispose();
     rawEar.dispose();
@@ -1515,6 +1577,7 @@ export class FaunaSystem {
       { geo: rawPlumeMid, matrix: new THREE.Matrix4().makeTranslation(0, 0.25, -0.11) },
       { geo: rawPlumeTip, matrix: new THREE.Matrix4().makeTranslation(0, 0.38, -0.11) }
     ]));
+    bakeProceduralVertexAO(squirrelTailGeo, squirrelAO);
     rawTailTube.dispose();
     rawPlumeMid.dispose();
     rawPlumeTip.dispose();
@@ -1653,16 +1716,18 @@ export class FaunaSystem {
     koiTailGeo.rotateX(-Math.PI / 2);
     koiTailGeo.rotateZ(0.16);
 
-    const koiMat = this.#trackMat(new THREE.MeshStandardMaterial({
+    const koiMat = this.#lumenMat({
       color: 0xffffff,
       roughness: 0.26,
-      metalness: 0.08
-    }));
-    const koiTailMat = this.#trackMat(new THREE.MeshStandardMaterial({
+      metalness: 0.08,
+      vertexColors: true
+    }, { cacheTag: 'fauna_koi_body' });
+    const koiTailMat = this.#lumenMat({
       color: 0xffffff,
       roughness: 0.30,
-      side: THREE.DoubleSide
-    }));
+      side: THREE.DoubleSide,
+      vertexColors: true
+    }, { cacheTag: 'fauna_koi_tail' });
 
     const koiPalettes = [
       { body: 0xf26419, pattern: 0xff9f4a, tail: 0xff7b29 }, // Naranja imperial

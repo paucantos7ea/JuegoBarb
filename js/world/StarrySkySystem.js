@@ -6,7 +6,7 @@ const STAR_RADIUS = 455;
 const CONSTELLATION_RADIUS = 450;
 const SHOOTING_RADIUS = 430;
 const MOON_DIST = 410;
-const STAR_COUNT = 3200;
+const STAR_COUNT = 3800;
 const SHOOTING_POOL_SIZE = 4;
 const RIBBON_SEGMENTS = 16;
 
@@ -18,8 +18,8 @@ const STAR_PALETTE = [
 ];
 
 const QUALITY_STAR_COUNTS = {
-  low: 1800,
-  medium: 2600,
+  low: 2000,
+  medium: 2900,
   high: STAR_COUNT
 };
 
@@ -119,9 +119,10 @@ export class StarrySkySystem {
         uSkyMid: GraphicsSync.uSkyMid,
         uSkyHorizon: GraphicsSync.uSkyHorizon,
         uNightFactor: GraphicsSync.uNightFactor,
-        uSkyMidHigh: { value: new THREE.Color(0x171042) },
+        uSkyMidHigh: { value: new THREE.Color(0x130d38) },
         uMoonOpacity: { value: 1.0 },
-        uSpinYaw: { value: 0.0 }
+        uSpinYaw: { value: 0.0 },
+        uPixelAngle: { value: 0.0012 }
       },
       vertexShader: /* glsl */ `
         varying vec3 vWorldDir;
@@ -142,8 +143,15 @@ export class StarrySkySystem {
         uniform float uNightFactor;
         uniform float uMoonOpacity;
         uniform float uSpinYaw;
+        uniform float uPixelAngle;
 
         varying vec3 vWorldDir;
+
+        vec3 h33(vec3 p) {
+          p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+          p += dot(p, p.yxz + 33.33);
+          return fract((p.xxy + p.yxx) * p.zyx);
+        }
 
         float hash31(vec3 p) {
           p = fract(p * 0.1031);
@@ -219,61 +227,82 @@ export class StarrySkySystem {
           vec3 dir = normalize(vWorldDir);
           float h = clamp(dir.y, 0.0, 1.0);
 
-          // 1. Degradado Atmosférico Imperial de 4 Paradas
-          vec3 horizonWarm = uSkyHorizon + vec3(0.055, 0.028, 0.014) * exp(-h * 22.0) * uNightFactor;
-          vec3 col = mix(horizonWarm, uSkyMid, smoothstep(0.0, 0.18, h));
-          col = mix(col, uSkyMidHigh, smoothstep(0.18, 0.48, h));
-          col = mix(col, uSkyZenith, smoothstep(0.48, 0.92, h));
+          // 1. Degradado Atmosférico Imperial de 4 Paradas con curva cenital exponencial
+          float hExp = pow(h, 0.45);
+          vec3 horizonWarm = uSkyHorizon + vec3(0.045, 0.022, 0.012) * exp(-h * 24.0) * uNightFactor;
+          vec3 col = mix(horizonWarm, uSkyMid, smoothstep(0.0, 0.34, hExp));
+          col = mix(col, uSkyMidHigh, smoothstep(0.30, 0.64, hExp));
+          col = mix(col, uSkyZenith, smoothstep(0.58, 0.96, hExp));
 
           // Oscurecimiento suave bajo la línea de horizonte
           float below = clamp(-dir.y, 0.0, 1.0);
           col = mix(col, uSkyZenith * 0.45, smoothstep(0.0, 0.25, below));
 
-          // 2. Scattering Atmosférico (Mie) alrededor de la Luna
+          // 2. Scattering Atmosférico (Mie) dual alrededor de la Luna
           float moonDot = max(dot(dir, normalize(uMoonDir)), 0.0);
-          vec3 moonGlowColor = mix(vec3(0.55, 0.34, 0.72), uMoonColor, 0.48);
-          float moonScatter = (pow(moonDot, 8.0) * 0.28 * length(moonGlowColor) * 0.58)
-            + pow(moonDot, 64.0) * 0.45;
-          col += (pow(moonDot, 8.0) * 0.28 * moonGlowColor + pow(moonDot, 64.0) * 0.45 * vec3(1.0, 0.95, 0.85))
-            * max(uMoonOpacity, uNightFactor * 0.65);
+          vec3 moonGlowColor = mix(vec3(0.50, 0.32, 0.72), uMoonColor, 0.52);
+          vec3 moonMie = moonGlowColor * (pow(moonDot, 7.0) * 0.20)
+            + mix(moonGlowColor, vec3(1.0, 0.95, 0.86), 0.65) * (pow(moonDot, 60.0) * 0.44);
+          col += moonMie * max(uMoonOpacity, uNightFactor * 0.65);
 
-          // 3. Vía Láctea y Nebulosa Pastel Procedural (GLSL FBM 4 octavas)
+          // 3. Vía Láctea Domain-Warped (3 frecuencias + dust lane) y Campo Estelar 3 Capas
           if (uNightFactor > 0.005) {
             float cy = cos(uSpinYaw);
             float sy = sin(uSpinYaw);
             vec3 skyDir = vec3(dir.x * cy - dir.z * sy, dir.y, dir.x * sy + dir.z * cy);
 
-            // Inclinación galáctica ~38° cruzando en diagonal tras Luna y Palacio
-            mat3 galTilt = mat3(
-              0.788, -0.456, 0.413,
-              0.616,  0.583, -0.529,
-              0.000,  0.672, 0.741
-            );
-            vec3 gDir = normalize(galTilt * skyDir);
+            vec3 galNormal = normalize(vec3(0.413, -0.529, 0.741));
+            float f1 = fbm4(skyDir * 3.2 + 1.7);
+            float f2 = fbm4(skyDir * 8.0 + f1 * 2.5);
+            float f3 = fbm4(skyDir * 21.0 + f2 * 2.0);
+            float gw = dot(skyDir, galNormal) + (f1 - 0.5) * 0.14;
+            float mw = exp(-gw * gw * 14.0);
+            float core = mw * smoothstep(0.20, 0.70, f1 * 0.55 + f2 * 0.60);
+            float lane = smoothstep(0.42, 0.62, fbm4(skyDir * 5.5 + vec3(9.0, 2.0, 5.0) + f2 * 1.5))
+              * exp(-gw * gw * 45.0);
 
-            float band = exp(-abs(gDir.y) * 5.2) * smoothstep(0.02, 0.25, h);
-            float nMain = fbm4(gDir * 3.5);
-            float dustRift = smoothstep(0.35, 0.65, fbm4(gDir * 7.5 + vec3(4.2)));
-            float fineDetail = fbm4(gDir * 6.2 - vec3(nMain * 0.9));
+            vec3 mwSapphire = vec3(0.16, 0.30, 0.68);
+            vec3 mwLavender = vec3(0.52, 0.34, 0.86);
+            vec3 mwRoseGold = vec3(0.92, 0.56, 0.72);
+            vec3 mwCol = mix(mwSapphire, mwLavender, smoothstep(0.25, 0.68, f2));
+            mwCol = mix(mwCol, mwRoseGold, smoothstep(0.45, 0.85, f3) * 0.62);
 
-            vec3 nebPink = vec3(0.878, 0.416, 0.698);     // #e06ab2 magenta-rosa pastel
-            vec3 nebCyan = vec3(0.408, 0.690, 1.000);     // #68b0ff cian etéreo
-            vec3 nebLav  = vec3(0.557, 0.420, 1.000);     // #8e6bff lavanda
+            float bandHorizon = smoothstep(0.01, 0.22, h);
+            col += mwCol * core * (0.35 + 1.1 * f3) * (1.0 - lane * 0.78) * bandHorizon * 0.26 * uNightFactor;
 
-            vec3 nebCol = mix(nebLav, nebPink, smoothstep(0.28, 0.70, nMain));
-            nebCol = mix(nebCol, nebCyan, smoothstep(0.45, 0.82, fineDetail) * 0.55);
-
-            float riftMask = 1.0 - dustRift * 0.62 * exp(-abs(gDir.y) * 9.0);
-            float nebStrength = band * (0.28 + 0.72 * smoothstep(0.22, 0.78, nMain)) * riftMask;
-            col += nebCol * nebStrength * 0.22 * uNightFactor;
+            // 3 capas procedurales nítidas ancladas al ángulo por píxel (ref_lumen_isles)
+            float up = smoothstep(0.01, 0.14, dir.y);
+            float k = clamp(0.00107 / max(uPixelAngle, 0.0003), 0.6, 1.7);
+            float moonOccult = smoothstep(0.9968, 0.9935, dot(dir, normalize(uMoonDir)));
+            for (int i = 0; i < 3; i++) {
+              float sc = (i == 0 ? 165.0 : (i == 1 ? 110.0 : 62.0)) * k;
+              vec3 p = skyDir * sc;
+              vec3 ip = floor(p);
+              vec3 hCell = h33(ip + float(i) * 17.3);
+              vec3 q = fract(p) - 0.5 - (hCell - 0.5) * 0.5;
+              float r0 = uPixelAngle * sc;
+              float r2 = dot(q, q) / max(r0 * r0, 1e-6);
+              float hx = max(hCell.x, 1e-4);
+              float b = i == 0
+                ? pow(hx, 8.0) * 0.35 * (0.5 + 2.5 * core)
+                : (i == 1
+                  ? pow(hx, 14.0) * 1.6 * (0.6 + 1.2 * core)
+                  : pow(hx, 22.0) * 5.0);
+              float tw = 0.8 + 0.2 * sin(uTime * (1.5 + hCell.y * 4.0) + hCell.z * 60.0);
+              vec3 starCol = mix(vec3(0.55, 0.72, 1.0), vec3(1.0, 0.82, 0.62), hCell.z * hCell.z);
+              float peak = exp(-r2 * 2.6) + (i == 2 ? exp(-r2 * 0.35) * 0.04 : 0.0);
+              col += starCol * peak * b * tw * 3.8 * up * (1.0 - lane * 0.6) * moonOccult * uNightFactor;
+            }
           }
 
-          // 4. Nubes Cirrus Nocturnas Sutiles con silver lining lunar
+          // 4. Nubes Cirrus Nocturnas Sutiles con desvanecimiento cenital y silver lining lunar
           if (dir.y > 0.01) {
             vec2 cloudUV = dir.xz / (dir.y + 0.18) * 0.85 + vec2(uTime * 0.004, uTime * 0.002);
             float c1 = fbm2(cloudUV * 1.45);
             float c2 = fbm2(cloudUV * 2.9 - vec2(c1 * 0.55));
-            float cirrus = smoothstep(0.48, 0.82, c1 * 0.65 + c2 * 0.35) * smoothstep(0.02, 0.24, dir.y);
+            float cirrus = smoothstep(0.48, 0.82, c1 * 0.65 + c2 * 0.35)
+              * smoothstep(0.02, 0.24, dir.y)
+              * smoothstep(0.65, 0.18, dir.y);
             float silverLining = pow(moonDot, 4.0);
             vec3 cloudTint = mix(vec3(0.11, 0.07, 0.20), vec3(0.85, 0.76, 0.96), silverLining * 0.78);
             cloudTint = mix(vec3(0.88, 0.74, 0.86), cloudTint, uNightFactor);
@@ -424,14 +453,14 @@ export class StarrySkySystem {
           float dShadow = shadowR - length(p - shadowOffset);
           float dGlow = max(max(dDisc, dShadow), 0.0);
 
-          float edgeZero = smoothstep(0.95, 0.62, rLen);
+          float edgeZero = smoothstep(0.96, 0.48, rLen);
           float shimmer = 0.96 + 0.04 * sin(uTime * 0.9);
 
-          float innerCorona = exp(-dGlow * 7.5) * 0.75;
-          float outerAura = exp(-dGlow * 2.4) * 0.32;
+          float innerCorona = exp(-dGlow * 7.8) * 0.72;
+          float outerAura = exp(-dGlow * 3.1) * 0.26;
 
-          vec3 warmCol = mix(vec3(1.0, 0.90, 0.72), uMoonColor, 0.5);
-          vec3 auraCol = vec3(0.76, 0.60, 0.96);
+          vec3 warmCol = mix(vec3(1.0, 0.90, 0.72), uMoonColor, 0.52);
+          vec3 auraCol = vec3(0.70, 0.56, 0.94);
 
           vec3 col = (warmCol * innerCorona + auraCol * outerAura) * edgeZero * shimmer * uOpacity;
           float a = clamp((innerCorona + outerAura) * edgeZero * uOpacity, 0.0, 1.0);
@@ -503,7 +532,7 @@ export class StarrySkySystem {
 
         void main() {
           vec3 unitDir = normalize(position);
-          float horizonFade = smoothstep(0.025, 0.16, unitDir.y);
+          float horizonFade = smoothstep(0.02, 0.15, unitDir.y);
 
           float cy = cos(uSpinYaw);
           float sy = sin(uSpinYaw);
@@ -515,14 +544,17 @@ export class StarrySkySystem {
           // Ocultación detrás del disco lunar monumental
           float moonOccult = smoothstep(0.9968, 0.9935, dot(worldDir, normalize(uMoonDir)));
 
-          float twinkle = 0.65 + 0.35 * sin(uTime * aSpeed + aPhase);
+          // Centelleo dual-armónico orgánico
+          float twinkle = 0.70
+            + 0.20 * sin(uTime * aSpeed + aPhase)
+            + 0.10 * cos(uTime * (aSpeed * 1.73 + 0.4) + aPhase * 2.1);
           vColor = aColor;
           vHero = aHero;
           vAlpha = twinkle * horizonFade * moonOccult * uVisibility;
 
           vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mvPos;
-          gl_PointSize = max(1.0, aSize * (0.90 + 0.16 * twinkle) * uPixelRatio);
+          gl_PointSize = max(1.0, aSize * (0.90 + 0.14 * twinkle) * uPixelRatio);
         }
       `,
       fragmentShader: /* glsl */ `
@@ -536,21 +568,22 @@ export class StarrySkySystem {
           float r = length(uv);
           if (r > 0.5) discard;
 
-          float edge = 1.0 - smoothstep(0.36, 0.5, r);
-          float core = exp(-r * 9.0);
-          float halo = exp(-r * 3.2) * 0.35;
+          float edge = 1.0 - smoothstep(0.38, 0.5, r);
+          float core = exp(-r * r * 52.0);
+          float halo = exp(-r * 6.5) * 0.24;
           float shape = (core + halo) * edge;
 
           if (vHero > 0.5) {
-            float crossSpike = exp(-abs(uv.x) * 28.0) * exp(-abs(uv.y) * 5.0)
-              + exp(-abs(uv.y) * 28.0) * exp(-abs(uv.x) * 5.0);
-            shape += crossSpike * 0.82 * edge;
+            float crossSpike = exp(-abs(uv.x) * 44.0) * exp(-abs(uv.y) * 7.5)
+              + exp(-abs(uv.y) * 44.0) * exp(-abs(uv.x) * 7.5);
+            shape += crossSpike * 0.72 * edge;
           }
 
           float a = clamp(shape * vAlpha, 0.0, 1.0);
           if (a <= 0.003) discard;
 
-          vec3 col = vColor * shape * vAlpha * (vHero > 0.5 ? 1.35 : 1.05);
+          float hdrGain = vHero > 0.5 ? mix(1.38, 1.58, clamp(vAlpha, 0.0, 1.0)) : 1.05;
+          vec3 col = vColor * shape * vAlpha * hdrGain;
           gl_FragColor = vec4(col, a);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
@@ -592,7 +625,7 @@ export class StarrySkySystem {
       let x;
       let y;
       let z;
-      if (i < STAR_COUNT * 0.30) {
+      if (i < STAR_COUNT * 0.35) {
         let attempts = 0;
         do {
           const theta = rand() * Math.PI * 2;
@@ -903,12 +936,12 @@ export class StarrySkySystem {
             float lifeAlpha = fadeIn * fadeOut * uVisibility;
             if (lifeAlpha <= 0.003) discard;
 
-            float across = exp(-vSide * vSide * 4.2) * (1.0 - vSide * vSide);
-            float along = pow(1.0 - vT, 1.75);
-            float headSpark = exp(-vT * 18.0) * 0.95;
+            float across = exp(-vSide * vSide * 5.2) * (1.0 - vSide * vSide);
+            float along = pow(1.0 - vT, 2.05);
+            float headSpark = exp(-vT * 24.0) * 1.15;
 
-            vec3 headCol = vec3(1.45, 1.32, 1.02);
-            vec3 midCol = vec3(0.72, 0.92, 1.18);
+            vec3 headCol = vec3(1.52, 1.38, 1.08);
+            vec3 midCol = vec3(0.74, 0.94, 1.20);
             vec3 tailCol = vec3(0.96, 0.52, 0.84);
 
             vec3 col = mix(headCol, midCol, smoothstep(0.0, 0.35, vT));
@@ -1065,7 +1098,7 @@ export class StarrySkySystem {
     if (!theme || !this.#skyDome) return;
 
     const skyU = this.#skyDome.material.uniforms;
-    skyU.uSkyMidHigh.value.setHex(theme.skyMidHigh ?? 0x171042);
+    skyU.uSkyMidHigh.value.setHex(theme.skyMidHigh ?? 0x130d38);
 
     const starsOpacity = THREE.MathUtils.clamp(theme.starsOpacity ?? 1.0, 0, 1);
     const nightMix = THREE.MathUtils.clamp(
@@ -1106,6 +1139,19 @@ export class StarrySkySystem {
     this.#pixelRatio = pixelRatio;
     if (this.#starsPoints) this.#starsPoints.material.uniforms.uPixelRatio.value = pixelRatio;
     if (this.#constellationStars) this.#constellationStars.material.uniforms.uPixelRatio.value = pixelRatio;
+  }
+
+  /**
+   * Actualiza uPixelAngle del SkyDome para mantener estrellas procedurales nítidas (100% GC-Free).
+   * @param {number} height
+   */
+  setViewportHeight(height) {
+    if (!Number.isFinite(height) || !this.#skyDome) return;
+    this.#skyDome.material.uniforms.uPixelAngle.value = THREE.MathUtils.clamp(
+      1.2 / Math.max(360, height),
+      0.0005,
+      0.0025
+    );
   }
 
   update(dt) {

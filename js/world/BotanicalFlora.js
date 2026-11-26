@@ -1,4 +1,11 @@
 import * as THREE from 'three';
+import {
+  sculptOrganicGeometry,
+  bakeProceduralVertexAO,
+  createLumenMaterial,
+  createInstancedVolumetricHalos,
+  ensureVertexColors
+} from '../core/LumenArtPipeline.js';
 
 const CASINO_CX = 162.0;
 const CASINO_CZ = 0.0;
@@ -86,6 +93,7 @@ function mergeGeometries(pieces) {
 
   const normalized = [];
   let totalVerts = 0;
+  let hasColors = false;
 
   for (let i = 0; i < pieces.length; i++) {
     const { geometry, matrix } = pieces[i];
@@ -96,16 +104,21 @@ function mergeGeometries(pieces) {
     if (!g.attributes.uv) {
       g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
     }
+    if (g.attributes.color) {
+      hasColors = true;
+    }
     if (matrix) {
       g.applyMatrix4(matrix);
       if (matrix.determinant() < 0) {
         const pos = g.attributes.position;
         const norm = g.attributes.normal;
         const uv = g.attributes.uv;
+        const col = g.attributes.color;
         for (let v = 0; v < pos.count; v += 3) {
           swapAttr3(pos, v + 1, v + 2);
           if (norm) swapAttr3(norm, v + 1, v + 2);
           if (uv) swapAttr2(uv, v + 1, v + 2);
+          if (col) swapAttr3(col, v + 1, v + 2);
         }
       }
     }
@@ -116,6 +129,7 @@ function mergeGeometries(pieces) {
   const positions = new Float32Array(totalVerts * 3);
   const normals = new Float32Array(totalVerts * 3);
   const uvs = new Float32Array(totalVerts * 2);
+  const colors = hasColors ? new Float32Array(totalVerts * 3) : null;
 
   let offset = 0;
   for (let i = 0; i < normalized.length; i++) {
@@ -123,6 +137,7 @@ function mergeGeometries(pieces) {
     const pos = g.attributes.position;
     const norm = g.attributes.normal;
     const uv = g.attributes.uv;
+    const col = g.attributes.color;
     const count = pos.count;
 
     for (let v = 0; v < count; v++) {
@@ -141,6 +156,17 @@ function mergeGeometries(pieces) {
         uvs[i2] = uv.getX(v);
         uvs[i2 + 1] = uv.getY(v);
       }
+      if (colors) {
+        if (col) {
+          colors[i3] = col.getX(v);
+          colors[i3 + 1] = col.getY(v);
+          colors[i3 + 2] = col.getZ(v);
+        } else {
+          colors[i3] = 1;
+          colors[i3 + 1] = 1;
+          colors[i3 + 2] = 1;
+        }
+      }
     }
     offset += count;
     g.dispose();
@@ -150,6 +176,9 @@ function mergeGeometries(pieces) {
   merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (colors) {
+    merged.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  }
   merged.computeBoundingSphere();
   merged.computeBoundingBox();
   return merged;
@@ -182,8 +211,10 @@ export class BotanicalFlora {
 
   #baseMushroomEmissive = 0.42;
   #baseMushroomHaloOpacity = 0.14;
+  #mushroomHaloScale = 1.0;
   #baseLanternEmissive = 0.92;
   #baseLanternHaloOpacity = 0.22;
+  #lanternHaloScale = 1.0;
 
   #elapsed = 0;
   #treeRecords = [];
@@ -213,6 +244,8 @@ export class BotanicalFlora {
     this.#buildGlowingMushrooms(mats);
     this.#buildGardenLanterns(mats);
     this.#buildSakuraPetals();
+
+    ensureVertexColors(this.#root, { aoStrength: 0.25, shadowTint: 0x261b4c });
 
     this.#root.matrixAutoUpdate = false;
     this.#root.updateMatrix();
@@ -259,84 +292,152 @@ export class BotanicalFlora {
     const marbleTex = this.#textures?.getTexture ? this.#textures.getTexture('marble', 2, 2) : null;
     const roseGoldTex = this.#textures?.getTexture ? this.#textures.getTexture('roseGold', 1, 1) : null;
 
-    const barkCherry = this.#trackMat(new THREE.MeshStandardMaterial({
+    const barkCherry = this.#trackMat(createLumenMaterial({
       color: 0x583938,
       roughness: 0.88,
-      metalness: 0.02
+      metalness: 0.02,
+      vertexColors: true
+    }, {
+      rimStrength: 0.22,
+      shadowLiftStrength: 0.16,
+      cacheTag: 'flora_bark_cherry'
     }));
 
-    const barkForest = this.#trackMat(new THREE.MeshStandardMaterial({
+    const barkForest = this.#trackMat(createLumenMaterial({
       color: 0x5f4634,
       roughness: 0.90,
-      metalness: 0.02
+      metalness: 0.02,
+      vertexColors: true
+    }, {
+      rimStrength: 0.22,
+      shadowLiftStrength: 0.16,
+      cacheTag: 'flora_bark_forest'
     }));
 
-    const barkPalm = this.#trackMat(new THREE.MeshStandardMaterial({
+    const barkPalm = this.#trackMat(createLumenMaterial({
       color: 0x856649,
       roughness: 0.86,
-      metalness: 0.03
+      metalness: 0.03,
+      vertexColors: true
+    }, {
+      rimStrength: 0.22,
+      shadowLiftStrength: 0.16,
+      cacheTag: 'flora_bark_palm'
     }));
 
-    const foliage = this.#trackMat(new THREE.MeshStandardMaterial({
+    const foliage = this.#trackMat(createLumenMaterial({
       color: 0xffffff,
       roughness: 0.80,
-      metalness: 0.02
+      metalness: 0.02,
+      vertexColors: true
+    }, {
+      subsurfaceStrength: 0.35,
+      subsurfaceTint: 0xffd2ee,
+      rimStrength: 0.30,
+      rimTint: 0xc2d8ff,
+      cacheTag: 'flora_foliage'
     }));
 
-    const marble = this.#trackMat(new THREE.MeshStandardMaterial({
+    const marble = this.#trackMat(createLumenMaterial({
       map: marbleTex,
       color: 0xf7f1f5,
       roughness: 0.34,
-      metalness: 0.05
+      metalness: 0.05,
+      vertexColors: true
+    }, {
+      rimStrength: 0.24,
+      shadowLiftStrength: 0.15,
+      cacheTag: 'flora_marble'
     }));
 
-    const roseGold = this.#trackMat(new THREE.MeshStandardMaterial({
+    const roseGold = this.#trackMat(createLumenMaterial({
       map: roseGoldTex,
       color: 0xeeb2a2,
       metalness: 0.88,
-      roughness: 0.19
+      roughness: 0.19,
+      vertexColors: true
+    }, {
+      rimStrength: 0.28,
+      shadowLiftStrength: 0.14,
+      preserveRoughness: true,
+      cacheTag: 'flora_rosegold'
     }));
 
-    const flowerPetal = this.#trackMat(new THREE.MeshStandardMaterial({
+    const flowerPetal = this.#trackMat(createLumenMaterial({
       color: 0xffffff,
       roughness: 0.50,
       metalness: 0.02
+    }, {
+      subsurfaceStrength: 0.35,
+      subsurfaceTint: 0xffd2ee,
+      rimStrength: 0.30,
+      rimTint: 0xc2d8ff,
+      cacheTag: 'flora_petal'
     }));
 
-    const daisyGold = this.#trackMat(new THREE.MeshStandardMaterial({
+    const daisyGold = this.#trackMat(createLumenMaterial({
       color: 0xffc436,
       roughness: 0.55,
       metalness: 0.04
+    }, {
+      rimStrength: 0.24,
+      shadowLiftStrength: 0.15,
+      cacheTag: 'flora_daisy_gold'
     }));
 
-    const stemGreen = this.#trackMat(new THREE.MeshStandardMaterial({
+    const stemGreen = this.#trackMat(createLumenMaterial({
       color: 0x3b803d,
       roughness: 0.84,
       metalness: 0.02
+    }, {
+      subsurfaceStrength: 0.22,
+      subsurfaceTint: 0xbef5c4,
+      rimStrength: 0.22,
+      cacheTag: 'flora_stem'
     }));
 
-    const reedGreen = this.#trackMat(new THREE.MeshStandardMaterial({
+    const reedGreen = this.#trackMat(createLumenMaterial({
       color: 0xffffff,
       roughness: 0.78,
       metalness: 0.02
+    }, {
+      subsurfaceStrength: 0.35,
+      subsurfaceTint: 0xffd2ee,
+      rimStrength: 0.30,
+      rimTint: 0xc2d8ff,
+      cacheTag: 'flora_reed'
     }));
 
-    const cattailBrown = this.#trackMat(new THREE.MeshStandardMaterial({
+    const cattailBrown = this.#trackMat(createLumenMaterial({
       color: 0x6b442a,
       roughness: 0.92,
       metalness: 0.01
+    }, {
+      rimStrength: 0.18,
+      shadowLiftStrength: 0.14,
+      cacheTag: 'flora_cattail'
     }));
 
-    const lilyPad = this.#trackMat(new THREE.MeshStandardMaterial({
+    const lilyPad = this.#trackMat(createLumenMaterial({
       color: 0xffffff,
       roughness: 0.68,
       metalness: 0.03
+    }, {
+      subsurfaceStrength: 0.35,
+      subsurfaceTint: 0xffd2ee,
+      rimStrength: 0.30,
+      rimTint: 0xc2d8ff,
+      cacheTag: 'flora_lilypad'
     }));
 
-    const mushroomStem = this.#trackMat(new THREE.MeshStandardMaterial({
+    const mushroomStem = this.#trackMat(createLumenMaterial({
       color: 0xfff3eb,
       roughness: 0.72,
       metalness: 0.02
+    }, {
+      rimStrength: 0.24,
+      shadowLiftStrength: 0.16,
+      cacheTag: 'flora_mushroom_stem'
     }));
 
     const mushroomCapPink = this.#trackMat(new THREE.MeshStandardMaterial({
@@ -344,7 +445,8 @@ export class BotanicalFlora {
       emissive: 0xff4fb0,
       emissiveIntensity: this.#baseMushroomEmissive,
       roughness: 0.36,
-      metalness: 0.04
+      metalness: 0.04,
+      vertexColors: true
     }));
     mushroomCapPink.userData.preserveRoughness = true;
 
@@ -353,7 +455,8 @@ export class BotanicalFlora {
       emissive: 0x9e5cff,
       emissiveIntensity: this.#baseMushroomEmissive,
       roughness: 0.36,
-      metalness: 0.04
+      metalness: 0.04,
+      vertexColors: true
     }));
     mushroomCapLilac.userData.preserveRoughness = true;
 
@@ -362,22 +465,13 @@ export class BotanicalFlora {
       emissive: 0x38e2d0,
       emissiveIntensity: this.#baseMushroomEmissive,
       roughness: 0.36,
-      metalness: 0.04
+      metalness: 0.04,
+      vertexColors: true
     }));
     mushroomCapTurq.userData.preserveRoughness = true;
 
     this.#mushroomCapMats = [mushroomCapPink, mushroomCapLilac, mushroomCapTurq];
-
-    const mushroomHalo = this.#trackMat(new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: this.#baseMushroomHaloOpacity,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false
-    }));
-    mushroomHalo.userData.isVfx = true;
-    this.#mushroomHaloMat = mushroomHalo;
+    this.#mushroomHaloMat = null;
 
     const lanternGlass = this.#trackMat(new THREE.MeshStandardMaterial({
       color: 0xfff3d4,
@@ -388,17 +482,7 @@ export class BotanicalFlora {
     }));
     lanternGlass.userData.preserveRoughness = true;
     this.#gardenLanternGlassMat = lanternGlass;
-
-    const lanternHalo = this.#trackMat(new THREE.MeshBasicMaterial({
-      color: 0xffdba4,
-      transparent: true,
-      opacity: this.#baseLanternHaloOpacity,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false
-    }));
-    lanternHalo.userData.isVfx = true;
-    this.#gardenLanternHaloMat = lanternHalo;
+    this.#gardenLanternHaloMat = null;
 
     return {
       barkCherry,
@@ -417,9 +501,7 @@ export class BotanicalFlora {
       mushroomCapPink,
       mushroomCapLilac,
       mushroomCapTurq,
-      mushroomHalo,
-      lanternGlass,
-      lanternHalo
+      lanternGlass
     };
   }
 
@@ -869,8 +951,39 @@ export class BotanicalFlora {
     baseG.dispose();
     upperG.dispose();
     branchG.dispose();
+    sculptOrganicGeometry(woodGeo, {
+      seed: 11,
+      ampX: 0.04,
+      ampY: 0.02,
+      ampZ: 0.04,
+      frequency: 2.2,
+      octaves: 3,
+      pinBottom: true,
+      pinFalloff: 0.35
+    });
+    bakeProceduralVertexAO(woodGeo, {
+      aoStrength: 0.48,
+      baseWeight: 0.72,
+      shadowTint: 0x1c1438
+    });
 
-    const puffGeo = new THREE.IcosahedronGeometry(1.52, 1);
+    const puffGeo = new THREE.IcosahedronGeometry(1.52, 2);
+    sculptOrganicGeometry(puffGeo, {
+      seed: 23,
+      ampX: 0.20,
+      ampY: 0.16,
+      ampZ: 0.20,
+      frequency: 1.9,
+      octaves: 3,
+      ridgeStrength: 0.14,
+      radial: true
+    });
+    bakeProceduralVertexAO(puffGeo, {
+      aoStrength: 0.44,
+      shadowTint: 0x261b4c,
+      ridgeHighlight: 0.12,
+      undersideWeight: 0.7
+    });
     const woodInst = this.#createInstanced(woodGeo, mats.barkCherry, list.length, true, true);
     const puffInst = this.#createInstanced(puffGeo, mats.foliage, list.length * 5, true, false);
 
@@ -937,11 +1050,26 @@ export class BotanicalFlora {
     const woodGeo = mergeGeometries(woodPieces);
     trunkG.dispose();
     boughG.dispose();
+    sculptOrganicGeometry(woodGeo, {
+      seed: 31,
+      ampX: 0.05,
+      ampY: 0.02,
+      ampZ: 0.05,
+      frequency: 2.0,
+      octaves: 3,
+      pinBottom: true,
+      pinFalloff: 0.35
+    });
+    bakeProceduralVertexAO(woodGeo, {
+      aoStrength: 0.48,
+      baseWeight: 0.72,
+      shadowTint: 0x1c1438
+    });
 
     // Cortina doble de ramas colgantes por gajo
     const drapePieces = [];
-    const strandA = new THREE.CylinderGeometry(0.07, 0.21, 2.85, 6);
-    const strandB = new THREE.CylinderGeometry(0.05, 0.15, 2.45, 6);
+    const strandA = new THREE.CylinderGeometry(0.07, 0.21, 2.85, 6, 3);
+    const strandB = new THREE.CylinderGeometry(0.05, 0.15, 2.45, 6, 3);
     dummy.position.set(0, 0, 0);
     dummy.rotation.set(0, 0, 0);
     dummy.scale.set(1, 1, 1);
@@ -954,8 +1082,30 @@ export class BotanicalFlora {
     const drapeGeo = mergeGeometries(drapePieces);
     strandA.dispose();
     strandB.dispose();
+    bakeProceduralVertexAO(drapeGeo, {
+      aoStrength: 0.42,
+      baseWeight: 0.65,
+      shadowTint: 0x261b4c,
+      ridgeHighlight: 0.10
+    });
 
-    const crownGeo = new THREE.IcosahedronGeometry(2.05, 1);
+    const crownGeo = new THREE.IcosahedronGeometry(2.05, 2);
+    sculptOrganicGeometry(crownGeo, {
+      seed: 37,
+      ampX: 0.24,
+      ampY: 0.16,
+      ampZ: 0.24,
+      frequency: 1.7,
+      octaves: 3,
+      ridgeStrength: 0.12,
+      radial: true
+    });
+    bakeProceduralVertexAO(crownGeo, {
+      aoStrength: 0.44,
+      shadowTint: 0x261b4c,
+      ridgeHighlight: 0.12,
+      undersideWeight: 0.72
+    });
     const woodInst = this.#createInstanced(woodGeo, mats.barkForest, list.length, true, true);
     const crownInst = this.#createInstanced(crownGeo, mats.foliage, list.length * 2, true, false);
     const drapeInst = this.#createInstanced(drapeGeo, mats.foliage, list.length * 9, false, false);
@@ -1011,8 +1161,39 @@ export class BotanicalFlora {
     const dummy = this.#dummy;
     const color = new THREE.Color();
 
-    const trunkGeo = new THREE.CylinderGeometry(0.17, 0.28, 1.4, 8);
-    const coneGeo = new THREE.ConeGeometry(0.96, 2.35, 10);
+    const trunkGeo = new THREE.CylinderGeometry(0.17, 0.28, 1.4, 8, 2);
+    sculptOrganicGeometry(trunkGeo, {
+      seed: 41,
+      ampX: 0.025,
+      ampY: 0.01,
+      ampZ: 0.025,
+      frequency: 2.4,
+      octaves: 2,
+      pinBottom: true,
+      pinFalloff: 0.35
+    });
+    bakeProceduralVertexAO(trunkGeo, {
+      aoStrength: 0.48,
+      baseWeight: 0.72,
+      shadowTint: 0x1c1438
+    });
+
+    const coneGeo = new THREE.ConeGeometry(0.96, 2.35, 10, 3);
+    sculptOrganicGeometry(coneGeo, {
+      seed: 47,
+      ampX: 0.07,
+      ampY: 0.05,
+      ampZ: 0.07,
+      frequency: 2.5,
+      octaves: 3,
+      ridgeStrength: 0.10,
+      pinBottom: true
+    });
+    bakeProceduralVertexAO(coneGeo, {
+      aoStrength: 0.42,
+      shadowTint: 0x261b4c,
+      ridgeHighlight: 0.12
+    });
 
     const trunkInst = this.#createInstanced(trunkGeo, mats.barkForest, list.length, true, true);
     const coneInst = this.#createInstanced(coneGeo, mats.foliage, list.length * 4, true, true);
@@ -1074,8 +1255,39 @@ export class BotanicalFlora {
     const woodGeo = mergeGeometries(woodPieces);
     trunkG.dispose();
     limbG.dispose();
+    sculptOrganicGeometry(woodGeo, {
+      seed: 53,
+      ampX: 0.045,
+      ampY: 0.02,
+      ampZ: 0.045,
+      frequency: 2.1,
+      octaves: 3,
+      pinBottom: true,
+      pinFalloff: 0.35
+    });
+    bakeProceduralVertexAO(woodGeo, {
+      aoStrength: 0.48,
+      baseWeight: 0.72,
+      shadowTint: 0x1c1438
+    });
 
-    const canopyGeo = new THREE.DodecahedronGeometry(1.62, 1);
+    const canopyGeo = new THREE.IcosahedronGeometry(1.62, 2);
+    sculptOrganicGeometry(canopyGeo, {
+      seed: 59,
+      ampX: 0.22,
+      ampY: 0.18,
+      ampZ: 0.22,
+      frequency: 1.8,
+      octaves: 3,
+      ridgeStrength: 0.16,
+      radial: true
+    });
+    bakeProceduralVertexAO(canopyGeo, {
+      aoStrength: 0.44,
+      shadowTint: 0x261b4c,
+      ridgeHighlight: 0.12,
+      undersideWeight: 0.7
+    });
     const woodInst = this.#createInstanced(woodGeo, mats.barkForest, list.length, true, true);
     const canopyInst = this.#createInstanced(canopyGeo, mats.foliage, list.length * 4, true, true);
 
@@ -1149,6 +1361,12 @@ export class BotanicalFlora {
     plinthG.dispose();
     waistG.dispose();
     urnG.dispose();
+    bakeProceduralVertexAO(potMarbleGeo, {
+      aoStrength: 0.36,
+      baseWeight: 0.6,
+      shadowTint: 0x261b4c,
+      cavityWeight: 0.5
+    });
 
     // Molduras y remate oro rosa
     const goldPieces = [];
@@ -1186,6 +1404,11 @@ export class BotanicalFlora {
     rimTopG.dispose();
     stemPinG.dispose();
     finialG.dispose();
+    bakeProceduralVertexAO(potGoldGeo, {
+      aoStrength: 0.28,
+      baseWeight: 0.5,
+      shadowTint: 0x261b4c
+    });
 
     // Variante A: Arbusto esculpido en Espiral
     const spiralPieces = [];
@@ -1203,6 +1426,20 @@ export class BotanicalFlora {
       spiralPieces.push({ geometry: puffUnitG, matrix: dummy.matrix.clone() });
     }
     const spiralGeo = mergeGeometries(spiralPieces);
+    sculptOrganicGeometry(spiralGeo, {
+      seed: 61,
+      ampX: 0.032,
+      ampY: 0.022,
+      ampZ: 0.032,
+      frequency: 3.1,
+      octaves: 2,
+      pinBottom: true
+    });
+    bakeProceduralVertexAO(spiralGeo, {
+      aoStrength: 0.42,
+      shadowTint: 0x261b4c,
+      ridgeHighlight: 0.12
+    });
 
     // Variante B: Arbusto esculpido en Doble Esfera
     const doublePieces = [];
@@ -1231,6 +1468,20 @@ export class BotanicalFlora {
     const doubleGeo = mergeGeometries(doublePieces);
     puffUnitG.dispose();
     sphereUnitG.dispose();
+    sculptOrganicGeometry(doubleGeo, {
+      seed: 67,
+      ampX: 0.035,
+      ampY: 0.024,
+      ampZ: 0.035,
+      frequency: 2.9,
+      octaves: 2,
+      pinBottom: true
+    });
+    bakeProceduralVertexAO(doubleGeo, {
+      aoStrength: 0.42,
+      shadowTint: 0x261b4c,
+      ridgeHighlight: 0.12
+    });
 
     const spirals = list.filter((t) => t.variant % 2 === 0);
     const doubles = list.filter((t) => t.variant % 2 !== 0);
@@ -1340,6 +1591,21 @@ export class BotanicalFlora {
     segUnitG.dispose();
     ringCollarG.dispose();
     cocoG.dispose();
+    sculptOrganicGeometry(palmTrunkGeo, {
+      seed: 71,
+      ampX: 0.025,
+      ampY: 0.015,
+      ampZ: 0.025,
+      frequency: 2.2,
+      octaves: 2,
+      pinBottom: true,
+      pinFalloff: 0.25
+    });
+    bakeProceduralVertexAO(palmTrunkGeo, {
+      aoStrength: 0.48,
+      baseWeight: 0.72,
+      shadowTint: 0x1c1438
+    });
 
     // Corona de 8 hojas arqueadas estilizadas centradas en la cúspide (0.58, 4.92, 0)
     const crownPieces = [];
@@ -1387,6 +1653,12 @@ export class BotanicalFlora {
     const palmCrownGeo = mergeGeometries(crownPieces);
     bladeSegG.dispose();
     spearG.dispose();
+    bakeProceduralVertexAO(palmCrownGeo, {
+      aoStrength: 0.38,
+      shadowTint: 0x261b4c,
+      ridgeHighlight: 0.12,
+      undersideWeight: 0.65
+    });
 
     const trunkInst = this.#createInstanced(palmTrunkGeo, mats.barkPalm, list.length, true, true);
     const crownInst = this.#createInstanced(palmCrownGeo, mats.foliage, list.length, true, false);
@@ -1773,7 +2045,22 @@ export class BotanicalFlora {
 
     // Arbustos bajos de lavanda imperial y jardín (sin colisión)
     if (shrubs.length > 0) {
-      const bushGeo = new THREE.IcosahedronGeometry(0.56, 1);
+      const bushGeo = new THREE.IcosahedronGeometry(0.56, 2);
+      sculptOrganicGeometry(bushGeo, {
+        seed: 83,
+        ampX: 0.08,
+        ampY: 0.06,
+        ampZ: 0.08,
+        frequency: 2.6,
+        octaves: 3,
+        ridgeStrength: 0.12,
+        pinBottom: true
+      });
+      bakeProceduralVertexAO(bushGeo, {
+        aoStrength: 0.42,
+        shadowTint: 0x261b4c,
+        ridgeHighlight: 0.12
+      });
       const tuftGeo = new THREE.ConeGeometry(0.075, 0.24, 5);
       const bushInst = this.#createInstanced(bushGeo, mats.foliage, shrubs.length, false, true, true);
       const tuftInst = this.#createInstanced(tuftGeo, mats.flowerPetal, shrubs.length * 4, false, false, true);
@@ -2077,17 +2364,20 @@ export class BotanicalFlora {
     if (mushrooms.length === 0) return;
 
     const dummy = this.#dummy;
-    const color = new THREE.Color();
 
     const stemGeo = new THREE.CylinderGeometry(0.036, 0.062, 0.24, 7);
     const capBaseGeo = new THREE.SphereGeometry(0.165, 10, 7, 0, Math.PI * 2, 0, Math.PI * 0.58);
-    const haloGeo = new THREE.OctahedronGeometry(0.28, 1);
+    bakeProceduralVertexAO(capBaseGeo, {
+      aoStrength: 0.35,
+      baseWeight: 0.6,
+      shadowTint: 0x261b4c
+    });
 
     const stemInst = this.#createInstanced(stemGeo, mats.mushroomStem, mushrooms.length, false, false, true);
-    const haloInst = this.#createInstanced(haloGeo, mats.mushroomHalo, mushrooms.length, false, false, true);
 
     const byHue = [[], [], []];
     const haloPalette = [0xff77c8, 0xc388ff, 0x66f5e4];
+    const haloSpecs = [];
 
     for (let i = 0; i < mushrooms.length; i++) {
       const m = mushrooms[i];
@@ -2099,17 +2389,30 @@ export class BotanicalFlora {
       dummy.updateMatrix();
       stemInst.setMatrixAt(i, dummy.matrix);
 
-      dummy.position.set(m.x, 0.22 * m.sc, m.z);
-      dummy.rotation.set(0, m.rot, 0);
-      dummy.scale.setScalar(m.sc * 1.15);
-      dummy.updateMatrix();
-      haloInst.setMatrixAt(i, dummy.matrix);
-      color.setHex(haloPalette[m.hueIdx]);
-      haloInst.setColorAt(i, color);
+      haloSpecs.push({
+        x: m.x,
+        y: 0.22 * m.sc,
+        z: m.z,
+        size: m.sc * 0.72,
+        color: haloPalette[m.hueIdx],
+        phase: (i * 0.73) % (Math.PI * 2),
+        opacity: this.#baseMushroomHaloOpacity
+      });
     }
 
     this.#finalizeStaticInstanced(stemInst);
-    this.#finalizeStaticInstanced(haloInst);
+
+    const haloRes = createInstancedVolumetricHalos(haloSpecs, { opacity: 1.0 });
+    const haloInst = haloRes?.isObject3D ? haloRes : haloRes?.mesh;
+    if (haloInst) {
+      if (haloInst.geometry) this.#trackGeo(haloInst.geometry);
+      if (haloInst.material) {
+        this.#trackMat(haloInst.material);
+        this.#mushroomHaloMat = haloInst.material;
+      }
+      this.#instancedMeshes.push(haloInst);
+      this.#root.add(haloInst);
+    }
 
     const capMats = [mats.mushroomCapPink, mats.mushroomCapLilac, mats.mushroomCapTurq];
     for (let h = 0; h < 3; h++) {
@@ -2199,6 +2502,11 @@ export class BotanicalFlora {
     baseFootG.dispose();
     postG.dispose();
     trayG.dispose();
+    bakeProceduralVertexAO(lanternStoneGeo, {
+      aoStrength: 0.34,
+      baseWeight: 0.6,
+      shadowTint: 0x261b4c
+    });
 
     // Tejadillo pagoda y celosía oro rosa
     const goldPieces = [];
@@ -2226,8 +2534,13 @@ export class BotanicalFlora {
     eaveLowG.dispose();
     finialG.dispose();
     barG.dispose();
+    bakeProceduralVertexAO(lanternGoldGeo, {
+      aoStrength: 0.28,
+      baseWeight: 0.5,
+      shadowTint: 0x261b4c
+    });
 
-    // Cristal cálido y halo aditivo con centro local horneado en Y = 0.75
+    // Cristal cálido con centro local horneado en Y = 0.75 + halo volumétrico
     const glassPieces = [];
     const coreG = new THREE.CylinderGeometry(0.145, 0.13, 0.32, 6);
     dummy.position.set(0, 0.75, 0);
@@ -2237,18 +2550,10 @@ export class BotanicalFlora {
     const lanternGlassGeo = mergeGeometries(glassPieces);
     coreG.dispose();
 
-    const haloPieces = [];
-    const auraG = new THREE.OctahedronGeometry(0.52, 1);
-    dummy.position.set(0, 0.75, 0);
-    dummy.updateMatrix();
-    haloPieces.push({ geometry: auraG, matrix: dummy.matrix.clone() });
-    const lanternHaloGeo = mergeGeometries(haloPieces);
-    auraG.dispose();
-
     const stoneInst = this.#createInstanced(lanternStoneGeo, mats.marble, lanterns.length, false, true);
     const goldInst = this.#createInstanced(lanternGoldGeo, mats.roseGold, lanterns.length, false, false);
     const glassInst = this.#createInstanced(lanternGlassGeo, mats.lanternGlass, lanterns.length, false, false);
-    const haloInst = this.#createInstanced(lanternHaloGeo, mats.lanternHalo, lanterns.length, false, false);
+    const haloSpecs = [];
 
     for (let i = 0; i < lanterns.length; i++) {
       const [lx, lz] = lanterns[i];
@@ -2259,13 +2564,33 @@ export class BotanicalFlora {
       stoneInst.setMatrixAt(i, dummy.matrix);
       goldInst.setMatrixAt(i, dummy.matrix);
       glassInst.setMatrixAt(i, dummy.matrix);
-      haloInst.setMatrixAt(i, dummy.matrix);
+
+      haloSpecs.push({
+        x: lx,
+        y: 0.78,
+        z: lz,
+        size: 1.35,
+        color: 0xffdba4,
+        phase: (i * 0.87) % (Math.PI * 2),
+        opacity: this.#baseLanternHaloOpacity
+      });
     }
 
     this.#finalizeStaticInstanced(stoneInst);
     this.#finalizeStaticInstanced(goldInst);
     this.#finalizeStaticInstanced(glassInst);
-    this.#finalizeStaticInstanced(haloInst);
+
+    const haloRes = createInstancedVolumetricHalos(haloSpecs, { opacity: 1.0 });
+    const haloInst = haloRes?.isObject3D ? haloRes : haloRes?.mesh;
+    if (haloInst) {
+      if (haloInst.geometry) this.#trackGeo(haloInst.geometry);
+      if (haloInst.material) {
+        this.#trackMat(haloInst.material);
+        this.#gardenLanternHaloMat = haloInst.material;
+      }
+      this.#instancedMeshes.push(haloInst);
+      this.#root.add(haloInst);
+    }
   }
 
   #buildSakuraPetals() {
@@ -2339,23 +2664,33 @@ export class BotanicalFlora {
     this.#baseLanternHaloOpacity = isGala
       ? 0.46
       : Math.min(0.42, 0.14 + li * 0.10);
+    this.#lanternHaloScale = isGala ? 1.8 : Math.min(1.65, 0.7 + li * 0.55);
 
     this.#baseMushroomEmissive = isGala ? 1.50 : (0.26 + li * 0.28);
     this.#baseMushroomHaloOpacity = isGala
       ? 0.36
       : Math.min(0.32, 0.08 + li * 0.08);
+    this.#mushroomHaloScale = isGala ? 1.7 : Math.min(1.6, 0.7 + li * 0.55);
 
     if (this.#gardenLanternGlassMat) {
       this.#gardenLanternGlassMat.emissiveIntensity = this.#baseLanternEmissive;
     }
     if (this.#gardenLanternHaloMat) {
-      this.#gardenLanternHaloMat.opacity = this.#baseLanternHaloOpacity;
+      if (this.#gardenLanternHaloMat.uniforms?.uOpacity) {
+        this.#gardenLanternHaloMat.uniforms.uOpacity.value = this.#lanternHaloScale;
+      } else if (this.#gardenLanternHaloMat.opacity !== undefined) {
+        this.#gardenLanternHaloMat.opacity = this.#baseLanternHaloOpacity;
+      }
     }
     for (let i = 0; i < this.#mushroomCapMats.length; i++) {
       this.#mushroomCapMats[i].emissiveIntensity = this.#baseMushroomEmissive;
     }
     if (this.#mushroomHaloMat) {
-      this.#mushroomHaloMat.opacity = this.#baseMushroomHaloOpacity;
+      if (this.#mushroomHaloMat.uniforms?.uOpacity) {
+        this.#mushroomHaloMat.uniforms.uOpacity.value = this.#mushroomHaloScale;
+      } else if (this.#mushroomHaloMat.opacity !== undefined) {
+        this.#mushroomHaloMat.opacity = this.#baseMushroomHaloOpacity;
+      }
     }
     if (this.#petalMat) {
       this.#petalMat.opacity = isGala ? 0.92 : 0.86;
@@ -2396,7 +2731,11 @@ export class BotanicalFlora {
     const lanternPulse = 0.96 + Math.sin(t * 2.4 + 1.1) * 0.04;
 
     if (this.#mushroomHaloMat) {
-      this.#mushroomHaloMat.opacity = this.#baseMushroomHaloOpacity * pulse;
+      if (this.#mushroomHaloMat.uniforms?.uOpacity) {
+        this.#mushroomHaloMat.uniforms.uOpacity.value = this.#mushroomHaloScale * pulse;
+      } else if (this.#mushroomHaloMat.opacity !== undefined) {
+        this.#mushroomHaloMat.opacity = this.#baseMushroomHaloOpacity * pulse;
+      }
     }
     for (let i = 0; i < this.#mushroomCapMats.length; i++) {
       this.#mushroomCapMats[i].emissiveIntensity = this.#baseMushroomEmissive * pulse;
@@ -2405,7 +2744,11 @@ export class BotanicalFlora {
       this.#gardenLanternGlassMat.emissiveIntensity = this.#baseLanternEmissive * lanternPulse;
     }
     if (this.#gardenLanternHaloMat) {
-      this.#gardenLanternHaloMat.opacity = this.#baseLanternHaloOpacity * lanternPulse;
+      if (this.#gardenLanternHaloMat.uniforms?.uOpacity) {
+        this.#gardenLanternHaloMat.uniforms.uOpacity.value = this.#lanternHaloScale * lanternPulse;
+      } else if (this.#gardenLanternHaloMat.opacity !== undefined) {
+        this.#gardenLanternHaloMat.opacity = this.#baseLanternHaloOpacity * lanternPulse;
+      }
     }
   }
 

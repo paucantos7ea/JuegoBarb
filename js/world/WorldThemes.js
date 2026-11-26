@@ -12,12 +12,12 @@ export class WorldThemes {
       id: 'gala_imperial',
       name: 'Gala Imperial',
       subtitle: 'Noche Estrellada · Bóveda celeste viva, luna creciente monumental y jardines iluminados',
-      orbGradient: 'linear-gradient(135deg, #050414 0%, #441f68 52%, #f5a6d4 100%)',
+      orbGradient: 'linear-gradient(135deg, #040312 0%, #3b1b62 52%, #f5a6d4 100%)',
       envThemeKey: 'night',
-      skyTop: 0x050414,
-      skyMidHigh: 0x171042,
-      skyMid: 0x441f68,
-      skyBottom: 0x8f4276,
+      skyTop: 0x040312,
+      skyMidHigh: 0x130d38,
+      skyMid: 0x3b1b62,
+      skyBottom: 0x8e4276,
       fogColor: 0x1f133e,
       fogDensity: 0.0022,
       hemiSky: 0x8a72c8,
@@ -141,9 +141,9 @@ export class WorldThemes {
    */
   static syncGraphics(theme, directionalLight = null) {
     if (!theme) return;
-    GraphicsSync.uSkyZenith.value.setHex(theme.skyTop ?? 0x050414);
-    GraphicsSync.uSkyMid.value.setHex(theme.skyMid ?? 0x441f68);
-    GraphicsSync.uSkyHorizon.value.setHex(theme.skyBottom ?? 0x8f4276);
+    GraphicsSync.uSkyZenith.value.setHex(theme.skyTop ?? 0x040312);
+    GraphicsSync.uSkyMid.value.setHex(theme.skyMid ?? 0x3b1b62);
+    GraphicsSync.uSkyHorizon.value.setHex(theme.skyBottom ?? 0x8e4276);
     GraphicsSync.uFogColor.value.setHex(theme.fogColor ?? 0x1f133e);
     GraphicsSync.uFogDensity.value = theme.fogDensity ?? 0.0022;
     GraphicsSync.uNightFactor.value = theme.nightMix ?? (theme.isNight ? 1.0 : 0.0);

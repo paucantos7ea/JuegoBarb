@@ -7,6 +7,7 @@ import { PrinceRigBuilder } from './catalog/PrinceRigBuilder.js';
 import { CharacterAnimator } from './CharacterAnimator.js';
 import { buildRidingMorphs, RIDE_MORPH } from './RidingDrape.js';
 import { RIDER_POSE } from '../world/HorseAnatomy.js';
+import { bakeProceduralVertexAO, createLumenMaterial, ensureVertexColors } from '../core/LumenArtPipeline.js';
 
 const SPINE_Y = 1.0;   // Pivote de la columna (cintura): el torso se inclina sin mover los pies
 const WAIST_Y = 1.04;  // Pivote del vuelo de la falda
@@ -225,6 +226,7 @@ export class CharacterRig {
     const baseZ = this.#getBaseArmZ();
     this.#leftShoulder.rotation.set(0, 0, baseZ);
     this.#rightShoulder.rotation.set(0, 0, -baseZ);
+    ensureVertexColors(this.#root, { aoStrength: 0.22, shadowTint: 0x322050 });
     return this.#root;
   }
 
@@ -295,6 +297,7 @@ export class CharacterRig {
       let castShadow = false;
       let receiveShadow = false;
       let renderOrder = 0;
+      let hasColor = false;
 
       for (const mesh of meshes) {
         mesh.updateMatrix();
@@ -312,9 +315,13 @@ export class CharacterRig {
 
         const normAttr = g.attributes.normal;
         const uvAttr = g.attributes.uv;
+        const colorAttr = g.attributes.color;
         const posArr = posAttr.array;
         const normArr = normAttr.array;
         const uvArr = uvAttr ? uvAttr.array : null;
+        const colorArr = colorAttr ? colorAttr.array : null;
+        const colorItemSize = colorAttr ? colorAttr.itemSize : 3;
+        if (colorArr) hasColor = true;
 
         if (mesh.matrix.determinant() < 0) {
           for (let v = 0; v + 2 < count; v += 3) {
@@ -331,6 +338,13 @@ export class CharacterRig {
                 const tu = uvArr[u1 + k]; uvArr[u1 + k] = uvArr[u2 + k]; uvArr[u2 + k] = tu;
               }
             }
+            if (colorArr) {
+              const c1 = (v + 1) * colorItemSize;
+              const c2 = (v + 2) * colorItemSize;
+              for (let k = 0; k < colorItemSize; k++) {
+                const tc = colorArr[c1 + k]; colorArr[c1 + k] = colorArr[c2 + k]; colorArr[c2 + k] = tc;
+              }
+            }
           }
         }
 
@@ -338,7 +352,7 @@ export class CharacterRig {
         receiveShadow = receiveShadow || mesh.receiveShadow;
         if (mesh.renderOrder > renderOrder) renderOrder = mesh.renderOrder;
         totalVerts += count;
-        pieces.push({ g, count, posArr, normArr, uvArr });
+        pieces.push({ g, count, posArr, normArr, uvArr, colorArr, colorItemSize });
       }
 
       if (pieces.length === 0) continue;
@@ -346,6 +360,7 @@ export class CharacterRig {
       const positions = new Float32Array(totalVerts * 3);
       const normals = new Float32Array(totalVerts * 3);
       const uvs = new Float32Array(totalVerts * 2);
+      const colors = hasColor ? new Float32Array(totalVerts * 3) : null;
 
       let vOffset = 0;
       for (const p of pieces) {
@@ -353,6 +368,19 @@ export class CharacterRig {
         normals.set(p.normArr.subarray(0, p.count * 3), vOffset * 3);
         if (p.uvArr) {
           uvs.set(p.uvArr.subarray(0, p.count * 2), vOffset * 2);
+        }
+        if (colors) {
+          if (p.colorArr && p.colorItemSize === 3) {
+            colors.set(p.colorArr.subarray(0, p.count * 3), vOffset * 3);
+          } else if (p.colorArr) {
+            for (let k = 0; k < p.count; k++) {
+              colors[(vOffset + k) * 3] = p.colorArr[k * p.colorItemSize];
+              colors[(vOffset + k) * 3 + 1] = p.colorArr[k * p.colorItemSize + 1];
+              colors[(vOffset + k) * 3 + 2] = p.colorArr[k * p.colorItemSize + 2];
+            }
+          } else {
+            colors.fill(1, vOffset * 3, (vOffset + p.count) * 3);
+          }
         }
         vOffset += p.count;
         p.g.dispose();
@@ -362,6 +390,9 @@ export class CharacterRig {
       merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      if (colors) {
+        merged.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      }
       merged.computeBoundingSphere();
 
       if (track) track(merged);
@@ -405,9 +436,15 @@ export class CharacterRig {
   #createMaterials() {
     const m = this.#materials;
     // Piel mate-satinada de muñeca: sin brillos plásticos
-    m.skin = new THREE.MeshStandardMaterial({ color: 0xfbe0d2, roughness: 0.72, metalness: 0.0 });
+    m.skin = createLumenMaterial(
+      { color: 0xfbe0d2, roughness: 0.72, metalness: 0.0 },
+      { rimStrength: 0.24, rimPower: 3.4, rimTint: 0xffd6ec, shadowLiftColor: 0x3a2452, shadowLiftStrength: 0.14, heightFog: false, cacheTag: 'char_skin' }
+    );
     m.blush = new THREE.MeshBasicMaterial({ color: 0xf498b4, transparent: true, opacity: 0.42, depthWrite: false });
-    m.eyelid = new THREE.MeshStandardMaterial({ color: 0xc88a96, roughness: 0.55, metalness: 0.02 });
+    m.eyelid = createLumenMaterial(
+      { color: 0xc88a96, roughness: 0.55, metalness: 0.02 },
+      { rimStrength: 0.18, rimPower: 3.5, rimTint: 0xffd6ec, shadowLiftColor: 0x3a2452, shadowLiftStrength: 0.12, heightFog: false, cacheTag: 'char_eyelid' }
+    );
     m.sclera = new THREE.MeshStandardMaterial({ color: 0xf6f8fc, roughness: 0.22, metalness: 0.02 });
     m.eyeIris = new THREE.MeshStandardMaterial({ map: getIrisDetailTexture(), color: 0x2d78e6, roughness: 0.16, metalness: 0.08 });
     m.eyeRing = new THREE.MeshStandardMaterial({ color: 0x164296, roughness: 0.25, metalness: 0.05 });
@@ -416,17 +453,50 @@ export class CharacterRig {
     m.catchlight = new THREE.MeshBasicMaterial({ color: 0xffffff });
     m.lash = new THREE.MeshStandardMaterial({ color: 0x1b0f1b, roughness: 0.45, metalness: 0.04 });
     m.brow = new THREE.MeshStandardMaterial({ color: 0x9c743a, roughness: 0.48, metalness: 0.04 });
-    m.lips = new THREE.MeshStandardMaterial({ color: 0xe86a80, roughness: 0.52, metalness: 0.0 });
-    m.hair = new THREE.MeshStandardMaterial({ color: 0xf0c975, roughness: 0.36, metalness: 0.08, side: THREE.DoubleSide });
+    m.lips = createLumenMaterial(
+      { color: 0xe86a80, roughness: 0.52, metalness: 0.0 },
+      { rimStrength: 0.20, rimPower: 3.4, rimTint: 0xffd6ec, shadowLiftColor: 0x3a2452, shadowLiftStrength: 0.12, heightFog: false, cacheTag: 'char_lips' }
+    );
+    m.hair = createLumenMaterial(
+      { color: 0xf0c975, roughness: 0.36, metalness: 0.08, side: THREE.DoubleSide, vertexColors: true },
+      { preserveRoughness: true, rimStrength: 0.40, rimPower: 2.6, rimTint: 0xffe4f4, shadowLiftColor: 0x2c1b48, shadowLiftStrength: 0.15, heightFog: false, cacheTag: 'char_hair' }
+    );
     m.hair.userData.preserveRoughness = true;
-    m.primary = new THREE.MeshStandardMaterial({ map: getSilkBrocadeTexture(), color: 0xf18bb8, roughness: 0.50, metalness: 0.08 });
-    m.secondary = new THREE.MeshStandardMaterial({ map: getPearlLaceTexture(), color: 0xffdce9, roughness: 0.46, metalness: 0.08, side: THREE.DoubleSide });
-    m.roseGold = new THREE.MeshStandardMaterial({ color: 0xf0be74, metalness: 0.88, roughness: 0.22 });
-    m.crystal = new THREE.MeshStandardMaterial({ color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 1.45, roughness: 0.12, metalness: 0.15 });
+    m.primary = createLumenMaterial(
+      { map: getSilkBrocadeTexture(), color: 0xf18bb8, roughness: 0.50, metalness: 0.08, vertexColors: true },
+      { rimStrength: 0.34, rimPower: 2.9, rimTint: 0xffcce8, shadowLiftColor: 0x2d1b4e, shadowLiftStrength: 0.16, heightFog: false, cacheTag: 'char_primary' }
+    );
+    m.secondary = createLumenMaterial(
+      { map: getPearlLaceTexture(), color: 0xffdce9, roughness: 0.46, metalness: 0.08, side: THREE.DoubleSide, vertexColors: true },
+      { rimStrength: 0.34, rimPower: 2.9, rimTint: 0xffcce8, shadowLiftColor: 0x2d1b4e, shadowLiftStrength: 0.16, heightFog: false, cacheTag: 'char_secondary' }
+    );
+    m.roseGold = createLumenMaterial(
+      { color: 0xf0be74, metalness: 0.88, roughness: 0.22, vertexColors: true },
+      { rimStrength: 0.36, rimPower: 2.8, rimTint: 0xfff0d4, shadowLiftColor: 0x2d1b4e, shadowLiftStrength: 0.12, heightFog: false, cacheTag: 'char_rosegold' }
+    );
+    m.crystal = createLumenMaterial(
+      { color: 0xffe4f7, emissive: 0xe27bc4, emissiveIntensity: 1.45, roughness: 0.12, metalness: 0.15 },
+      { preserveRoughness: true, rimStrength: 0.45, rimPower: 2.5, rimTint: 0xffe8fb, heightFog: false, cacheTag: 'char_crystal' }
+    );
     m.crystal.userData.preserveRoughness = true;
-    m.shawl = new THREE.MeshStandardMaterial({ color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.18, roughness: 0.14, transparent: true, opacity: 0.52, side: THREE.DoubleSide });
-    m.dark = new THREE.MeshStandardMaterial({ color: 0x221520, roughness: 0.30, metalness: 0.28 });
+    m.shawl = createLumenMaterial(
+      { color: 0xc2eeff, emissive: 0x7ca2ff, emissiveIntensity: 0.18, roughness: 0.14, transparent: true, opacity: 0.52, side: THREE.DoubleSide },
+      { rimStrength: 0.38, rimPower: 2.6, rimTint: 0xdcf4ff, shadowLiftColor: 0x2d1b4e, shadowLiftStrength: 0.10, heightFog: false, cacheTag: 'char_shawl' }
+    );
+    m.dark = createLumenMaterial(
+      { color: 0x221520, roughness: 0.30, metalness: 0.28, vertexColors: true },
+      { rimStrength: 0.28, rimPower: 3.1, rimTint: 0xe4dcff, shadowLiftColor: 0x241838, shadowLiftStrength: 0.14, heightFog: false, cacheTag: 'char_dark' }
+    );
     this.#sharedMats = new Set(Object.values(m));
+  }
+
+  #bakeGroupAO(group, options) {
+    if (!group) return;
+    for (const child of group.children) {
+      if (child.isMesh && child.geometry) {
+        bakeProceduralVertexAO(child.geometry, options);
+      }
+    }
   }
 
   #buildPrinceBody() {
@@ -441,11 +511,15 @@ export class CharacterRig {
     this.#moveMeshes(this.#outfitGroup, this.#skirtInner, (m) => this.#isSkirtPart(m));
     CharacterRig.mergeGroupByMaterial(this.#outfitGroup);
     CharacterRig.mergeGroupByMaterial(this.#skirtInner);
+    const outfitAO = { aoStrength: 0.34, cavityWeight: 0.42, baseWeight: 0.32, shadowTint: 0x301d52, ridgeHighlight: 0.08 };
+    this.#bakeGroupAO(this.#outfitGroup, outfitAO);
+    this.#bakeGroupAO(this.#skirtInner, outfitAO);
   }
 
   #buildPrincessBody() {
     const torsoPts = [[0.01, 0.86], [0.142, 0.90], [0.100, 1.05], [0.134, 1.19], [0.154, 1.28], [0.124, 1.36], [0.048, 1.39]];
     const torso = new THREE.Mesh(this.#track(new THREE.LatheGeometry(torsoPts.map(([x, y]) => new THREE.Vector2(x, y)), 24)), this.#materials.primary);
+    bakeProceduralVertexAO(torso.geometry, { aoStrength: 0.28, shadowTint: 0x342254 });
     torso.scale.set(1.06, 1, 0.74); torso.castShadow = true;
     const neckPts = [[0.049, -0.074], [0.044, -0.02], [0.041, 0.04], [0.043, 0.074]];
     const neck = new THREE.Mesh(this.#track(new THREE.LatheGeometry(neckPts.map(([x, y]) => new THREE.Vector2(x, y)), 16)), this.#materials.skin);
@@ -574,6 +648,9 @@ export class CharacterRig {
       this.#moveMeshes(this.#outfitGroup, this.#skirtInner, (mesh) => this.#isSkirtPart(mesh));
       CharacterRig.mergeGroupByMaterial(this.#outfitGroup);
       CharacterRig.mergeGroupByMaterial(this.#skirtInner);
+      const outfitAO = { aoStrength: 0.34, cavityWeight: 0.42, baseWeight: 0.32, shadowTint: 0x301d52, ridgeHighlight: 0.08 };
+      this.#bakeGroupAO(this.#outfitGroup, outfitAO);
+      this.#bakeGroupAO(this.#skirtInner, outfitAO);
     }
 
     // Libera el pelo anterior (incluido el pivote con inercia) y reconstruye el nuevo peinado
@@ -586,6 +663,9 @@ export class CharacterRig {
     this.#moveMeshes(this.#hairGroup, this.#hairSwingInner, (mesh) => this.#isLongHair(mesh));
     CharacterRig.mergeGroupByMaterial(this.#hairGroup);
     CharacterRig.mergeGroupByMaterial(this.#hairSwingInner);
+    const hairAO = { aoStrength: 0.36, baseWeight: 0.35, cavityWeight: 0.35, shadowTint: 0x2a1b46, ridgeHighlight: 0.12 };
+    this.#bakeGroupAO(this.#hairGroup, hairAO);
+    this.#bakeGroupAO(this.#hairSwingInner, hairAO);
     this.#animator?.setBaseArmZ(this.#getBaseArmZ());
 
     // Las mallas de falda se han reconstruido: sus morphs de montar se recalculan
@@ -597,6 +677,7 @@ export class CharacterRig {
     for (const [id, node] of Object.entries(this.#accessoryNodes)) {
       node.visible = activeAcc.has(id);
     }
+    ensureVertexColors(this.#root, { aoStrength: 0.22, shadowTint: 0x322050 });
   }
 
   getAppearance() {

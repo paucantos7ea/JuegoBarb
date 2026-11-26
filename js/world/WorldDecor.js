@@ -3,6 +3,13 @@ import { WaterSystem, getRiverCenterX } from './WaterSystem.js';
 import { BotanicalFlora } from './BotanicalFlora.js';
 import { FountainSystem } from './FountainSystem.js';
 import { FoliageSystem } from './FoliageSystem.js';
+import {
+  sculptOrganicGeometry,
+  bakeProceduralVertexAO,
+  createLumenMaterial,
+  createInstancedVolumetricHalos,
+  ensureVertexColors
+} from '../core/LumenArtPipeline.js';
 
 function swapAttr3(attr, a, b) {
   const x = attr.getX(a);
@@ -24,6 +31,7 @@ function mergeGeometries(pieces) {
 
   const normalized = [];
   let totalVerts = 0;
+  let hasColors = false;
 
   for (let i = 0; i < pieces.length; i++) {
     const { geometry, matrix } = pieces[i];
@@ -31,18 +39,23 @@ function mergeGeometries(pieces) {
     if (!g.attributes.normal) {
       g.computeVertexNormals();
     }
+    if (g.attributes.color) {
+      hasColors = true;
+    }
     if (matrix) {
       g.applyMatrix4(matrix);
       if (matrix.determinant() < 0) {
         const pos = g.attributes.position;
         const norm = g.attributes.normal;
         const uv = g.attributes.uv;
+        const col = g.attributes.color;
         for (let v = 0; v < pos.count; v += 3) {
           const v1 = v + 1;
           const v2 = v + 2;
           swapAttr3(pos, v1, v2);
           if (norm) swapAttr3(norm, v1, v2);
           if (uv) swapAttr2(uv, v1, v2);
+          if (col) swapAttr3(col, v1, v2);
         }
       }
     }
@@ -53,6 +66,7 @@ function mergeGeometries(pieces) {
   const positions = new Float32Array(totalVerts * 3);
   const normals = new Float32Array(totalVerts * 3);
   const uvs = new Float32Array(totalVerts * 2);
+  const colors = hasColors ? new Float32Array(totalVerts * 3) : null;
 
   let offset = 0;
   for (let i = 0; i < normalized.length; i++) {
@@ -60,6 +74,7 @@ function mergeGeometries(pieces) {
     const pos = g.attributes.position;
     const norm = g.attributes.normal;
     const uv = g.attributes.uv;
+    const col = g.attributes.color;
     const count = pos.count;
 
     for (let v = 0; v < count; v++) {
@@ -78,6 +93,17 @@ function mergeGeometries(pieces) {
         uvs[i2] = uv.getX(v);
         uvs[i2 + 1] = uv.getY(v);
       }
+      if (colors) {
+        if (col) {
+          colors[i3] = col.getX(v);
+          colors[i3 + 1] = col.getY(v);
+          colors[i3 + 2] = col.getZ(v);
+        } else {
+          colors[i3] = 1;
+          colors[i3 + 1] = 1;
+          colors[i3 + 2] = 1;
+        }
+      }
     }
     offset += count;
     g.dispose();
@@ -87,6 +113,9 @@ function mergeGeometries(pieces) {
   merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (colors) {
+    merged.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  }
   merged.computeBoundingSphere();
   merged.computeBoundingBox();
   return merged;
@@ -115,6 +144,9 @@ export class WorldDecor {
   #dropData = null;
   #lanternMat = null;
   #lanternHaloMat = null;
+  #lanternHaloScale = 1.0;
+  #floatingCrystalsInst = null;
+  #floatingCrystalSpecs = [];
   #pathGrid = new Set();
   #elapsed = 0;
 
@@ -163,6 +195,8 @@ export class WorldDecor {
     this.#buildCurvedStonePaths(mats);
     this.#buildLanterns(mats);
     this.#buildMossyRocksInstanced(mats);
+
+    ensureVertexColors(this.#root, { aoStrength: 0.24, shadowTint: 0x221844 });
 
     this.#root.matrixAutoUpdate = false;
     this.#root.updateMatrix();
@@ -343,73 +377,116 @@ export class WorldDecor {
     };
 
     const hillGrass = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         map: this.#textures.getTexture('grass', 8, 6),
         color: 0xc2e6b8,
         roughness: 0.92,
-        metalness: 0.0
+        metalness: 0.0,
+        vertexColors: true
+      }, {
+        rimStrength: 0.16,
+        shadowLiftStrength: 0.18,
+        cacheTag: 'decor_hill_grass'
       })
     );
 
     const hedge = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         map: this.#textures.getTexture('hedge', 2, 1),
         color: 0xd8f2dc,
         roughness: 0.84,
-        metalness: 0.02
+        metalness: 0.02,
+        vertexColors: true
+      }, {
+        rimStrength: 0.26,
+        subsurfaceStrength: 0.28,
+        subsurfaceTint: 0xc2f5cc,
+        shadowLiftStrength: 0.16,
+        cacheTag: 'decor_hedge'
       })
     );
 
     const marble = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         map: this.#textures.getTexture('marble', 2, 2),
         color: 0xf4eff2,
         roughness: 0.3,
-        metalness: 0.05
+        metalness: 0.05,
+        vertexColors: true
+      }, {
+        rimStrength: 0.24,
+        shadowLiftStrength: 0.15,
+        cacheTag: 'decor_marble'
       })
     );
 
     const plazaFloor = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         map: this.#textures.getTexture('marbleFloor', 8, 8),
         color: 0xf2ecf0,
         roughness: 0.25,
         metalness: 0.06
+      }, {
+        rimStrength: 0.14,
+        shadowLiftStrength: 0.14,
+        cacheTag: 'decor_plaza_floor'
       })
     );
 
     const stoneSlab = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         map: this.#textures.getTexture('marble', 1, 1),
         color: 0xece6ea,
         roughness: 0.38,
         metalness: 0.04
+      }, {
+        rimStrength: 0.18,
+        shadowLiftStrength: 0.15,
+        cacheTag: 'decor_stone_slab'
       })
     );
 
     const rockStone = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         map: this.#textures.getTexture('marble', 1, 1),
         color: 0xc7c2c9,
         roughness: 0.82,
-        metalness: 0.03
+        metalness: 0.03,
+        vertexColors: true
+      }, {
+        rimStrength: 0.24,
+        shadowLiftStrength: 0.18,
+        cacheTag: 'decor_rock_stone'
       })
     );
 
     const moss = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         color: 0x389150,
         roughness: 0.86,
-        metalness: 0.02
+        metalness: 0.02,
+        vertexColors: true
+      }, {
+        rimStrength: 0.28,
+        subsurfaceStrength: 0.22,
+        subsurfaceTint: 0xaef5b8,
+        shadowLiftStrength: 0.16,
+        cacheTag: 'decor_moss'
       })
     );
 
     const roseGold = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         map: this.#textures.getTexture('roseGold', 1, 1),
         color: 0xeeb0a1,
         metalness: 0.88,
-        roughness: 0.18
+        roughness: 0.18,
+        vertexColors: true
+      }, {
+        rimStrength: 0.30,
+        shadowLiftStrength: 0.14,
+        preserveRoughness: true,
+        cacheTag: 'decor_rosegold'
       })
     );
 
@@ -453,18 +530,6 @@ export class WorldDecor {
       })
     );
 
-    const lanternHalo = this.#trackMat(
-      new THREE.MeshBasicMaterial({
-        color: 0xffdca8,
-        transparent: true,
-        opacity: 0.24,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false
-      })
-    );
-    lanternHalo.userData.isVfx = true;
-
     const crystalDome = this.#trackMat(
       new THREE.MeshStandardMaterial({
         color: 0xf7cce6,
@@ -493,10 +558,16 @@ export class WorldDecor {
     crystalFinial.userData.preserveRoughness = true;
 
     const flowerPetal = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         color: 0xffffff,
         roughness: 0.52,
         metalness: 0.02
+      }, {
+        subsurfaceStrength: 0.35,
+        subsurfaceTint: 0xffd2ee,
+        rimStrength: 0.30,
+        rimTint: 0xc2d8ff,
+        cacheTag: 'decor_petal'
       })
     );
 
@@ -510,15 +581,19 @@ export class WorldDecor {
     );
 
     const hayGold = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         color: 0xe6c36b,
         roughness: 0.88,
         metalness: 0.02
+      }, {
+        rimStrength: 0.22,
+        shadowLiftStrength: 0.15,
+        cacheTag: 'decor_hay'
       })
     );
 
     this.#lanternMat = lantern;
-    this.#lanternHaloMat = lanternHalo;
+    this.#lanternHaloMat = null;
 
     return {
       grass,
@@ -534,7 +609,6 @@ export class WorldDecor {
       pondBed,
       planterSoil,
       lantern,
-      lanternHalo,
       crystalDome,
       crystalFinial,
       flowerPetal,
@@ -588,8 +662,10 @@ export class WorldDecor {
     }
     this.#collision.addRampSurface(-3.6, 3.6, 35.8, 39.2, 'z', 36.0, 39.0, 0.0, 1.2);
 
-    const colGeo = new THREE.CylinderGeometry(0.24, 0.28, 5.2, 12);
+    const colGeo = new THREE.CylinderGeometry(0.24, 0.28, 5.2, 12, 3);
     const colBaseGeo = new THREE.CylinderGeometry(0.32, 0.34, 0.25, 12);
+    bakeProceduralVertexAO(colGeo, { aoStrength: 0.38, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(colBaseGeo, { aoStrength: 0.32, baseWeight: 0.6, shadowTint: 0x221844 });
     this.#tempGeos.push(colGeo, colBaseGeo);
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
@@ -623,11 +699,15 @@ export class WorldDecor {
 
     const floorGeo = new THREE.CylinderGeometry(4.4, 4.58, 0.08, 28);
     const baseTrimGeo = new THREE.TorusGeometry(4.42, 0.09, 8, 36);
-    const colGeo = new THREE.CylinderGeometry(0.18, 0.22, 4.3, 12);
+    const colGeo = new THREE.CylinderGeometry(0.18, 0.22, 4.3, 12, 3);
     const colBaseGeo = new THREE.CylinderGeometry(0.3, 0.35, 0.24, 12);
     const corniceGeo = new THREE.TorusGeometry(3.72, 0.17, 10, 36);
     const domeGeo = new THREE.SphereGeometry(3.68, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2);
     const finialGeo = new THREE.OctahedronGeometry(0.34, 0);
+    bakeProceduralVertexAO(baseTrimGeo, { aoStrength: 0.26, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(colGeo, { aoStrength: 0.38, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(colBaseGeo, { aoStrength: 0.34, baseWeight: 0.6, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(corniceGeo, { aoStrength: 0.28, shadowTint: 0x221844 });
     this.#tempGeos.push(floorGeo, baseTrimGeo, colGeo, colBaseGeo, corniceGeo, domeGeo, finialGeo);
 
     for (const g of specs) {
@@ -700,12 +780,17 @@ export class WorldDecor {
     //    (Altura interior >= 5.8 m, sin colisión superior para pasar a caballo; colisionadores solo en Z = ±4.9)
     const archXList = [53.5, 64.5, 75.5, 86.5, 108.5];
     const plinthGeo = new THREE.BoxGeometry(0.95, 0.56, 0.95);
-    const colGeo = new THREE.CylinderGeometry(0.22, 0.27, 3.85, 14);
+    const colGeo = new THREE.CylinderGeometry(0.22, 0.27, 3.85, 14, 3);
     const capGeo = new THREE.CylinderGeometry(0.36, 0.24, 0.28, 14);
     const mainArchGeo = new THREE.TorusGeometry(4.9, 0.18, 10, 36, Math.PI);
     const innerArchGeo = new THREE.TorusGeometry(4.66, 0.075, 8, 36, Math.PI);
     const crownRingGeo = new THREE.TorusGeometry(0.42, 0.055, 8, 24);
     const crownGemGeo = new THREE.OctahedronGeometry(0.28, 0);
+    bakeProceduralVertexAO(plinthGeo, { aoStrength: 0.36, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(colGeo, { aoStrength: 0.38, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(capGeo, { aoStrength: 0.30, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(mainArchGeo, { aoStrength: 0.34, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(innerArchGeo, { aoStrength: 0.28, shadowTint: 0x221844 });
     this.#tempGeos.push(plinthGeo, colGeo, capGeo, mainArchGeo, innerArchGeo, crownRingGeo, crownGemGeo);
 
     const garlandPuffs = [];
@@ -743,6 +828,20 @@ export class WorldDecor {
     // InstancedMesh ligero para el follaje y rosas de los 5 arcos florales
     if (garlandPuffs.length > 0) {
       const puffGeo = new THREE.IcosahedronGeometry(0.55, 1);
+      sculptOrganicGeometry(puffGeo, {
+        seed: 121,
+        ampX: 0.08,
+        ampY: 0.07,
+        ampZ: 0.08,
+        frequency: 2.4,
+        octaves: 2,
+        radial: true
+      });
+      bakeProceduralVertexAO(puffGeo, {
+        aoStrength: 0.42,
+        shadowTint: 0x221844,
+        ridgeHighlight: 0.12
+      });
       const roseGeo = new THREE.DodecahedronGeometry(0.15, 0);
       const puffInst = this.#createInstanced(puffGeo, mats.hedge, garlandPuffs.length, false, false);
       const roseInst = this.#createInstanced(roseGeo, mats.flowerPetal, garlandRoses.length, false, false);
@@ -791,11 +890,15 @@ export class WorldDecor {
       { x: 105.8, type: 'planter' }
     ];
 
-    const hedgeBoxGeo = new THREE.BoxGeometry(2.25, 0.62, 0.74);
+    const hedgeBoxGeo = new THREE.BoxGeometry(2.25, 0.62, 0.74, 3, 2, 2);
     const hedgeCurbGeo = new THREE.BoxGeometry(2.38, 0.14, 0.86);
     const planterBoxGeo = new THREE.BoxGeometry(1.68, 0.54, 0.88);
     const planterRimGeo = new THREE.BoxGeometry(1.8, 0.09, 0.98);
     const planterSoilGeo = new THREE.BoxGeometry(1.48, 0.06, 0.68);
+    bakeProceduralVertexAO(hedgeBoxGeo, { aoStrength: 0.42, baseWeight: 0.7, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(hedgeCurbGeo, { aoStrength: 0.30, baseWeight: 0.6, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(planterBoxGeo, { aoStrength: 0.34, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(planterRimGeo, { aoStrength: 0.24, shadowTint: 0x221844 });
     this.#tempGeos.push(hedgeBoxGeo, hedgeCurbGeo, planterBoxGeo, planterRimGeo, planterSoilGeo);
 
     for (const mod of borderModules) {
@@ -863,8 +966,11 @@ export class WorldDecor {
 
     // 2. Plazas circulares VIP Norte (162, -48) y Sur (162, +48) de radio r = 9.0 + terrazas ajardinadas escalonadas bajas
     const planterBoxGeo = new THREE.BoxGeometry(3.2, 0.36, 1.05);
-    const planterTopGeo = new THREE.BoxGeometry(2.6, 0.32, 0.72);
+    const planterTopGeo = new THREE.BoxGeometry(2.6, 0.32, 0.72, 3, 2, 2);
     const planterRimGeo = new THREE.BoxGeometry(3.34, 0.08, 1.16);
+    bakeProceduralVertexAO(planterBoxGeo, { aoStrength: 0.34, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(planterTopGeo, { aoStrength: 0.40, baseWeight: 0.68, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(planterRimGeo, { aoStrength: 0.24, shadowTint: 0x221844 });
     this.#tempGeos.push(planterBoxGeo, planterTopGeo, planterRimGeo);
 
     for (const side of [-1, 1]) {
@@ -942,8 +1048,10 @@ export class WorldDecor {
     this.#addStaticMesh(new THREE.BoxGeometry(7.56, 0.07, 0.14), mats.roseGold, sx, 0.025, sz + 2.42, false, true);
 
     // 6 columnas de mármol y oro-rosa (abiertas al frente +Z con vano libre de 6.4 m)
-    const colGeo = new THREE.CylinderGeometry(0.18, 0.22, 3.4, 12);
+    const colGeo = new THREE.CylinderGeometry(0.18, 0.22, 3.4, 12, 3);
     const baseGeo = new THREE.CylinderGeometry(0.28, 0.32, 0.24, 12);
+    bakeProceduralVertexAO(colGeo, { aoStrength: 0.38, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(baseGeo, { aoStrength: 0.32, baseWeight: 0.6, shadowTint: 0x221844 });
     this.#tempGeos.push(colGeo, baseGeo);
 
     const colCoords = [
@@ -1021,6 +1129,9 @@ export class WorldDecor {
     const postGeo = new THREE.CylinderGeometry(0.07, 0.08, 0.88, 8);
     const railHGeo = new THREE.BoxGeometry(2.4, 0.08, 0.07);
     const railZGeo = new THREE.BoxGeometry(0.07, 0.08, 3.2);
+    bakeProceduralVertexAO(postGeo, { aoStrength: 0.34, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(railHGeo, { aoStrength: 0.26, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(railZGeo, { aoStrength: 0.26, shadowTint: 0x221844 });
     this.#tempGeos.push(postGeo, railHGeo, railZGeo);
 
     // Corral decorativo Oeste (X ∈ [14.4, 16.8], a 4.4 m de distancia del aro [10, -10]) y Este (X ∈ [23.2, 25.6])
@@ -1042,7 +1153,26 @@ export class WorldDecor {
 
   #buildPerimeterHills(mats) {
     // Colinas suaves estilizadas rodeando el valle exterior (Z < -83.5, X < -87.5, X > 221.5 y SE Z > 64)
-    const domeGeo = new THREE.SphereGeometry(1.0, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.5);
+    const domeGeo = new THREE.SphereGeometry(1.0, 26, 16, 0, Math.PI * 2, 0, Math.PI * 0.5);
+    sculptOrganicGeometry(domeGeo, {
+      seed: 404,
+      ampX: 0.14,
+      ampY: 0.18,
+      ampZ: 0.14,
+      frequency: 2.1,
+      octaves: 4,
+      ridgeStrength: 0.12,
+      terraceSteps: 4,
+      terraceStrength: 0.08,
+      pinBottom: true
+    });
+    bakeProceduralVertexAO(domeGeo, {
+      baseColor: 0x92b4a6,
+      topColor: 0xd8f0d4,
+      aoStrength: 0.46,
+      shadowTint: 0x1e1640,
+      ridgeHighlight: 0.10
+    });
     this.#tempGeos.push(domeGeo);
 
     const hills = [
@@ -1363,19 +1493,21 @@ export class WorldDecor {
       [203.2, -22.0], [203.2, 22.0]
     ];
 
-    const postGeo = new THREE.CylinderGeometry(0.09, 0.15, 3.3, 10);
+    const postGeo = new THREE.CylinderGeometry(0.09, 0.15, 3.3, 10, 2);
     const baseGeo = new THREE.CylinderGeometry(0.24, 0.3, 0.35, 10);
     const capGeo = new THREE.ConeGeometry(0.36, 0.35, 8);
     const bulbGeo = new THREE.OctahedronGeometry(0.26, 0);
-    const haloGeo = new THREE.OctahedronGeometry(0.75, 1);
+    bakeProceduralVertexAO(postGeo, { aoStrength: 0.36, baseWeight: 0.65, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(baseGeo, { aoStrength: 0.32, baseWeight: 0.6, shadowTint: 0x221844 });
+    bakeProceduralVertexAO(capGeo, { aoStrength: 0.28, shadowTint: 0x221844 });
 
     const postInst = this.#createInstanced(postGeo, mats.roseGold, positions.length, false, false);
     this.#lanternPositions = positions;
     const baseInst = this.#createInstanced(baseGeo, mats.marble, positions.length, false, true);
     const capInst = this.#createInstanced(capGeo, mats.roseGold, positions.length, false, false);
     const bulbInst = this.#createInstanced(bulbGeo, mats.lantern, positions.length, false, false);
-    const haloInst = this.#createInstanced(haloGeo, mats.lanternHalo, positions.length, false, false);
 
+    const haloSpecs = [];
     const dummy = this.#dummy;
     positions.forEach(([lx, lz], idx) => {
       dummy.rotation.set(0, 0, 0);
@@ -1397,10 +1529,15 @@ export class WorldDecor {
       dummy.updateMatrix();
       bulbInst.setMatrixAt(idx, dummy.matrix);
 
-      dummy.position.set(lx, 3.55, lz);
-      dummy.scale.set(1.15, 1.15, 1.15);
-      dummy.updateMatrix();
-      haloInst.setMatrixAt(idx, dummy.matrix);
+      haloSpecs.push({
+        x: lx,
+        y: 3.55,
+        z: lz,
+        size: 2.3,
+        color: 0xffcf88,
+        phase: (idx * 0.83) % (Math.PI * 2),
+        opacity: 0.24
+      });
 
       this.#collision.addCylinderCollider(lx, lz, 0.24, 0, 3.5);
     });
@@ -1409,7 +1546,75 @@ export class WorldDecor {
     this.#finalizeStaticInstanced(baseInst);
     this.#finalizeStaticInstanced(capInst);
     this.#finalizeStaticInstanced(bulbInst);
-    this.#finalizeStaticInstanced(haloInst);
+
+    // 12 cristales mágicos flotantes sobre hitos del reino (5 glorietas, Mirador Sur, 5 arcos del bulevar, Fuente Central)
+    const landmarkCrystals = [
+      { x: 35.0, baseY: 8.8, z: -8.0, color: 0xffa8e2 },
+      { x: -33.0, baseY: 8.8, z: 41.0, color: 0xffa8e2 },
+      { x: -54.0, baseY: 8.8, z: -44.0, color: 0xffa8e2 },
+      { x: 208.0, baseY: 8.8, z: -22.0, color: 0xaee4ff },
+      { x: 208.0, baseY: 8.8, z: 22.0, color: 0xaee4ff },
+      { x: 0.0, baseY: 13.7, z: 46.0, color: 0xffe296 },
+      { x: 53.5, baseY: 7.8, z: 0.0, color: 0xffb2e6 },
+      { x: 64.5, baseY: 7.8, z: 0.0, color: 0xffb2e6 },
+      { x: 75.5, baseY: 7.8, z: 0.0, color: 0xffb2e6 },
+      { x: 86.5, baseY: 7.8, z: 0.0, color: 0xffb2e6 },
+      { x: 108.5, baseY: 7.8, z: 0.0, color: 0xffb2e6 },
+      { x: 0.0, baseY: 6.2, z: 0.0, color: 0xaee4ff }
+    ];
+    this.#floatingCrystalSpecs = landmarkCrystals;
+
+    const crystalGeo = new THREE.OctahedronGeometry(0.24, 0);
+    const crystalMat = this.#trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xffe6f8,
+        emissive: 0xff9cd8,
+        emissiveIntensity: 1.45,
+        roughness: 0.14,
+        metalness: 0.25,
+        toneMapped: false
+      })
+    );
+    crystalMat.userData.preserveRoughness = true;
+    const crystalInst = this.#createInstanced(crystalGeo, crystalMat, landmarkCrystals.length, false, false);
+    const crystalColor = new THREE.Color();
+
+    for (let i = 0; i < landmarkCrystals.length; i++) {
+      const c = landmarkCrystals[i];
+      dummy.position.set(c.x, c.baseY, c.z);
+      dummy.rotation.set(0, i * 0.5, 0);
+      dummy.scale.set(1.0, 1.35, 1.0);
+      dummy.updateMatrix();
+      crystalInst.setMatrixAt(i, dummy.matrix);
+      crystalColor.setHex(c.color);
+      crystalInst.setColorAt(i, crystalColor);
+
+      haloSpecs.push({
+        x: c.x,
+        y: c.baseY,
+        z: c.z,
+        size: 2.4,
+        color: c.color,
+        phase: (i * 1.15) % (Math.PI * 2),
+        opacity: 0.28
+      });
+    }
+    crystalInst.instanceMatrix.needsUpdate = true;
+    if (crystalInst.instanceColor) crystalInst.instanceColor.needsUpdate = true;
+    crystalInst.computeBoundingSphere();
+    this.#floatingCrystalsInst = crystalInst;
+
+    const haloRes = createInstancedVolumetricHalos(haloSpecs, { opacity: 1.0 });
+    const haloInst = haloRes?.isObject3D ? haloRes : haloRes?.mesh;
+    if (haloInst) {
+      if (haloInst.geometry) this.#trackGeo(haloInst.geometry);
+      if (haloInst.material) {
+        this.#trackMat(haloInst.material);
+        this.#lanternHaloMat = haloInst.material;
+      }
+      this.#instancedMeshes.push(haloInst);
+      this.#root.add(haloInst);
+    }
   }
 
   #isExcludedZone(x, z, margin = 0.8) {
@@ -1520,8 +1725,40 @@ export class WorldDecor {
 
     if (rocks.length === 0) return;
 
-    const rockGeo = new THREE.DodecahedronGeometry(0.85, 1);
-    const mossGeo = new THREE.SphereGeometry(0.82, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.52);
+    const rockGeo = new THREE.IcosahedronGeometry(0.85, 2);
+    sculptOrganicGeometry(rockGeo, {
+      seed: 77,
+      ampX: 0.22,
+      ampY: 0.18,
+      ampZ: 0.22,
+      frequency: 1.8,
+      octaves: 3,
+      ridgeStrength: 0.26,
+      terraceSteps: 3,
+      terraceStrength: 0.07,
+      pinBottom: true
+    });
+    bakeProceduralVertexAO(rockGeo, {
+      aoStrength: 0.52,
+      shadowTint: 0x1e1942,
+      ridgeHighlight: 0.14
+    });
+
+    const mossGeo = new THREE.SphereGeometry(0.82, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.52);
+    sculptOrganicGeometry(mossGeo, {
+      seed: 89,
+      ampX: 0.10,
+      ampY: 0.08,
+      ampZ: 0.10,
+      frequency: 2.8,
+      octaves: 2,
+      pinBottom: true
+    });
+    bakeProceduralVertexAO(mossGeo, {
+      aoStrength: 0.42,
+      shadowTint: 0x1e1942,
+      ridgeHighlight: 0.10
+    });
     const rockInst = this.#createInstanced(rockGeo, mats.rockStone, rocks.length, true, true);
     const mossInst = this.#createInstanced(mossGeo, mats.moss, rocks.length, false, true);
 
@@ -1746,8 +1983,14 @@ export class WorldDecor {
     if (this.#lanternMat) {
       this.#lanternMat.emissiveIntensity = 0.65 + (theme.lanternIntensity ?? 1) * 0.5;
     }
+    const li = theme.lanternIntensity ?? 1;
+    this.#lanternHaloScale = theme.id === 'gala_imperial' ? 1.75 : Math.min(1.6, 0.7 + li * 0.5);
     if (this.#lanternHaloMat) {
-      this.#lanternHaloMat.opacity = Math.min(0.42, 0.14 + (theme.lanternIntensity ?? 1) * 0.14);
+      if (this.#lanternHaloMat.uniforms?.uOpacity) {
+        this.#lanternHaloMat.uniforms.uOpacity.value = this.#lanternHaloScale;
+      } else if (this.#lanternHaloMat.opacity !== undefined) {
+        this.#lanternHaloMat.opacity = Math.min(0.42, 0.14 + li * 0.14);
+      }
     }
     this.#waterSystem?.applyTheme?.(theme);
     this.#fountainSystem?.applyTheme?.(theme);
@@ -1758,6 +2001,22 @@ export class WorldDecor {
   update(dt) {
     const delta = Math.min(dt, 0.1);
     this.#elapsed += delta;
+
+    // Rotación y levitación suave de los 12 cristales mágicos (100% GC-Free)
+    if (this.#floatingCrystalsInst && this.#floatingCrystalSpecs.length > 0) {
+      const dummy = this.#dummy;
+      const specs = this.#floatingCrystalSpecs;
+      const t = this.#elapsed;
+      for (let i = 0; i < specs.length; i++) {
+        const s = specs[i];
+        dummy.position.set(s.x, s.baseY + Math.sin(t * 1.9 + i * 0.8) * 0.16, s.z);
+        dummy.rotation.set(0, t * 0.85 + i * 0.5, 0);
+        dummy.scale.set(1.0, 1.35, 1.0);
+        dummy.updateMatrix();
+        this.#floatingCrystalsInst.setMatrixAt(i, dummy.matrix);
+      }
+      this.#floatingCrystalsInst.instanceMatrix.needsUpdate = true;
+    }
 
     // Actualizar sistemas delegados (GC-Free)
     this.#waterSystem?.update?.(delta, this.#elapsed);
@@ -1776,6 +2035,8 @@ export class WorldDecor {
     this.#flora?.dispose?.();
     this.#flora = null;
     this.#lanternPositions = [];
+    this.#floatingCrystalSpecs = [];
+    this.#floatingCrystalsInst = null;
 
     if (this.#root) {
       this.#scene.remove(this.#root);

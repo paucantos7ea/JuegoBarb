@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import { CastleRooms } from './CastleRooms.js';
+import {
+  bakeProceduralVertexAO,
+  createLumenMaterial,
+  createInstancedVolumetricHalos,
+  ensureVertexColors
+} from '../core/LumenArtPipeline.js';
 
 function swapAttr3(attr, a, b) {
   const x = attr.getX(a);
@@ -21,6 +27,7 @@ function mergeGeometries(pieces) {
 
   const normalized = [];
   let totalVerts = 0;
+  let hasColors = false;
 
   for (let i = 0; i < pieces.length; i++) {
     const { geometry, matrix } = pieces[i];
@@ -28,18 +35,23 @@ function mergeGeometries(pieces) {
     if (!g.attributes.normal) {
       g.computeVertexNormals();
     }
+    if (g.attributes.color) {
+      hasColors = true;
+    }
     if (matrix) {
       g.applyMatrix4(matrix);
       if (matrix.determinant() < 0) {
         const pos = g.attributes.position;
         const norm = g.attributes.normal;
         const uv = g.attributes.uv;
+        const col = g.attributes.color;
         for (let v = 0; v < pos.count; v += 3) {
           const v1 = v + 1;
           const v2 = v + 2;
           swapAttr3(pos, v1, v2);
           if (norm) swapAttr3(norm, v1, v2);
           if (uv) swapAttr2(uv, v1, v2);
+          if (col) swapAttr3(col, v1, v2);
         }
       }
     }
@@ -50,6 +62,7 @@ function mergeGeometries(pieces) {
   const positions = new Float32Array(totalVerts * 3);
   const normals = new Float32Array(totalVerts * 3);
   const uvs = new Float32Array(totalVerts * 2);
+  const colors = hasColors ? new Float32Array(totalVerts * 3) : null;
 
   let offset = 0;
   for (let i = 0; i < normalized.length; i++) {
@@ -57,6 +70,7 @@ function mergeGeometries(pieces) {
     const pos = g.attributes.position;
     const norm = g.attributes.normal;
     const uv = g.attributes.uv;
+    const col = g.attributes.color;
     const count = pos.count;
 
     for (let v = 0; v < count; v++) {
@@ -75,6 +89,17 @@ function mergeGeometries(pieces) {
         uvs[i2] = uv.getX(v);
         uvs[i2 + 1] = uv.getY(v);
       }
+      if (colors) {
+        if (col) {
+          colors[i3] = col.getX(v);
+          colors[i3 + 1] = col.getY(v);
+          colors[i3 + 2] = col.getZ(v);
+        } else {
+          colors[i3] = 1;
+          colors[i3 + 1] = 1;
+          colors[i3 + 2] = 1;
+        }
+      }
     }
     offset += count;
     g.dispose();
@@ -84,6 +109,9 @@ function mergeGeometries(pieces) {
   merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (colors) {
+    merged.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  }
   merged.computeBoundingSphere();
   merged.computeBoundingBox();
   return merged;
@@ -133,9 +161,12 @@ export class CastleBuilder {
     this.#buildVaultedRoofAndTowers(mats);
     this.#flushStaticBuckets();
     this.#buildInstancedBalusters(mats);
+    this.#buildArchitecturalHalos();
 
     this.#rooms = new CastleRooms(this.#root, this.#textures, this.#collision, mats);
     this.#rooms.init();
+
+    ensureVertexColors(this.#root, { aoStrength: 0.28, shadowTint: 0x261b48 });
 
     this.#root.matrixAutoUpdate = false;
     this.#root.updateMatrix();
@@ -143,23 +174,38 @@ export class CastleBuilder {
   }
 
   #createMaterials() {
-    const marble = new THREE.MeshStandardMaterial({
+    const marble = createLumenMaterial({
       map: this.#textures.getTexture('marble', 4, 3),
       roughness: 0.28,
-      metalness: 0.04
+      metalness: 0.04,
+      vertexColors: true
+    }, {
+      rimStrength: 0.28,
+      shadowLiftStrength: 0.15,
+      cacheTag: 'castle_marble'
     });
 
-    const marbleFloor = new THREE.MeshStandardMaterial({
+    const marbleFloor = createLumenMaterial({
       map: this.#textures.getTexture('marbleFloor', 14, 9),
       roughness: 0.22,
       metalness: 0.06
+    }, {
+      rimStrength: 0.18,
+      shadowLiftStrength: 0.14,
+      cacheTag: 'castle_marble_floor'
     });
 
-    const roseGold = new THREE.MeshStandardMaterial({
+    const roseGold = createLumenMaterial({
       map: this.#textures.getTexture('roseGold', 1, 1),
       color: 0xf4b6a8,
       metalness: 0.88,
-      roughness: 0.18
+      roughness: 0.18,
+      vertexColors: true
+    }, {
+      rimStrength: 0.28,
+      shadowLiftStrength: 0.15,
+      preserveRoughness: true,
+      cacheTag: 'castle_rosegold'
     });
 
     const crystal = new THREE.MeshStandardMaterial({
@@ -186,7 +232,7 @@ export class CastleBuilder {
     });
     vaultCrystal.userData.preserveRoughness = true;
 
-    const stained = new THREE.MeshStandardMaterial({
+    const stained = createLumenMaterial({
       map: this.#textures.getTexture('stainedCrystal', 1, 2),
       emissive: 0xffb8df,
       emissiveIntensity: 0.22,
@@ -194,6 +240,13 @@ export class CastleBuilder {
       metalness: 0.12,
       transparent: true,
       opacity: 0.84
+    }, {
+      warmWindow: true,
+      windowGlowStrength: 1.15,
+      windowCoreColor: 0xffd082,
+      windowEdgeColor: 0xf47ec4,
+      preserveRoughness: true,
+      cacheTag: 'castle_stained'
     });
 
     const carpet = new THREE.MeshStandardMaterial({
@@ -211,10 +264,14 @@ export class CastleBuilder {
     });
     danceFloor.userData.preserveRoughness = true;
 
-    const velvet = new THREE.MeshStandardMaterial({
+    const velvet = createLumenMaterial({
       color: 0xc23c81,
       roughness: 0.78,
       metalness: 0.05
+    }, {
+      rimStrength: 0.28,
+      shadowLiftStrength: 0.15,
+      cacheTag: 'castle_velvet'
     });
 
     this.#crystalMat = crystal;
@@ -301,8 +358,10 @@ export class CastleBuilder {
   }
 
   #addColumn(x, yBase, z, height, radius, mats, addCollider = true) {
-    const shaftGeo = new THREE.CylinderGeometry(radius * 0.88, radius, height, 14);
+    const shaftGeo = new THREE.CylinderGeometry(radius * 0.88, radius, height, 14, 3);
     const capGeo = new THREE.CylinderGeometry(radius * 1.32, radius * 0.92, 0.45, 14);
+    bakeProceduralVertexAO(shaftGeo, { aoStrength: 0.42, baseWeight: 0.65, shadowTint: 0x261b48 });
+    bakeProceduralVertexAO(capGeo, { aoStrength: 0.30, shadowTint: 0x261b48 });
     this.#tempGeos.push(shaftGeo, capGeo);
 
     this.#addMesh(shaftGeo, mats.marble, x, yBase + height / 2, z, true, true, 0, 0, 0, 1, 1, 1, true);
@@ -361,8 +420,12 @@ export class CastleBuilder {
       const h = (i + 1) * 0.2;
       const zCenter = -17.3 - i * 1.0;
       const w = 16.0 - i * 0.1;
-      this.#addBox(w, h, 1.06, 0, h / 2, zCenter, mats.marble, true, false);
-      this.#addBox(w + 0.06, 0.04, 0.14, 0, h, zCenter + 0.46, mats.roseGold, false, false);
+      const stepGeo = new THREE.BoxGeometry(w, h, 1.06);
+      const trimGeo = new THREE.BoxGeometry(w + 0.06, 0.04, 0.14);
+      bakeProceduralVertexAO(stepGeo, { aoStrength: 0.34, baseWeight: 0.65, shadowTint: 0x261b48 });
+      bakeProceduralVertexAO(trimGeo, { aoStrength: 0.24, shadowTint: 0x261b48 });
+      this.#addMesh(stepGeo, mats.marble, 0, h / 2, zCenter, true, true);
+      this.#addMesh(trimGeo, mats.roseGold, 0, h, zCenter + 0.46, false, true);
     }
     this.#collision.addRampSurface(-7.8, 7.8, -22.3, -16.5, 'z', -16.8, -21.8, 0.0, 1.0);
 
@@ -380,8 +443,12 @@ export class CastleBuilder {
     for (let i = 0; i < 5; i++) {
       const h = (i + 1) * 0.2;
       const xCenter = 39.06 - i * 0.68;
-      this.#addBox(0.72, h, 4.6, xCenter, h / 2, -36.0, mats.marble, true, false);
-      this.#addBox(0.12, 0.04, 4.64, xCenter + 0.3, h, -36.0, mats.roseGold, false, false);
+      const stepGeo = new THREE.BoxGeometry(0.72, h, 4.6);
+      const trimGeo = new THREE.BoxGeometry(0.12, 0.04, 4.64);
+      bakeProceduralVertexAO(stepGeo, { aoStrength: 0.34, baseWeight: 0.65, shadowTint: 0x261b48 });
+      bakeProceduralVertexAO(trimGeo, { aoStrength: 0.24, shadowTint: 0x261b48 });
+      this.#addMesh(stepGeo, mats.marble, xCenter, h / 2, -36.0, true, true);
+      this.#addMesh(trimGeo, mats.roseGold, xCenter + 0.3, h, -36.0, false, true);
     }
     this.#collision.addRampSurface(35.8, 39.8, -38.3, -33.7, 'x', 39.4, 36.0, 0.0, 1.0);
     // Zancas laterales de la escalera exterior Este
@@ -536,8 +603,12 @@ export class CastleBuilder {
         const curveFlare = Math.sin(t * Math.PI) * 0.18;
         const stepW = 3.6 + (1 - t) * 0.25 - curveFlare;
         const xCenter = dir * (10.8 - curveFlare * 0.35);
-        this.#addBox(stepW, 0.29, 0.82, xCenter, h - 0.145, zCenter, mats.marble, true, false);
-        this.#addBox(stepW + 0.04, 0.04, 0.12, xCenter, h, zCenter + 0.34, mats.roseGold, false, false);
+        const stepGeo = new THREE.BoxGeometry(stepW, 0.29, 0.82);
+        const trimGeo = new THREE.BoxGeometry(stepW + 0.04, 0.04, 0.12);
+        bakeProceduralVertexAO(stepGeo, { aoStrength: 0.34, baseWeight: 0.6, shadowTint: 0x261b48 });
+        bakeProceduralVertexAO(trimGeo, { aoStrength: 0.24, shadowTint: 0x261b48 });
+        this.#addMesh(stepGeo, mats.marble, xCenter, h - 0.145, zCenter, true, true);
+        this.#addMesh(trimGeo, mats.roseGold, xCenter, h, zCenter + 0.34, false, true);
       }
       this.#collision.addRampSurface(
         dir < 0 ? -12.6 : 9.0,
@@ -573,8 +644,12 @@ export class CastleBuilder {
         const curveFlare = Math.sin(t * Math.PI) * 0.12;
         const stepW = 3.2 - curveFlare;
         const xCenter = dir * (10.4 + curveFlare * 0.25);
-        this.#addBox(stepW, 0.29, 0.82, xCenter, h - 0.145, zCenter, mats.marble, true, false);
-        this.#addBox(stepW + 0.04, 0.04, 0.12, xCenter, h, zCenter + 0.34, mats.roseGold, false, false);
+        const stepGeo = new THREE.BoxGeometry(stepW, 0.29, 0.82);
+        const trimGeo = new THREE.BoxGeometry(stepW + 0.04, 0.04, 0.12);
+        bakeProceduralVertexAO(stepGeo, { aoStrength: 0.34, baseWeight: 0.6, shadowTint: 0x261b48 });
+        bakeProceduralVertexAO(trimGeo, { aoStrength: 0.24, shadowTint: 0x261b48 });
+        this.#addMesh(stepGeo, mats.marble, xCenter, h - 0.145, zCenter, true, true);
+        this.#addMesh(trimGeo, mats.roseGold, xCenter, h, zCenter + 0.34, false, true);
       }
       this.#collision.addRampSurface(
         dir < 0 ? -12.0 : 8.8,
@@ -707,6 +782,7 @@ export class CastleBuilder {
 
     // Costillas estructurales oro-rosa de la bóveda
     const ribGeo = new THREE.TorusGeometry(14.0, 0.22, 8, 28, Math.PI);
+    bakeProceduralVertexAO(ribGeo, { aoStrength: 0.34, shadowTint: 0x261b48 });
     this.#tempGeos.push(ribGeo);
     for (const rz of [-54.0, -46.0, -38.0, -30.0, -22.0]) {
       this.#addMesh(ribGeo, mats.roseGold, 0, 15.0, rz, false, true, 0, 0, 0, 1, 5.5 / 14.0, 1, true);
@@ -716,7 +792,9 @@ export class CastleBuilder {
     this.#addBox(40.8, 0.6, 22.8, 0, 15.0, -65.0, mats.roseGold, false, false);
     const apseDomeGeo = new THREE.SphereGeometry(10.5, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2);
     this.#addMesh(apseDomeGeo, mats.vaultCrystal, 0, 15.2, -65.0, false, false, 0, 0, 0, 1.15, 0.72, 0.95);
-    this.#addMesh(new THREE.CylinderGeometry(2.6, 3.1, 1.8, 12), mats.roseGold, 0, 22.8, -65.0, false, true);
+    const apseDrumGeo = new THREE.CylinderGeometry(2.6, 3.1, 1.8, 12);
+    bakeProceduralVertexAO(apseDrumGeo, { aoStrength: 0.34, baseWeight: 0.6, shadowTint: 0x261b48 });
+    this.#addMesh(apseDrumGeo, mats.roseGold, 0, 22.8, -65.0, false, true);
     this.#addMesh(new THREE.ConeGeometry(1.6, 4.8, 8), mats.crystal, 0, 26.0, -65.0, false, false);
 
     // 6 Torres esquineras: (-36,-22), (36,-22), (-36,-54), (36,-54), (-20,-76), (20,-76)
@@ -725,10 +803,13 @@ export class CastleBuilder {
       [-36, -54], [36, -54],
       [-20, -76], [20, -76]
     ];
-    const towerShaftGeo = new THREE.CylinderGeometry(3.15, 3.45, 20.5, 8);
+    const towerShaftGeo = new THREE.CylinderGeometry(3.15, 3.45, 20.5, 8, 4);
     const towerCollarGeo = new THREE.CylinderGeometry(3.45, 3.25, 0.65, 8);
     const towerDomeGeo = new THREE.SphereGeometry(3.2, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
     const towerSpireGeo = new THREE.ConeGeometry(0.95, 5.6, 6);
+    bakeProceduralVertexAO(towerShaftGeo, { aoStrength: 0.44, baseWeight: 0.68, shadowTint: 0x261b48 });
+    bakeProceduralVertexAO(towerCollarGeo, { aoStrength: 0.32, shadowTint: 0x261b48 });
+    bakeProceduralVertexAO(towerDomeGeo, { aoStrength: 0.36, shadowTint: 0x261b48, ridgeHighlight: 0.10 });
     this.#tempGeos.push(towerShaftGeo, towerCollarGeo, towerDomeGeo, towerSpireGeo);
 
     for (const [tx, tz] of towerCoords) {
@@ -740,7 +821,9 @@ export class CastleBuilder {
     }
 
     // Gran aguja imperial central sobre la bóveda
-    this.#addMesh(new THREE.CylinderGeometry(4.8, 5.6, 3.4, 12), mats.roseGold, 0, 21.8, -38.0, false, true);
+    const centralBaseGeo = new THREE.CylinderGeometry(4.8, 5.6, 3.4, 12, 2);
+    bakeProceduralVertexAO(centralBaseGeo, { aoStrength: 0.36, baseWeight: 0.65, shadowTint: 0x261b48 });
+    this.#addMesh(centralBaseGeo, mats.roseGold, 0, 21.8, -38.0, false, true);
     this.#addMesh(new THREE.OctahedronGeometry(3.8, 0), mats.crystal, 0, 27.6, -38.0, false, false, 0, 0, 0, 1, 1.7, 1);
     this.#addMesh(new THREE.ConeGeometry(2.6, 11.5, 8), mats.crystal, 0, 34.4, -38.0, false, false);
   }
@@ -748,6 +831,7 @@ export class CastleBuilder {
   #buildInstancedBalusters(mats) {
     if (this.#balusters.length === 0) return;
     const geo = this.#trackGeo(new THREE.CylinderGeometry(0.06, 0.085, 0.96, 8));
+    bakeProceduralVertexAO(geo, { aoStrength: 0.36, baseWeight: 0.6, shadowTint: 0x261b48 });
     const inst = new THREE.InstancedMesh(geo, mats.roseGold, this.#balusters.length);
     inst.castShadow = false;
     inst.receiveShadow = true;
@@ -768,6 +852,37 @@ export class CastleBuilder {
     inst.updateMatrix();
     this.#root.add(inst);
     this.#instancedMeshes.push(inst);
+  }
+
+  #buildArchitecturalHalos() {
+    const specs = [
+      // 6 remates de las torres esquineras
+      { x: -36, y: 28.5, z: -22, size: 3.4, color: 0xffb8e6, phase: 0.0, opacity: 0.30 },
+      { x: 36, y: 28.5, z: -22, size: 3.4, color: 0xffb8e6, phase: 0.9, opacity: 0.30 },
+      { x: -36, y: 28.5, z: -54, size: 3.4, color: 0xffb8e6, phase: 1.8, opacity: 0.30 },
+      { x: 36, y: 28.5, z: -54, size: 3.4, color: 0xffb8e6, phase: 2.7, opacity: 0.30 },
+      { x: -20, y: 28.5, z: -76, size: 3.4, color: 0xffb8e6, phase: 3.6, opacity: 0.30 },
+      { x: 20, y: 28.5, z: -76, size: 3.4, color: 0xffb8e6, phase: 4.5, opacity: 0.30 },
+      // Gran aguja imperial central
+      { x: 0, y: 33.5, z: -38, size: 4.5, color: 0xffc6ec, phase: 1.1, opacity: 0.32 },
+      { x: 0, y: 39.5, z: -38, size: 5.2, color: 0xffe4a8, phase: 2.4, opacity: 0.34 },
+      // Remate cúpula del Salón del Trono
+      { x: 0, y: 27.5, z: -65, size: 3.6, color: 0xffb8e6, phase: 3.1, opacity: 0.30 },
+      // 4 puntos de cornisa del pórtico frontal
+      { x: -9.2, y: 7.4, z: -17.4, size: 2.0, color: 0xffd496, phase: 0.4, opacity: 0.24 },
+      { x: -5.2, y: 7.4, z: -17.4, size: 2.0, color: 0xffd496, phase: 1.4, opacity: 0.24 },
+      { x: 5.2, y: 7.4, z: -17.4, size: 2.0, color: 0xffd496, phase: 2.4, opacity: 0.24 },
+      { x: 9.2, y: 7.4, z: -17.4, size: 2.0, color: 0xffd496, phase: 3.4, opacity: 0.24 }
+    ];
+
+    const haloRes = createInstancedVolumetricHalos(specs, { opacity: 1.0 });
+    const haloInst = haloRes?.isObject3D ? haloRes : haloRes?.mesh;
+    if (haloInst) {
+      if (haloInst.geometry) this.#trackGeo(haloInst.geometry);
+      if (haloInst.material) this.#materials.push(haloInst.material);
+      this.#instancedMeshes.push(haloInst);
+      this.#root.add(haloInst);
+    }
   }
 
   // =========================================================================

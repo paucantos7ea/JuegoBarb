@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import { CharacterRig } from '../characters/CharacterRig.js';
+import {
+  bakeProceduralVertexAO,
+  createLumenMaterial,
+  createInstancedVolumetricHalos,
+  ensureVertexColors
+} from '../core/LumenArtPipeline.js';
 
 const CX = 162.0;
 const CZ = 0.0;
@@ -68,6 +74,7 @@ function mergeGeometries(pieces) {
 
   const normalized = [];
   let totalVerts = 0;
+  let hasColors = false;
 
   for (let i = 0; i < pieces.length; i++) {
     const { geometry, matrix } = pieces[i];
@@ -75,18 +82,23 @@ function mergeGeometries(pieces) {
     if (!g.attributes.normal) {
       g.computeVertexNormals();
     }
+    if (g.attributes.color) {
+      hasColors = true;
+    }
     if (matrix) {
       g.applyMatrix4(matrix);
       if (matrix.determinant() < 0) {
         const pos = g.attributes.position;
         const norm = g.attributes.normal;
         const uv = g.attributes.uv;
+        const col = g.attributes.color;
         for (let v = 0; v < pos.count; v += 3) {
           const v1 = v + 1;
           const v2 = v + 2;
           swapAttr3(pos, v1, v2);
           if (norm) swapAttr3(norm, v1, v2);
           if (uv) swapAttr2(uv, v1, v2);
+          if (col) swapAttr3(col, v1, v2);
         }
       }
     }
@@ -97,6 +109,7 @@ function mergeGeometries(pieces) {
   const positions = new Float32Array(totalVerts * 3);
   const normals = new Float32Array(totalVerts * 3);
   const uvs = new Float32Array(totalVerts * 2);
+  const colors = hasColors ? new Float32Array(totalVerts * 3) : null;
 
   let offset = 0;
   for (let i = 0; i < normalized.length; i++) {
@@ -104,6 +117,7 @@ function mergeGeometries(pieces) {
     const pos = g.attributes.position;
     const norm = g.attributes.normal;
     const uv = g.attributes.uv;
+    const col = g.attributes.color;
     const count = pos.count;
 
     for (let v = 0; v < count; v++) {
@@ -122,6 +136,17 @@ function mergeGeometries(pieces) {
         uvs[i2] = uv.getX(v);
         uvs[i2 + 1] = uv.getY(v);
       }
+      if (colors) {
+        if (col) {
+          colors[i3] = col.getX(v);
+          colors[i3 + 1] = col.getY(v);
+          colors[i3 + 2] = col.getZ(v);
+        } else {
+          colors[i3] = 1;
+          colors[i3 + 1] = 1;
+          colors[i3 + 2] = 1;
+        }
+      }
     }
     offset += count;
     g.dispose();
@@ -131,6 +156,9 @@ function mergeGeometries(pieces) {
   merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (colors) {
+    merged.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  }
   merged.computeBoundingSphere();
   merged.computeBoundingBox();
   return merged;
@@ -523,6 +551,7 @@ export class CasinoDomeBuilder {
   #instancedMeshes = new Set();
   #staticBuckets = new Map();
   #tempGeos = [];
+  #haloSpecs = [];
   #dummy = new THREE.Object3D();
 
   #sharedRoseGoldMat = null;
@@ -590,18 +619,27 @@ export class CasinoDomeBuilder {
     this.#sharedRoseGoldMat = this.#createRoseGoldMat(0.2, 0.9);
     this.#sharedMarbleMat = this.#createMarbleMat('marble', 4, 4, 0xfff8fb);
     this.#sharedDarkMarbleMat = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         color: 0x2a1424,
         roughness: 0.28,
-        metalness: 0.14
+        metalness: 0.14,
+        vertexColors: true
+      }, {
+        rimStrength: 0.26,
+        shadowLiftStrength: 0.16,
+        cacheTag: 'casino_dark_marble'
       })
     );
     this.#sharedCarpetMat = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         color: 0xb8225d,
         map: this.#getSharedTexture('carpet', 2, 8),
         roughness: 0.84,
         metalness: 0.04
+      }, {
+        rimStrength: 0.18,
+        shadowLiftStrength: 0.14,
+        cacheTag: 'casino_carpet'
       })
     );
     this.#waterMat = this.#trackMat(
@@ -618,6 +656,7 @@ export class CasinoDomeBuilder {
     );
     this.#waterMat.userData.preserveRoughness = true;
 
+    this.#haloSpecs.length = 0;
     this.#buildRoyalPromenade();
     this.#buildPlatformAndStairs();
     this.#buildPerimeterWalls();
@@ -627,11 +666,14 @@ export class CasinoDomeBuilder {
     this.#buildSlotMachines();
     this.#buildBlackjackTables();
     this.#flushBuckets(this.#staticBuckets, this.#root);
+    this.#buildVolumetricHalos();
     this.#buildInteractionMarkers();
     this.#initFireworksSystem();
 
     for (const g of this.#tempGeos) g.dispose();
     this.#tempGeos.length = 0;
+
+    ensureVertexColors(this.#root, { aoStrength: 0.26, shadowTint: 0x281844 });
 
     this.#root.matrixAutoUpdate = false;
     this.#root.updateMatrix();
@@ -791,6 +833,7 @@ export class CasinoDomeBuilder {
 
     for (const g of this.#tempGeos) g.dispose();
     this.#tempGeos.length = 0;
+    this.#haloSpecs.length = 0;
     this.#staticBuckets.clear();
 
     for (const mat of this.#materials) {
@@ -915,11 +958,17 @@ export class CasinoDomeBuilder {
 
   #createRoseGoldMat(roughness = 0.2, metalness = 0.88) {
     const tex = this.#getSharedTexture('roseGold', 2, 2);
-    const mat = new THREE.MeshStandardMaterial({
+    const mat = createLumenMaterial({
       color: 0xf4c2b8,
       map: tex,
       roughness,
-      metalness
+      metalness,
+      vertexColors: true
+    }, {
+      rimStrength: 0.28,
+      shadowLiftStrength: 0.14,
+      preserveRoughness: true,
+      cacheTag: 'casino_rosegold'
     });
     mat.userData.preserveRoughness = true;
     return this.#trackMat(mat);
@@ -928,11 +977,16 @@ export class CasinoDomeBuilder {
   #createMarbleMat(key = 'marble', rx = 3, ry = 3, tint = 0xffffff) {
     const tex = this.#getSharedTexture(key, rx, ry);
     return this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         color: tint,
         map: tex,
         roughness: 0.34,
-        metalness: 0.06
+        metalness: 0.06,
+        vertexColors: true
+      }, {
+        rimStrength: 0.26,
+        shadowLiftStrength: 0.15,
+        cacheTag: `casino_marble_${key}_${rx}_${ry}`
       })
     );
   }
@@ -985,11 +1039,14 @@ export class CasinoDomeBuilder {
     // 14 farolas emisivas de cristal y oro (7 pares en Z = ±5.3 desde X = 48 hasta X = 114)
     const lampCount = 14;
     const baseGeo = this.#trackGeo(new THREE.CylinderGeometry(0.26, 0.34, 0.42, 12));
-    const postGeo = this.#trackGeo(new THREE.CylinderGeometry(0.1, 0.16, 3.6, 12));
+    const postGeo = this.#trackGeo(new THREE.CylinderGeometry(0.1, 0.16, 3.6, 12, 2));
     const collarGeo = this.#trackGeo(new THREE.CylinderGeometry(0.24, 0.14, 0.22, 10));
     const bulbGeo = this.#trackGeo(new THREE.OctahedronGeometry(0.28, 1));
     const capGeo = this.#trackGeo(new THREE.ConeGeometry(0.36, 0.38, 8));
-    const haloGeo = this.#trackGeo(new THREE.OctahedronGeometry(0.82, 1));
+    bakeProceduralVertexAO(baseGeo, { aoStrength: 0.32, baseWeight: 0.6, shadowTint: 0x281844 });
+    bakeProceduralVertexAO(postGeo, { aoStrength: 0.36, baseWeight: 0.65, shadowTint: 0x281844 });
+    bakeProceduralVertexAO(collarGeo, { aoStrength: 0.28, shadowTint: 0x281844 });
+    bakeProceduralVertexAO(capGeo, { aoStrength: 0.28, shadowTint: 0x281844 });
 
     const lanternBulbMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
@@ -999,24 +1056,12 @@ export class CasinoDomeBuilder {
         roughness: 0.18
       })
     );
-    const lanternHaloMat = this.#trackMat(
-      new THREE.MeshBasicMaterial({
-        color: 0xffdca8,
-        transparent: true,
-        opacity: 0.24,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false
-      })
-    );
-    lanternHaloMat.userData.isVfx = true;
 
     const baseInst = this.#trackInstanced(new THREE.InstancedMesh(baseGeo, marbleMat, lampCount));
     const postInst = this.#trackInstanced(new THREE.InstancedMesh(postGeo, roseGoldMat, lampCount));
     const collarInst = this.#trackInstanced(new THREE.InstancedMesh(collarGeo, roseGoldMat, lampCount));
     const bulbInst = this.#trackInstanced(new THREE.InstancedMesh(bulbGeo, lanternBulbMat, lampCount));
     const capInst = this.#trackInstanced(new THREE.InstancedMesh(capGeo, roseGoldMat, lampCount));
-    const haloInst = this.#trackInstanced(new THREE.InstancedMesh(haloGeo, lanternHaloMat, lampCount));
 
     const dummy = this.#dummy;
     let idx = 0;
@@ -1046,10 +1091,15 @@ export class CasinoDomeBuilder {
         dummy.updateMatrix();
         capInst.setMatrixAt(idx, dummy.matrix);
 
-        dummy.position.set(lx, 4.4, lz);
-        dummy.scale.setScalar(1.1);
-        dummy.updateMatrix();
-        haloInst.setMatrixAt(idx, dummy.matrix);
+        this.#haloSpecs.push({
+          x: lx,
+          y: 4.4,
+          z: lz,
+          size: 2.3,
+          color: 0xffdca8,
+          phase: (idx * 0.78) % (Math.PI * 2),
+          opacity: 0.24
+        });
 
         if (this.#collision) {
           this.#collision.addCylinderCollider(lx, lz, 0.28, 0, 4.4);
@@ -1063,8 +1113,7 @@ export class CasinoDomeBuilder {
     this.#finalizeStaticInstanced(collarInst, false, false);
     this.#finalizeStaticInstanced(bulbInst, false, false);
     this.#finalizeStaticInstanced(capInst, false, false);
-    this.#finalizeStaticInstanced(haloInst, false, false);
-    group.add(baseInst, postInst, collarInst, bulbInst, capInst, haloInst);
+    group.add(baseInst, postInst, collarInst, bulbInst, capInst);
 
     // Las 2 fuentes barrocas exteriores del paseo (80, ±10.5) viven ahora en FountainSystem
     group.matrixAutoUpdate = false;
@@ -1197,6 +1246,8 @@ export class CasinoDomeBuilder {
     const cheekGeo = new THREE.BoxGeometry(7.2, 0.72, 0.45);
     const postGeo = new THREE.CylinderGeometry(0.28, 0.34, 1.35, 16);
     const finialGeo = new THREE.OctahedronGeometry(0.26, 0);
+    bakeProceduralVertexAO(cheekGeo, { aoStrength: 0.34, baseWeight: 0.65, shadowTint: 0x281844 });
+    bakeProceduralVertexAO(postGeo, { aoStrength: 0.36, baseWeight: 0.65, shadowTint: 0x281844 });
     const finialMat = this.#trackMat(
       new THREE.MeshStandardMaterial({
         color: 0xffd6ec,
@@ -1215,6 +1266,11 @@ export class CasinoDomeBuilder {
       this.#addBucketMesh(buckets, finialGeo, finialMat, 121.55, 1.56, zSide, false, false, 0, 0, 0, 1, 1, 1, true);
       this.#addBucketMesh(buckets, postGeo, marbleMat, 128.45, 0.98, zSide, true, true, 0, 0, 0, 1, 1, 1, true);
       this.#addBucketMesh(buckets, finialGeo, finialMat, 128.45, 1.86, zSide, false, false, 0, 0, 0, 1, 1, 1, true);
+
+      this.#haloSpecs.push(
+        { x: 121.55, y: 1.56, z: zSide, size: 1.5, color: 0xffa8da, phase: side < 0 ? 0.3 : 1.9, opacity: 0.28 },
+        { x: 128.45, y: 1.86, z: zSide, size: 1.5, color: 0xffa8da, phase: side < 0 ? 1.1 : 2.7, opacity: 0.28 }
+      );
 
       if (this.#collision) {
         this.#collision.addBox(121.3, 128.6, 0, 2.5, zSide - 0.28, zSide + 0.28);
@@ -1252,8 +1308,10 @@ export class CasinoDomeBuilder {
     const lowWallH = 1.05;                      // y = 0.60..1.65
 
     // Pilares de mármol y capiteles oro-rosa instanciados en las 49 juntas
-    const pillarGeo = this.#trackGeo(new THREE.CylinderGeometry(0.22, 0.26, totalWallH + 0.08, 14));
+    const pillarGeo = this.#trackGeo(new THREE.CylinderGeometry(0.22, 0.26, totalWallH + 0.08, 14, 2));
     const capGeo = this.#trackGeo(new THREE.CylinderGeometry(0.32, 0.24, 0.14, 14));
+    bakeProceduralVertexAO(pillarGeo, { aoStrength: 0.40, baseWeight: 0.65, shadowTint: 0x281844 });
+    bakeProceduralVertexAO(capGeo, { aoStrength: 0.30, shadowTint: 0x281844 });
     const pillarInst = this.#trackInstanced(new THREE.InstancedMesh(pillarGeo, marbleMat, segments + 1));
     const capInst = this.#trackInstanced(new THREE.InstancedMesh(capGeo, roseGoldMat, segments + 1));
     const dummy = this.#dummy;
@@ -1362,7 +1420,7 @@ export class CasinoDomeBuilder {
     // Doble material cristalino ligero (MeshStandardMaterial, NUNCA MeshPhysicalMaterial)
     const crystalTex = this.#getSharedTexture('stainedCrystal', 14, 4);
     const roseGlassMat = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         color: 0xffdff2,
         map: crystalTex,
         emissive: 0xff8ec8,
@@ -1373,12 +1431,21 @@ export class CasinoDomeBuilder {
         metalness: 0.24,
         side: THREE.DoubleSide,
         depthWrite: false
+      }, {
+        warmWindow: true,
+        windowGlowStrength: 0.72,
+        windowCoreColor: 0xffc87a,
+        windowEdgeColor: 0xff7cc4,
+        rimStrength: 0.42,
+        rimTint: 0xffd8f0,
+        preserveRoughness: true,
+        cacheTag: 'casino_rose_glass'
       })
     );
     roseGlassMat.userData.preserveRoughness = true;
 
     const goldGlassMat = this.#trackMat(
-      new THREE.MeshStandardMaterial({
+      createLumenMaterial({
         color: 0xfff0dc,
         map: crystalTex,
         emissive: 0xffc688,
@@ -1389,6 +1456,15 @@ export class CasinoDomeBuilder {
         metalness: 0.28,
         side: THREE.DoubleSide,
         depthWrite: false
+      }, {
+        warmWindow: true,
+        windowGlowStrength: 0.72,
+        windowCoreColor: 0xffc87a,
+        windowEdgeColor: 0xff7cc4,
+        rimStrength: 0.42,
+        rimTint: 0xffd8f0,
+        preserveRoughness: true,
+        cacheTag: 'casino_gold_glass'
       })
     );
     goldGlassMat.userData.preserveRoughness = true;
@@ -1463,6 +1539,7 @@ export class CasinoDomeBuilder {
     }
     const vaultCurve = new THREE.CatmullRomCurve3(vaultPts);
     const vaultRibGeo = this.#trackGeo(new THREE.TubeGeometry(vaultCurve, 24, 0.16, 8, false));
+    bakeProceduralVertexAO(vaultRibGeo, { aoStrength: 0.34, shadowTint: 0x281844 });
     const vaultRibInst = this.#trackInstanced(new THREE.InstancedMesh(vaultRibGeo, roseGoldMat, ribCount));
 
     const dummy = this.#dummy;
@@ -1492,6 +1569,7 @@ export class CasinoDomeBuilder {
       ];
       const drumCurve = new THREE.CatmullRomCurve3(drumPts);
       const drumRibGeo = this.#trackGeo(new THREE.TubeGeometry(drumCurve, 10, 0.18, 8, false));
+      bakeProceduralVertexAO(drumRibGeo, { aoStrength: 0.36, shadowTint: 0x281844 });
       const drumRibInst = this.#trackInstanced(new THREE.InstancedMesh(drumRibGeo, roseGoldMat, lowerRibAngles.length));
       for (let i = 0; i < lowerRibAngles.length; i++) {
         dummy.position.set(CX, 0, CZ);
@@ -1580,7 +1658,8 @@ export class CasinoDomeBuilder {
 
     // 12 puntas reales y 12 gemas rubí emisivas instanciadas
     const spikeCount = 12;
-    const spikeGeo = this.#trackGeo(new THREE.ConeGeometry(0.42, 2.2, 8));
+    const spikeGeo = this.#trackGeo(new THREE.ConeGeometry(0.42, 2.2, 8, 2));
+    bakeProceduralVertexAO(spikeGeo, { aoStrength: 0.34, baseWeight: 0.6, shadowTint: 0x281844 });
     const gemGeo = this.#trackGeo(new THREE.OctahedronGeometry(0.32, 0));
     const spikeInst = this.#trackInstanced(new THREE.InstancedMesh(spikeGeo, roseGoldMat, spikeCount));
     const gemInst = this.#trackInstanced(new THREE.InstancedMesh(gemGeo, rubyMat, spikeCount * 2));
@@ -1633,6 +1712,15 @@ export class CasinoDomeBuilder {
     starMesh.position.set(CX, CROWN_TOP_Y - 0.15, CZ);
     group.add(starMesh);
     this.#crownStar = starMesh;
+    this.#haloSpecs.push({
+      x: CX,
+      y: CROWN_TOP_Y - 0.15,
+      z: CZ,
+      size: 6.2,
+      color: 0xffdf88,
+      phase: 0.5,
+      opacity: 0.36
+    });
 
     this.#addBucketMesh(buckets, new THREE.TorusGeometry(1.95, 0.09, 10, 40), emissiveRingMat, CX, CROWN_TOP_Y - 0.15, CZ, false, false, Math.PI / 3);
   }
@@ -1641,9 +1729,12 @@ export class CasinoDomeBuilder {
     const xCols = 128.8;
     const colHeight = 6.4;
     const colBaseY = PLATFORM_Y;
-    const colGeo = new THREE.CylinderGeometry(0.44, 0.52, colHeight, 16);
+    const colGeo = new THREE.CylinderGeometry(0.44, 0.52, colHeight, 16, 3);
     const plinthGeo = new THREE.BoxGeometry(1.35, 0.48, 1.35);
     const capGeo = new THREE.CylinderGeometry(0.72, 0.46, 0.48, 16);
+    bakeProceduralVertexAO(colGeo, { aoStrength: 0.42, baseWeight: 0.65, shadowTint: 0x281844 });
+    bakeProceduralVertexAO(plinthGeo, { aoStrength: 0.32, baseWeight: 0.6, shadowTint: 0x281844 });
+    bakeProceduralVertexAO(capGeo, { aoStrength: 0.30, shadowTint: 0x281844 });
     this.#tempGeos.push(colGeo, plinthGeo, capGeo);
 
     // 4 columnas estriadas monumentales en la entrada Oeste (-X)
@@ -1703,6 +1794,15 @@ export class CasinoDomeBuilder {
       })
     );
     this.#addBucketMesh(buckets, new THREE.OctahedronGeometry(0.68, 0), crestMat, xCols - 0.85, entY + 3.25, CZ, false, false);
+    this.#haloSpecs.push({
+      x: xCols - 0.85,
+      y: entY + 3.25,
+      z: CZ,
+      size: 3.4,
+      color: 0xff8ad0,
+      phase: 1.7,
+      opacity: 0.32
+    });
 
     // Cartel luminoso mirando hacia -X (ry = -Math.PI / 2): "♛ GRAN CÚPULA REAL · CASINO ♛"
     const signTex = this.#createSignTexture();
@@ -2642,6 +2742,18 @@ export class CasinoDomeBuilder {
     group.matrixAutoUpdate = false;
     group.updateMatrix();
     this.#root.add(group);
+  }
+
+  #buildVolumetricHalos() {
+    if (this.#haloSpecs.length === 0) return;
+    const haloRes = createInstancedVolumetricHalos(this.#haloSpecs, { opacity: 1.0 });
+    const haloInst = haloRes?.isObject3D ? haloRes : haloRes?.mesh;
+    if (haloInst) {
+      if (haloInst.geometry) this.#trackGeo(haloInst.geometry);
+      if (haloInst.material) this.#trackMat(haloInst.material);
+      this.#trackInstanced(haloInst);
+      this.#root.add(haloInst);
+    }
   }
 
   // ---------------------------------------------------------------------------

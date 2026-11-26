@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CharacterRig } from './CharacterRig.js';
-import { createContactShadow } from '../core/Engine.js';
+import { GraphicsSync, createContactShadow } from '../core/Engine.js';
 
 const TAU = Math.PI * 2;
 const LABEL_HIDE_SQ = 32 * 32;   // 1024: oculta etiquetas lejanas para mantener limpio el horizonte
@@ -644,15 +644,51 @@ export class NPCManager {
   init() {
     this.dispose();
 
-    // Geometría y material únicos compartidos para el halo dorado de suelo de todos los NPCs
+    // Geometría y material únicos compartidos para el halo imperial oro-rosa de suelo de todos los NPCs
     this.#sharedRingGeo = new THREE.RingGeometry(0.55, 0.72, 24);
-    this.#sharedRingMat = new THREE.MeshBasicMaterial({
-      color: 0xcfa45a,
+    this.#sharedRingMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: GraphicsSync.uTime,
+        uNightFactor: GraphicsSync.uNightFactor
+      },
+      vertexShader: /* glsl */ `
+        varying vec2 vLocalPos;
+        void main() {
+          vLocalPos = position.xy;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        uniform float uNightFactor;
+        varying vec2 vLocalPos;
+
+        void main() {
+          float r = length(vLocalPos);
+          float radial = clamp((r - 0.55) / 0.17, 0.0, 1.0);
+          float edgeMask = smoothstep(0.0, 0.22, radial) * (1.0 - smoothstep(0.68, 1.0, radial));
+          float innerCore = smoothstep(0.32, 0.50, radial) * (1.0 - smoothstep(0.50, 0.68, radial));
+
+          float angle = atan(vLocalPos.y, vLocalPos.x);
+          float shimmer = 0.84 + 0.16 * sin(angle * 6.0 - uTime * 2.2);
+          float pulse = 0.80 + 0.20 * sin(uTime * 2.4);
+
+          vec3 goldCol = vec3(0.96, 0.78, 0.42);
+          vec3 roseCol = vec3(1.00, 0.62, 0.80);
+          vec3 auraCol = mix(goldCol, roseCol, 0.35 + 0.25 * sin(angle * 2.0 + uTime * 1.4));
+          vec3 finalCol = auraCol * (0.78 + 0.45 * innerCore) * shimmer;
+
+          float nightBoost = mix(0.42, 0.72, clamp(uNightFactor, 0.0, 1.0));
+          float alpha = (edgeMask * 0.68 + innerCore * 0.35) * pulse * nightBoost;
+          gl_FragColor = vec4(finalCol, alpha);
+        }
+      `,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.52,
-      depthWrite: false
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
     });
+    this.#sharedRingMat.userData.isVfx = true;
 
     for (let i = 0; i < this.#definitions.length; i++) {
       const def = this.#definitions[i];

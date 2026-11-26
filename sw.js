@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v19';
-const CACHE_ASSETS = 'reino-rosa-assets-v19';
+const CACHE_STATIC = 'reino-rosa-static-v20';
+const CACHE_ASSETS = 'reino-rosa-assets-v20';
 
 const PRECACHE_URLS = [
   './',
@@ -17,6 +17,7 @@ const PRECACHE_URLS = [
   './js/core/CoopExploreMode.js',
   './js/core/Engine.js',
   './js/core/InputManager.js',
+  './js/core/LumenArtPipeline.js',
   './js/core/PwaManager.js',
   './js/core/SpringValue.js',
   './js/core/TextureFactory.js',
