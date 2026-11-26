@@ -7,8 +7,8 @@ const LABEL_HIDE_SQ = 32 * 32;   // 1024: oculta etiquetas lejanas para mantener
 const LOOK_DIST_SQ = 6.5 * 6.5;  // 42.25: seguimiento suave de cabeza hacia el jugador
 const TURN_DIST_SQ = 4.2 * 4.2;  // 17.64: giro cortés de NPCs estáticos cercanos
 const STOP_DIST_SQ = 3.2 * 3.2;  // 10.24: los paseantes se detienen amablemente al paso del jugador
-const LOD_FULL_SQ = 25 * 25;     // 625: LOD 0 (parpadeo + micro-gestos + física completa)
-const LOD_NEAR_SQ = 45 * 45;     // 2025: 60 Hz locomoción y animación completa
+const LOD_FULL_SQ = 35 * 35;     // 1225: LOD 0 (parpadeo + micro-gestos + física completa)
+const LOD_NEAR_SQ = 55 * 55;     // 3025: 60 Hz locomoción y animación estilizada
 const LOD_FAR_SQ = 85 * 85;      // 7225: 1 de cada 4 frames; > 85 u pausa completa (cero CPU)
 
 function stepAngle(current, target, rate, dt) {
@@ -53,10 +53,13 @@ export class NPCManager {
         avatarId: 'npc_adrian',
         outfitId: 'principe_gala',
         hairId: 'principe_tupe',
+        hairStyleOverride: 'prince_royal_tousled',
+        courtPalette: 'starlight_sapphire',
         hairColorId: 'castano_chocolate',
         skinId: 'miel',
         eyeColorId: 'zafiro',
-        accessories: ['corona', 'cetro']
+        accessories: ['corona', 'cetro'],
+        heightScale: 1.0
       },
       greeting: '¡Bienvenidos al Palacio de Cristal! Cinco Gemas del Reino brillan ocultas por los jardines, el Salón del Trono, el Balcón Imperial y la Biblioteca Real. ¡Ayúdanos a reunirlas antes de la gran gala!',
       greetings: [
@@ -76,10 +79,14 @@ export class NPCManager {
         avatarId: 'npc_sofia',
         outfitId: 'gala_rosa',
         hairId: 'melena_ondulada',
+        hairStyleOverride: 'princess_imperial_waves',
+        courtPalette: 'petal_rose',
+        courtSilhouette: 'princess_light',
         hairColorId: 'rosa_pastel',
         skinId: 'porcelana',
         eyeColorId: 'esmeralda',
-        accessories: ['tiara', 'bolso']
+        accessories: ['tiara', 'bolso'],
+        heightScale: 0.99
       },
       greeting: '¡Fabuloso verte en el Vestidor Real! Pulsa [C] cuando quieras para cambiar de vestido, peinado, colores o accesorios. ¿Te animas a brillar en la Gran Pasarela con gradas?',
       greetings: [
@@ -103,10 +110,14 @@ export class NPCManager {
         avatarId: 'npc_camila',
         outfitId: 'atardecer_perla',
         hairId: 'media_melena',
+        hairStyleOverride: 'court_half_up',
+        courtPalette: 'champagne_gold',
+        courtSilhouette: 'court_tiered',
         hairColorId: 'pelirrojo_cobrizo',
         skinId: 'miel',
         eyeColorId: 'miel',
-        accessories: ['gafas', 'tiara']
+        accessories: ['gafas', 'tiara'],
+        heightScale: 0.98
       },
       greeting: '¡Los jardines y bosques están llenos de vida hoy! Necesitamos entregar las Invitaciones Reales al Príncipe Adrián, a Estilista Sofía y a la Maestra de Ceremonias. ¿O prefieres una carrera contrarreloj?',
       greetings: [
@@ -128,10 +139,14 @@ export class NPCManager {
         avatarId: 'npc_maestra',
         outfitId: 'gala_nocturna',
         hairId: 'recogido_mono',
+        hairStyleOverride: 'court_updo_bun',
+        courtPalette: 'imperial_lavender',
+        courtSilhouette: 'court_starry',
         hairColorId: 'rubio_platino',
         skinId: 'canela',
         eyeColorId: 'violeta',
-        accessories: ['corona', 'cetro']
+        accessories: ['corona', 'cetro'],
+        heightScale: 1.02
       },
       greeting: 'La pista de mármol pulido y el piano de cola están listos en el Salón de Baile y Banquetes. ¡Todo el reino espera tu gran baile imperial! Sigue el ritmo con W, A, S y D.',
       greetings: [
@@ -158,10 +173,13 @@ export class NPCManager {
         avatarId: 'npc_adrian',
         outfitId: 'principe_gala',
         hairId: 'principe_tupe',
+        hairStyleOverride: 'court_noble_short',
+        courtPalette: 'velvet_burgundy',
         hairColorId: 'rubio_miel',
         skinId: 'porcelana',
         eyeColorId: 'zafiro',
-        accessories: ['cetro']
+        accessories: ['cetro'],
+        heightScale: 1.01
       },
       greeting: '¡Bienvenida Su Alteza a la Gran Cúpula del Casino Real! Suba por la escalinata de alfombra imperial; la gala brilla en todo su esplendor.',
       greetings: [
@@ -182,10 +200,14 @@ export class NPCManager {
         avatarId: 'celeste',
         outfitId: 'cristal_hielo',
         hairId: 'recogido_mono',
+        hairStyleOverride: 'court_updo_bun',
+        courtPalette: 'champagne_gold',
+        courtSilhouette: 'empire_shawl',
         hairColorId: 'rubio_platino',
         skinId: 'marfil',
         eyeColorId: 'zafiro',
-        accessories: ['corona']
+        accessories: ['corona'],
+        heightScale: 1.0
       },
       greeting: 'Un honor recibirle bajo la Corona Imperial de Cristal. Esta noche las veinticuatro costillas doradas de la cúpula iluminan el firmamento.',
       greetings: [
@@ -217,10 +239,14 @@ export class NPCManager {
         avatarId: 'aurora',
         outfitId: 'gala_nocturna',
         hairId: 'melena_ondulada',
+        hairStyleOverride: 'princess_imperial_waves',
+        courtPalette: 'imperial_lavender',
+        courtSilhouette: 'princess_light',
         hairColorId: 'negro_azabache',
         skinId: 'porcelana',
         eyeColorId: 'violeta',
-        accessories: ['tiara', 'bolso']
+        accessories: ['tiara', 'bolso'],
+        heightScale: 1.01
       },
       greeting: '¡Qué paz se respira junto a la Fuente VIP del Norte! El murmullo del agua y los destellos del cristal descansan la mente entre partida y partida.',
       greetings: [
@@ -252,10 +278,13 @@ export class NPCManager {
         avatarId: 'npc_adrian',
         outfitId: 'principe_gala',
         hairId: 'principe_tupe',
+        hairStyleOverride: 'prince_royal_tousled',
+        courtPalette: 'palace_emerald',
         hairColorId: 'rubio_platino',
         skinId: 'marfil',
         eyeColorId: 'violeta',
-        accessories: ['gafas']
+        accessories: ['gafas'],
+        heightScale: 0.99
       },
       greeting: 'Desde este paseo circular del Sur se disfruta a la vez de la Fuente VIP de cristal y de las vistas hacia el Lago de los Cisnes.',
       greetings: [
@@ -286,10 +315,14 @@ export class NPCManager {
         avatarId: 'valentina',
         outfitId: 'atardecer_perla',
         hairId: 'trenza_lateral',
+        hairStyleOverride: 'trenza_lateral',
+        courtPalette: 'champagne_gold',
+        courtSilhouette: 'court_tiered',
         hairColorId: 'rubio_miel',
         skinId: 'miel',
         eyeColorId: 'esmeralda',
-        accessories: ['corona', 'bolso']
+        accessories: ['corona', 'bolso'],
+        heightScale: 0.98
       },
       greeting: '¡Admira cómo gira la colosal lámpara de araña sobre la estrella de ocho puntas! No hay bóveda de cristal más sublime en el mundo.',
       greetings: [
@@ -323,10 +356,14 @@ export class NPCManager {
         avatarId: 'aurora',
         outfitId: 'gala_rosa',
         hairId: 'coleta_alta',
+        hairStyleOverride: 'coleta_alta',
+        courtPalette: 'petal_rose',
+        courtSilhouette: 'princess_light',
         hairColorId: 'rubio_miel',
         skinId: 'porcelana',
         eyeColorId: 'zafiro',
-        accessories: ['tiara']
+        accessories: ['tiara'],
+        heightScale: 0.97
       },
       greeting: 'Pasear por el Bulevar Imperial bajo las catorce farolas de oro rosa es mi tradición favorita de la Gala Nocturna.',
       greetings: [
@@ -356,10 +393,13 @@ export class NPCManager {
         avatarId: 'npc_adrian',
         outfitId: 'principe_gala',
         hairId: 'principe_tupe',
+        hairStyleOverride: 'court_noble_short',
+        courtPalette: 'starlight_sapphire',
         hairColorId: 'negro_azabache',
         skinId: 'canela',
         eyeColorId: 'miel',
-        accessories: ['corona']
+        accessories: ['corona'],
+        heightScale: 1.0
       },
       greeting: '¡Buenas noches! Desde la cresta del Puente Imperial se divisan los cisnes reales deslizándose aguas abajo hacia la laguna.',
       greetings: [
@@ -394,10 +434,14 @@ export class NPCManager {
         avatarId: 'amara',
         outfitId: 'cristal_hielo',
         hairId: 'trenza_lateral',
+        hairStyleOverride: 'trenza_lateral',
+        courtPalette: 'palace_emerald',
+        courtSilhouette: 'empire_shawl',
         hairColorId: 'castano_chocolate',
         skinId: 'canela',
         eyeColorId: 'miel',
-        accessories: ['tiara', 'bolso']
+        accessories: ['tiara', 'bolso'],
+        heightScale: 0.99
       },
       greeting: 'Me encanta enlazar el Puente Imperial con el Puente de los Cisnes bordeando la ribera; el rumor del agua acompaña cada paso.',
       greetings: [
@@ -430,10 +474,13 @@ export class NPCManager {
         avatarId: 'npc_adrian',
         outfitId: 'principe_gala',
         hairId: 'principe_tupe',
+        hairStyleOverride: 'prince_royal_tousled',
+        courtPalette: 'velvet_burgundy',
         hairColorId: 'pelirrojo_cobrizo',
         skinId: 'miel',
         eyeColorId: 'esmeralda',
-        accessories: []
+        accessories: [],
+        heightScale: 0.98
       },
       greeting: 'El Puente Sur de los Cisnes es el rincón más romántico del valle: aguas serenas a nuestros pies y la Cúpula dorada al horizonte.',
       greetings: [
@@ -458,10 +505,14 @@ export class NPCManager {
         avatarId: 'valentina',
         outfitId: 'gala_nocturna',
         hairId: 'coleta_alta',
+        hairStyleOverride: 'coleta_alta',
+        courtPalette: 'imperial_lavender',
+        courtSilhouette: 'court_starry',
         hairColorId: 'rosa_pastel',
         skinId: 'marfil',
         eyeColorId: 'violeta',
-        accessories: ['tiara', 'gafas']
+        accessories: ['tiara', 'gafas'],
+        heightScale: 1.02
       },
       greeting: '¡Qué alegría verte en la antesala de la Gran Pasarela! Estamos ultimando detalles con el cronista antes del próximo desfile.',
       greetings: [
@@ -484,10 +535,13 @@ export class NPCManager {
         avatarId: 'npc_adrian',
         outfitId: 'principe_gala',
         hairId: 'principe_tupe',
+        hairStyleOverride: 'court_noble_short',
+        courtPalette: 'champagne_gold',
         hairColorId: 'castano_chocolate',
         skinId: 'porcelana',
         eyeColorId: 'miel',
-        accessories: ['gafas']
+        accessories: ['gafas'],
+        heightScale: 0.97
       },
       greeting: '¡Qué porte tan regio! Los focos cenitales de la Pasarela en T y el telón carmesí logran retratos dignos de la galería imperial.',
       greetings: [
@@ -513,10 +567,14 @@ export class NPCManager {
         avatarId: 'celeste',
         outfitId: 'chic_paseo',
         hairId: 'melena_ondulada',
+        hairStyleOverride: 'princess_imperial_waves',
+        courtPalette: 'velvet_burgundy',
+        courtSilhouette: 'court_chic',
         hairColorId: 'pelirrojo_cobrizo',
         skinId: 'porcelana',
         eyeColorId: 'esmeralda',
-        accessories: ['tiara', 'bolso']
+        accessories: ['tiara', 'bolso'],
+        heightScale: 1.03
       },
       greeting: 'Paso elegante, giro de princesa y... ¡pose de estrella! Ensayar en la antesala es el ritual infalible antes de salir a escena.',
       greetings: [
@@ -544,10 +602,14 @@ export class NPCManager {
         avatarId: 'aurora',
         outfitId: 'chic_paseo',
         hairId: 'trenza_lateral',
+        hairStyleOverride: 'trenza_lateral',
+        courtPalette: 'palace_emerald',
+        courtSilhouette: 'court_chic',
         hairColorId: 'castano_chocolate',
         skinId: 'miel',
         eyeColorId: 'esmeralda',
-        accessories: []
+        accessories: [],
+        heightScale: 0.96
       },
       greeting: 'Cuidamos con mimo cada rosal frente al Palacio de Cristal para que sus pétalos perfumados den la bienvenida a toda la corte.',
       greetings: [
@@ -575,10 +637,13 @@ export class NPCManager {
         avatarId: 'npc_adrian',
         outfitId: 'principe_gala',
         hairId: 'principe_tupe',
+        hairStyleOverride: 'court_noble_short',
+        courtPalette: 'palace_emerald',
         hairColorId: 'rubio_miel',
         skinId: 'miel',
         eyeColorId: 'esmeralda',
-        accessories: []
+        accessories: [],
+        heightScale: 0.99
       },
       greeting: '¡Qué velada tan espléndida para los jardines! Hemos engalanado tanto estos rosales de Palacio como las palmeras reales del Casino.',
       greetings: [
@@ -598,10 +663,13 @@ export class NPCManager {
         avatarId: 'npc_adrian',
         outfitId: 'principe_gala',
         hairId: 'principe_tupe',
+        hairStyleOverride: 'prince_royal_tousled',
+        courtPalette: 'velvet_burgundy',
         hairColorId: 'negro_azabache',
         skinId: 'canela',
         eyeColorId: 'zafiro',
-        accessories: []
+        accessories: [],
+        heightScale: 1.01
       },
       greeting: '¡Estribos dorados listos! Nuestro noble corcel Castaño Miel acaba de ser cepillado y aguarda con su silla real de terciopelo.',
       greetings: [
@@ -621,10 +689,13 @@ export class NPCManager {
         avatarId: 'amara',
         outfitId: 'amazona_palacio',
         hairId: 'coleta_alta',
+        hairStyleOverride: 'coleta_alta',
+        courtPalette: 'velvet_burgundy',
         hairColorId: 'negro_azabache',
         skinId: 'canela',
         eyeColorId: 'miel',
-        accessories: ['tiara']
+        accessories: ['tiara'],
+        heightScale: 1.0
       },
       greeting: 'Bienvenida a la Explanada Real del Casino. Aquí descansan Negro Azabache y Blanco Imperial mientras los invitados disfrutan de la Cúpula.',
       greetings: [

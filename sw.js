@@ -1,5 +1,5 @@
-const CACHE_STATIC = 'reino-rosa-static-v20';
-const CACHE_ASSETS = 'reino-rosa-assets-v20';
+const CACHE_STATIC = 'reino-rosa-static-v21';
+const CACHE_ASSETS = 'reino-rosa-assets-v21';
 
 const PRECACHE_URLS = [
   './',
@@ -40,8 +40,13 @@ const PRECACHE_URLS = [
   './js/world/WaterSystem.js',
   './js/world/WorldDecor.js',
   './js/world/WorldThemes.js',
+  './js/characters/CharacterAnatomy.js',
   './js/characters/CharacterAnimator.js',
+  './js/characters/CharacterCouture.js',
+  './js/characters/CharacterFaceHair.js',
+  './js/characters/CharacterMotion.js',
   './js/characters/CharacterRig.js',
+  './js/characters/CharacterShader.js',
   './js/characters/NPCManager.js',
   './js/characters/PlayerController.js',
   './js/characters/RemotePlayer.js',
